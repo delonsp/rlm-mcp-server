@@ -131,3 +131,32 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 7 - Test save_index and load_index (roundtrip de índice semântico)
+
+- What was implemented:
+  - Added TestSaveAndLoadIndex class to tests/test_persistence.py
+  - 9 test cases covering:
+    - Roundtrip for simple index (term -> positions mapping)
+    - Roundtrip for empty index
+    - Loading nonexistent index returns None
+    - Large index with 1000 terms (compression testing)
+    - Overwriting existing index
+    - Index without associated variable (foreign key not enforced)
+    - Terms with special characters (Portuguese, symbols)
+    - Position order preservation
+    - Multiple indexes independence
+
+- Files changed:
+  - tests/test_persistence.py (added TestSaveAndLoadIndex class)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - save_index stores dict with pickle + zlib compression (same as variables)
+  - load_index returns None if index doesn't exist (not an exception)
+  - SQLite foreign key on var_name is not enforced by default - indexes can exist without variables
+  - INSERT OR REPLACE handles overwriting existing indexes
+  - terms_count is stored in indices table (number of keys in the dict)
+
+---
+

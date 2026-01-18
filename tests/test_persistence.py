@@ -428,3 +428,106 @@ class TestSaveAndLoadIndex:
         assert pm.load_index("var1") == index1
         assert pm.load_index("var2") == index2
         assert pm.load_index("var3") == index3
+
+
+class TestClearAll:
+    """Tests for clear_all method."""
+
+    def test_clear_all_returns_count_of_removed_variables(self, temp_db):
+        """Test that clear_all returns the number of variables removed."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Save multiple variables
+        pm.save_variable("var1", "value1")
+        pm.save_variable("var2", "value2")
+        pm.save_variable("var3", "value3")
+
+        result = pm.clear_all()
+        assert result == 3
+
+    def test_clear_all_removes_all_variables(self, temp_db):
+        """Test that clear_all removes all variables from the database."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Save multiple variables
+        pm.save_variable("var1", "value1")
+        pm.save_variable("var2", {"key": "value"})
+        pm.save_variable("var3", [1, 2, 3])
+
+        # Clear all
+        pm.clear_all()
+
+        # All variables should be gone
+        assert pm.load_variable("var1") is None
+        assert pm.load_variable("var2") is None
+        assert pm.load_variable("var3") is None
+
+    def test_clear_all_removes_all_indices(self, temp_db):
+        """Test that clear_all removes all indices from the database."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Save variables with indices
+        pm.save_variable("var1", "text1")
+        pm.save_variable("var2", "text2")
+        pm.save_index("var1", {"term1": [0, 10]})
+        pm.save_index("var2", {"term2": [0, 20]})
+
+        # Clear all
+        pm.clear_all()
+
+        # All indices should be gone
+        assert pm.load_index("var1") is None
+        assert pm.load_index("var2") is None
+
+    def test_clear_all_empty_database_returns_zero(self, temp_db):
+        """Test that clear_all on empty database returns 0."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        result = pm.clear_all()
+        assert result == 0
+
+    def test_clear_all_list_variables_empty_after(self, temp_db):
+        """Test that list_variables returns empty list after clear_all."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Save some variables
+        pm.save_variable("var1", "value1")
+        pm.save_variable("var2", "value2")
+
+        # Verify they exist
+        assert len(pm.list_variables()) == 2
+
+        # Clear all
+        pm.clear_all()
+
+        # list_variables should return empty list
+        assert pm.list_variables() == []
+
+    def test_clear_all_can_add_variables_after(self, temp_db):
+        """Test that variables can be added after clear_all."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Save and clear
+        pm.save_variable("old_var", "old value")
+        pm.clear_all()
+
+        # Should be able to add new variables
+        assert pm.save_variable("new_var", "new value") is True
+        assert pm.load_variable("new_var") == "new value"
+
+    def test_clear_all_preserves_collections(self, temp_db):
+        """Test that clear_all does not remove collections (only variables and indices)."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Create a collection and add variables
+        pm.create_collection("test_collection", "Test description")
+        pm.save_variable("var1", "value1")
+        pm.add_to_collection("test_collection", ["var1"])
+
+        # Clear all variables
+        pm.clear_all()
+
+        # Collection should still exist (though empty)
+        collections = pm.list_collections()
+        assert len(collections) == 1
+        assert collections[0]["name"] == "test_collection"
