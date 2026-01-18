@@ -204,12 +204,39 @@ IMPORTANTE: O código roda em sandbox seguro:
 - Imports permitidos: re, json, math, collections, datetime, csv, etc.
 - Imports bloqueados: os, subprocess, socket, requests, etc.
 
-Exemplo:
-```python
-lines = data.split('\\n')
-errors = [l for l in lines if 'ERROR' in l]
-print(f"Encontrados {len(errors)} erros")
-```""",
+=== PADRÕES DE USO AVANÇADO (RLM) ===
+
+O poder do RLM está em escrever código SOFISTICADO para analisar dados massivos.
+NÃO use apenas regex simples. Use estas estratégias:
+
+1. ÍNDICE SEMÂNTICO - mapear conceitos para localização:
+   ```python
+   indice = {conceito: [] for conceito in ['medo', 'trabalho', 'pai']}
+   for i, linha in enumerate(texto.split('\\n')):
+       for c in indice:
+           if c in linha.lower():
+               indice[c].append({'linha': i, 'ctx': linha[:100]})
+   ```
+
+2. ANÁLISE CRUZADA - buscar múltiplos critérios:
+   ```python
+   def analise_diferencial(sintomas, texto):
+       scores = defaultdict(int)
+       for sintoma in sintomas:
+           if sintoma in secao.lower():
+               scores[remedio] += 1
+       return sorted(scores.items(), key=lambda x: -x[1])
+   ```
+
+3. ESTRUTURA DOCUMENTAL - mapear seções/capítulos:
+   ```python
+   secoes = re.findall(r'^#+ (.+)$', texto, re.MULTILINE)
+   ```
+
+4. FUNÇÕES REUTILIZÁVEIS - definir helpers que persistem entre chamadas
+
+LEMBRE-SE: Você tem acesso a MILHÕES de caracteres. Use Python para
+fazer análises que RAG não consegue - cruzamento, agregação, lógica condicional.""",
             "inputSchema": {
                 "type": "object",
                 "properties": {
