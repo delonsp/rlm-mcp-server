@@ -55,12 +55,22 @@ services:
       - dokploy-network
 
     # Labels para Traefik (Dokploy usa Traefik)
+    # IMPORTANTE: Define um único serviço (rlm-mcp-svc) referenciado por ambos routers
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.rlm-mcp.rule=Host(`rlm.drsolution.online`)"
-      - "traefik.http.routers.rlm-mcp.entrypoints=websecure"
-      - "traefik.http.routers.rlm-mcp.tls.certresolver=letsencrypt"
-      - "traefik.http.services.rlm-mcp.loadbalancer.server.port=8765"
+      - "traefik.docker.network=dokploy-network"
+      # Serviço único com porta correta
+      - "traefik.http.services.rlm-mcp-svc.loadbalancer.server.port=8765"
+      # Router HTTP (redireciona para HTTPS)
+      - "traefik.http.routers.rlm-mcp-http.rule=Host(`rlm.drsolution.online`)"
+      - "traefik.http.routers.rlm-mcp-http.entrypoints=web"
+      - "traefik.http.routers.rlm-mcp-http.middlewares=redirect-to-https@file"
+      - "traefik.http.routers.rlm-mcp-http.service=rlm-mcp-svc"
+      # Router HTTPS
+      - "traefik.http.routers.rlm-mcp-https.rule=Host(`rlm.drsolution.online`)"
+      - "traefik.http.routers.rlm-mcp-https.entrypoints=websecure"
+      - "traefik.http.routers.rlm-mcp-https.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.rlm-mcp-https.service=rlm-mcp-svc"
 
     # Healthcheck
     healthcheck:
