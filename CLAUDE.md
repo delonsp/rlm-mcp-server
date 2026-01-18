@@ -124,6 +124,13 @@ scp arquivo.pdf user@vps:/caminho/para/rlm-data/
 - `rlm_search_index` - Busca termos no índice semântico (criado auto para textos >= 100k chars)
 - `rlm_persistence_stats` - Estatísticas de variáveis/índices persistidos
 
+### Coleções (Multi-assunto)
+- `rlm_collection_create` - Cria coleção para agrupar variáveis
+- `rlm_collection_add` - Adiciona variáveis a uma coleção
+- `rlm_collection_list` - Lista todas as coleções
+- `rlm_collection_info` - Info detalhada de uma coleção
+- `rlm_search_collection` - Busca em TODAS as variáveis de uma coleção
+
 ### Processamento de PDF (duas etapas)
 - `rlm_process_pdf` - Extrai texto de PDF e salva .txt no bucket (não bloqueia)
   ```
@@ -162,7 +169,7 @@ src/rlm_mcp/
 
 ### Exemplos de uso
 ```
-# Busca simples
+# Busca simples em uma variável
 rlm_search_index(var_name="scholten1", terms=["medo", "trabalho"])
 
 # Busca com todos os termos (AND)
@@ -171,6 +178,26 @@ rlm_search_index(var_name="scholten1", terms=["medo", "fracasso"], require_all=T
 # Ver estatísticas de persistência
 rlm_persistence_stats()
 ```
+
+### Usando Coleções (Multi-assunto)
+```
+# Criar coleção de homeopatia
+rlm_collection_create(name="homeopatia", description="Materiais de homeopatia unicista")
+
+# Adicionar documentos à coleção
+rlm_collection_add(collection="homeopatia", vars=["scholten1", "scholten2", "kent", "banerji"])
+
+# Buscar em TODOS os documentos da coleção de uma vez
+rlm_search_collection(collection="homeopatia", terms=["medo", "ansiedade"])
+
+# Listar coleções disponíveis
+rlm_collection_list()
+```
+
+Você pode ter múltiplas coleções no mesmo servidor:
+- `homeopatia`: scholten, kent, banerji, matéria médica
+- `nutrição`: protocolos, suplementos, dietas
+- `fitoterapia`: plantas, formulações
 
 ## Notas Importantes
 

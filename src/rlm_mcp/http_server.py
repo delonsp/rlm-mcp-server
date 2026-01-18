@@ -568,6 +568,105 @@ Mostra quais variáveis estão persistidas e sobreviverão ao restart do servido
                 "type": "object",
                 "properties": {}
             }
+        },
+        {
+            "name": "rlm_collection_create",
+            "description": """Cria uma nova coleção para agrupar variáveis por assunto.
+
+Coleções permitem organizar variáveis relacionadas (ex: homeopatia, nutrição, fitoterapia)
+e fazer buscas em todas de uma vez.
+
+Exemplo: rlm_collection_create(name="homeopatia", description="Materiais de homeopatia unicista")""",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Nome da coleção (único)"
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Descrição opcional da coleção"
+                    }
+                },
+                "required": ["name"]
+            }
+        },
+        {
+            "name": "rlm_collection_add",
+            "description": """Adiciona variáveis a uma coleção existente.
+
+A coleção é criada automaticamente se não existir.
+
+Exemplo: rlm_collection_add(collection="homeopatia", vars=["scholten1", "scholten2", "kent"])""",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "collection": {
+                        "type": "string",
+                        "description": "Nome da coleção"
+                    },
+                    "vars": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Lista de nomes de variáveis para adicionar"
+                    }
+                },
+                "required": ["collection", "vars"]
+            }
+        },
+        {
+            "name": "rlm_collection_list",
+            "description": """Lista todas as coleções existentes com contagem de variáveis.""",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        },
+        {
+            "name": "rlm_collection_info",
+            "description": """Retorna informações detalhadas de uma coleção específica.
+
+Mostra todas as variáveis na coleção com seus tamanhos.""",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Nome da coleção"
+                    }
+                },
+                "required": ["name"]
+            }
+        },
+        {
+            "name": "rlm_search_collection",
+            "description": """Busca termos em TODAS as variáveis de uma coleção.
+
+Busca unificada que varre todos os documentos da coleção e retorna
+resultados agrupados por documento.
+
+Exemplo: rlm_search_collection(collection="homeopatia", terms=["medo", "ansiedade"])""",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "collection": {
+                        "type": "string",
+                        "description": "Nome da coleção"
+                    },
+                    "terms": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Lista de termos para buscar"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Máximo de resultados por documento/termo"
+                    }
+                },
+                "required": ["collection", "terms"]
+            }
         }
     ]
 
@@ -1136,6 +1235,174 @@ Próximo passo: rlm_load_s3(key="{output_key}", name="texto", data_type="text")"
                 return {
                     "content": [
                         {"type": "text", "text": f"Erro ao obter estatísticas: {e}"}
+                    ],
+                    "isError": True
+                }
+
+        elif name == "rlm_collection_create":
+            try:
+                persistence = get_persistence()
+                coll_name = arguments["name"]
+                description = arguments.get("description")
+
+                persistence.create_collection(coll_name, description)
+
+                text = f"✅ Coleção '{coll_name}' criada"
+                if description:
+                    text += f"\nDescrição: {description}"
+
+                return {"content": [{"type": "text", "text": text}]}
+
+            except Exception as e:
+                return {
+                    "content": [
+                        {"type": "text", "text": f"Erro ao criar coleção: {e}"}
+                    ],
+                    "isError": True
+                }
+
+        elif name == "rlm_collection_add":
+            try:
+                persistence = get_persistence()
+                coll_name = arguments["collection"]
+                var_names = arguments["vars"]
+
+                # Verificar se variáveis existem
+                missing = [v for v in var_names if v not in repl.namespace]
+                if missing:
+                    return {
+                        "content": [
+                            {"type": "text", "text": f"Erro: Variáveis não encontradas: {', '.join(missing)}"}
+                        ],
+                        "isError": True
+                    }
+
+                added = persistence.add_to_collection(coll_name, var_names)
+
+                text = f"✅ {added} variável(is) adicionada(s) à coleção '{coll_name}'"
+                text += f"\nVariáveis: {', '.join(var_names)}"
+
+                return {"content": [{"type": "text", "text": text}]}
+
+            except Exception as e:
+                return {
+                    "content": [
+                        {"type": "text", "text": f"Erro ao adicionar à coleção: {e}"}
+                    ],
+                    "isError": True
+                }
+
+        elif name == "rlm_collection_list":
+            try:
+                persistence = get_persistence()
+                collections = persistence.list_collections()
+
+                if not collections:
+                    text = "Nenhuma coleção criada ainda."
+                else:
+                    lines = ["📚 Coleções disponíveis:", ""]
+                    for c in collections:
+                        lines.append(f"  📁 {c['name']} ({c['var_count']} variáveis)")
+                        if c['description']:
+                            lines.append(f"     {c['description']}")
+                    text = "\n".join(lines)
+
+                return {"content": [{"type": "text", "text": text}]}
+
+            except Exception as e:
+                return {
+                    "content": [
+                        {"type": "text", "text": f"Erro ao listar coleções: {e}"}
+                    ],
+                    "isError": True
+                }
+
+        elif name == "rlm_collection_info":
+            try:
+                persistence = get_persistence()
+                coll_name = arguments["name"]
+
+                info = persistence.get_collection_info(coll_name)
+                if not info:
+                    return {
+                        "content": [
+                            {"type": "text", "text": f"Coleção '{coll_name}' não encontrada."}
+                        ],
+                        "isError": True
+                    }
+
+                lines = [f"📁 Coleção: {info['name']}", ""]
+                if info['description']:
+                    lines.append(f"Descrição: {info['description']}")
+                lines.append(f"Criada em: {info['created_at']}")
+                lines.append(f"Total: {info['var_count']} variáveis, {info['total_size']:,} bytes")
+                lines.append("")
+                lines.append("Variáveis:")
+                for v in info['variables']:
+                    lines.append(f"  - {v['name']} ({v['type']}, {v['size_bytes']:,} bytes)")
+
+                return {"content": [{"type": "text", "text": "\n".join(lines)}]}
+
+            except Exception as e:
+                return {
+                    "content": [
+                        {"type": "text", "text": f"Erro ao obter info da coleção: {e}"}
+                    ],
+                    "isError": True
+                }
+
+        elif name == "rlm_search_collection":
+            try:
+                persistence = get_persistence()
+                coll_name = arguments["collection"]
+                terms = arguments["terms"]
+                limit = arguments.get("limit", 10)
+
+                # Obter variáveis da coleção
+                var_names = persistence.get_collection_vars(coll_name)
+                if not var_names:
+                    return {
+                        "content": [
+                            {"type": "text", "text": f"Coleção '{coll_name}' vazia ou não existe."}
+                        ],
+                        "isError": True
+                    }
+
+                # Buscar em cada variável que tem índice
+                all_results = {}
+                for var_name in var_names:
+                    index = get_index(var_name)
+                    if index:
+                        results = index.search_multiple(terms, require_all=False)
+                        if results:
+                            all_results[var_name] = results
+
+                if not all_results:
+                    text = f"Nenhum resultado para {terms} na coleção '{coll_name}'"
+                else:
+                    lines = [f"🔍 Busca em '{coll_name}': {', '.join(terms)}", ""]
+
+                    for var_name, results in all_results.items():
+                        lines.append(f"📄 {var_name}:")
+                        for term, matches in results.items():
+                            lines.append(f"  📌 '{term}' ({len(matches)} ocorrências)")
+                            for m in matches[:limit]:
+                                lines.append(f"      L{m['linha']}: {m['contexto'][:60]}...")
+                        lines.append("")
+
+                    total_matches = sum(
+                        sum(len(matches) for matches in results.values())
+                        for results in all_results.values()
+                    )
+                    lines.append(f"📊 Total: {total_matches} ocorrências em {len(all_results)} documento(s)")
+                    text = "\n".join(lines)
+
+                return {"content": [{"type": "text", "text": text}]}
+
+            except Exception as e:
+                return {
+                    "content": [
+                        {"type": "text", "text": f"Erro na busca: {e}"}
                     ],
                     "isError": True
                 }
