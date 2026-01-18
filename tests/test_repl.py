@@ -2067,3 +2067,273 @@ class TestLoadDataLines:
         # No \n, so entire string is one line
         assert repl.variables["data"] == ["line1\rline2\rline3"]
         assert len(repl.variables["data"]) == 1
+
+
+class TestGetMemoryUsage:
+    """Test get_memory_usage returns reasonable values."""
+
+    def test_get_memory_usage_returns_dict(self):
+        """get_memory_usage returns a dictionary."""
+        repl = SafeREPL()
+        result = repl.get_memory_usage()
+
+        assert isinstance(result, dict)
+
+    def test_get_memory_usage_has_expected_keys(self):
+        """get_memory_usage returns dict with all expected keys."""
+        repl = SafeREPL()
+        result = repl.get_memory_usage()
+
+        expected_keys = {"total_bytes", "total_human", "variable_count", "max_allowed_mb", "usage_percent"}
+        assert set(result.keys()) == expected_keys
+
+    def test_get_memory_usage_empty_repl_has_zero_total_bytes(self):
+        """get_memory_usage returns total_bytes=0 for empty REPL."""
+        repl = SafeREPL()
+        result = repl.get_memory_usage()
+
+        assert result["total_bytes"] == 0
+
+    def test_get_memory_usage_empty_repl_has_zero_variable_count(self):
+        """get_memory_usage returns variable_count=0 for empty REPL."""
+        repl = SafeREPL()
+        result = repl.get_memory_usage()
+
+        assert result["variable_count"] == 0
+
+    def test_get_memory_usage_empty_repl_has_zero_usage_percent(self):
+        """get_memory_usage returns usage_percent=0 for empty REPL."""
+        repl = SafeREPL()
+        result = repl.get_memory_usage()
+
+        assert result["usage_percent"] == 0.0
+
+    def test_get_memory_usage_empty_repl_has_human_size(self):
+        """get_memory_usage returns total_human for empty REPL."""
+        repl = SafeREPL()
+        result = repl.get_memory_usage()
+
+        # 0 bytes should format as "0.0 B"
+        assert "0" in result["total_human"]
+        assert "B" in result["total_human"]
+
+    def test_get_memory_usage_default_max_allowed_mb(self):
+        """get_memory_usage returns default max_allowed_mb (1024)."""
+        repl = SafeREPL()
+        result = repl.get_memory_usage()
+
+        assert result["max_allowed_mb"] == 1024
+
+    def test_get_memory_usage_custom_max_allowed_mb(self):
+        """get_memory_usage respects custom max_memory_mb in constructor."""
+        repl = SafeREPL(max_memory_mb=512)
+        result = repl.get_memory_usage()
+
+        assert result["max_allowed_mb"] == 512
+
+    def test_get_memory_usage_after_load_data_has_positive_total_bytes(self):
+        """get_memory_usage returns positive total_bytes after loading data."""
+        repl = SafeREPL()
+        repl.load_data("test", "hello world", data_type="text")
+        result = repl.get_memory_usage()
+
+        assert result["total_bytes"] > 0
+
+    def test_get_memory_usage_after_load_data_has_correct_variable_count(self):
+        """get_memory_usage returns correct variable_count after loading data."""
+        repl = SafeREPL()
+        repl.load_data("var1", "data1", data_type="text")
+        repl.load_data("var2", "data2", data_type="text")
+        result = repl.get_memory_usage()
+
+        assert result["variable_count"] == 2
+
+    def test_get_memory_usage_after_execute_has_correct_variable_count(self):
+        """get_memory_usage returns correct variable_count after execute."""
+        repl = SafeREPL()
+        repl.execute("x = 1")
+        repl.execute("y = 2")
+        repl.execute("z = 3")
+        result = repl.get_memory_usage()
+
+        # Note: llm_query, llm_stats, llm_reset_counter are also in variables
+        # So count = 3 user vars + 3 llm vars = 6
+        assert result["variable_count"] >= 3
+
+    def test_get_memory_usage_total_bytes_reflects_variable_sizes(self):
+        """get_memory_usage total_bytes reflects sum of variable sizes."""
+        repl = SafeREPL()
+        # Load a known-size string
+        test_string = "a" * 100  # 100 bytes
+        repl.load_data("test", test_string, data_type="text")
+        result = repl.get_memory_usage()
+
+        # total_bytes should be at least 100 (may be more due to estimate_size)
+        assert result["total_bytes"] >= 100
+
+    def test_get_memory_usage_total_bytes_increases_with_more_data(self):
+        """get_memory_usage total_bytes increases as more data is loaded."""
+        repl = SafeREPL()
+
+        repl.load_data("small", "x" * 100, data_type="text")
+        usage1 = repl.get_memory_usage()
+
+        repl.load_data("medium", "y" * 1000, data_type="text")
+        usage2 = repl.get_memory_usage()
+
+        repl.load_data("large", "z" * 10000, data_type="text")
+        usage3 = repl.get_memory_usage()
+
+        assert usage1["total_bytes"] < usage2["total_bytes"]
+        assert usage2["total_bytes"] < usage3["total_bytes"]
+
+    def test_get_memory_usage_usage_percent_increases_with_data(self):
+        """get_memory_usage usage_percent increases as data is loaded."""
+        repl = SafeREPL(max_memory_mb=1)  # 1 MB limit for easier testing
+
+        # Load ~100KB of data
+        repl.load_data("data", "x" * (100 * 1024), data_type="text")
+        result = repl.get_memory_usage()
+
+        # 100KB out of 1MB = ~10%
+        assert result["usage_percent"] > 0
+        assert result["usage_percent"] < 100
+
+    def test_get_memory_usage_total_human_format_bytes(self):
+        """get_memory_usage total_human formats small values as bytes."""
+        repl = SafeREPL()
+        repl.load_data("small", "hello", data_type="text")  # 5 bytes
+        result = repl.get_memory_usage()
+
+        assert "B" in result["total_human"]
+
+    def test_get_memory_usage_total_human_format_kb(self):
+        """get_memory_usage total_human formats values in KB."""
+        repl = SafeREPL()
+        # Load ~10KB of data
+        repl.load_data("data", "x" * (10 * 1024), data_type="text")
+        result = repl.get_memory_usage()
+
+        # Should be formatted as KB
+        assert "KB" in result["total_human"] or "MB" in result["total_human"]
+
+    def test_get_memory_usage_total_human_format_mb(self):
+        """get_memory_usage total_human formats values in MB."""
+        repl = SafeREPL()
+        # Load ~2MB of data
+        repl.load_data("data", "x" * (2 * 1024 * 1024), data_type="text")
+        result = repl.get_memory_usage()
+
+        assert "MB" in result["total_human"]
+
+    def test_get_memory_usage_after_clear_all_resets(self):
+        """get_memory_usage resets after clear_all."""
+        repl = SafeREPL()
+        repl.load_data("data", "x" * 10000, data_type="text")
+
+        # Verify data was loaded
+        usage_before = repl.get_memory_usage()
+        assert usage_before["total_bytes"] > 0
+        assert usage_before["variable_count"] > 0
+
+        # Clear all
+        repl.clear_all()
+
+        # Verify reset
+        usage_after = repl.get_memory_usage()
+        assert usage_after["total_bytes"] == 0
+        assert usage_after["variable_count"] == 0
+        assert usage_after["usage_percent"] == 0.0
+
+    def test_get_memory_usage_after_clear_variable_decreases(self):
+        """get_memory_usage decreases after clearing a variable."""
+        repl = SafeREPL()
+        repl.load_data("var1", "x" * 1000, data_type="text")
+        repl.load_data("var2", "y" * 2000, data_type="text")
+
+        usage_before = repl.get_memory_usage()
+
+        # Clear one variable
+        repl.clear_variable("var1")
+
+        usage_after = repl.get_memory_usage()
+
+        assert usage_after["total_bytes"] < usage_before["total_bytes"]
+        assert usage_after["variable_count"] == usage_before["variable_count"] - 1
+
+    def test_get_memory_usage_returns_types(self):
+        """get_memory_usage returns correct types for all values."""
+        repl = SafeREPL()
+        repl.load_data("test", "hello", data_type="text")
+        result = repl.get_memory_usage()
+
+        assert isinstance(result["total_bytes"], int)
+        assert isinstance(result["total_human"], str)
+        assert isinstance(result["variable_count"], int)
+        assert isinstance(result["max_allowed_mb"], int)
+        assert isinstance(result["usage_percent"], float)
+
+    def test_get_memory_usage_reflects_overwritten_variable(self):
+        """get_memory_usage correctly updates when variable is overwritten."""
+        repl = SafeREPL()
+        repl.load_data("data", "small", data_type="text")
+        usage1 = repl.get_memory_usage()
+
+        # Overwrite with larger data
+        repl.load_data("data", "x" * 10000, data_type="text")
+        usage2 = repl.get_memory_usage()
+
+        # Variable count should stay the same
+        assert usage2["variable_count"] == usage1["variable_count"]
+        # But total_bytes should increase
+        assert usage2["total_bytes"] > usage1["total_bytes"]
+
+    def test_get_memory_usage_includes_all_variable_types(self):
+        """get_memory_usage counts all variable types (str, dict, list)."""
+        repl = SafeREPL()
+        repl.load_data("text", "hello world", data_type="text")
+        repl.load_data("json_obj", '{"key": "value"}', data_type="json")
+        repl.load_data("json_arr", '[1, 2, 3]', data_type="json")
+        repl.load_data("csv_data", "a,b\n1,2", data_type="csv")
+        repl.load_data("lines", "line1\nline2", data_type="lines")
+
+        result = repl.get_memory_usage()
+
+        assert result["variable_count"] == 5
+        assert result["total_bytes"] > 0
+
+    def test_get_memory_usage_large_data_reasonable_percent(self):
+        """get_memory_usage calculates reasonable usage_percent for large data."""
+        repl = SafeREPL(max_memory_mb=100)  # 100 MB limit
+
+        # Load 10 MB of data
+        repl.load_data("large", "x" * (10 * 1024 * 1024), data_type="text")
+        result = repl.get_memory_usage()
+
+        # Should be approximately 10%
+        assert 8 < result["usage_percent"] < 12
+
+    def test_get_memory_usage_does_not_modify_state(self):
+        """get_memory_usage is read-only and doesn't modify state."""
+        repl = SafeREPL()
+        repl.load_data("test", "data", data_type="text")
+
+        # Call multiple times
+        result1 = repl.get_memory_usage()
+        result2 = repl.get_memory_usage()
+        result3 = repl.get_memory_usage()
+
+        # Results should be identical
+        assert result1 == result2 == result3
+
+        # Variables should still be there
+        assert "test" in repl.variables
+
+    def test_get_memory_usage_with_execute_variables(self):
+        """get_memory_usage includes variables created via execute."""
+        repl = SafeREPL()
+        repl.execute("large_list = list(range(10000))")
+        result = repl.get_memory_usage()
+
+        assert result["variable_count"] >= 1
+        assert result["total_bytes"] > 0

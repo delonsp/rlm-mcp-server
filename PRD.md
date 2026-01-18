@@ -64,7 +64,7 @@ src/rlm_mcp/
 - [x] Testar load_data com data_type="json"
 - [x] Testar load_data com data_type="csv"
 - [x] Testar load_data com data_type="lines"
-- [ ] Testar get_memory_usage retorna valores razoáveis
+- [x] Testar get_memory_usage retorna valores razoáveis
 - [ ] Testar clear_namespace limpa variáveis
 
 ## Fase 5: Testes do Módulo s3_client.py (com mocks)

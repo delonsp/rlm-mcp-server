@@ -888,3 +888,51 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 28 - Test load_data with data_type="lines"
+
+- What was implemented:
+  - Added TestLoadDataLines class to tests/test_repl.py
+  - 29 test cases covering:
+    - load_data returns ExecutionResult object with success=True
+    - Splits string on \n into list of strings
+    - Returns list type
+    - Single line (no newline) returns list with one item
+    - Empty string returns list containing one empty string ([""])
+    - Preserves empty lines (consecutive newlines)
+    - Trailing newline creates empty element at end
+    - Leading newline creates empty element at beginning
+    - Multiple consecutive newlines create multiple empty strings
+    - Decodes bytes to string before splitting
+    - Handles UTF-8 bytes correctly
+    - Handles Unicode content (Japanese, Chinese, Korean, Arabic)
+    - Preserves whitespace within lines
+    - String with only newlines creates list of empty strings
+    - Creates variable metadata with type_name="list"
+    - Metadata has preview, human_size, timestamps
+    - Records variable in variables_changed
+    - stdout contains loading info ("carregada", "list")
+    - Overwrites existing variable with same name
+    - Variable usable in subsequent execute() calls
+    - Can access individual lines by index
+    - Can iterate over lines
+    - Handles large data (10000 lines)
+    - Handles special characters (tab, quote, backslash)
+    - Only splits on \n, not \r (Windows \r\n keeps \r attached)
+    - Carriage return only (old Mac style) results in single line
+
+- Files changed:
+  - tests/test_repl.py (added TestLoadDataLines class with 29 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - load_data with data_type="lines" uses simple str.split('\n') - no fancy line parsing
+  - "".split('\n') returns [''] (list with one empty string), NOT empty list []
+  - "a\nb\n".split('\n') returns ['a', 'b', ''] (trailing newline creates empty element)
+  - split('\n') only splits on \n, not \r - Windows line endings (\r\n) keep \r attached
+  - Old Mac line endings (\r only) are not split at all - entire text becomes one line
+  - Bytes are decoded with .decode() before splitting (UTF-8 default)
+  - type_name in metadata is "list" for lines data
+
+---
+
