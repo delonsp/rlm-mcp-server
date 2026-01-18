@@ -38,3 +38,48 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 3 - Create tests/conftest.py with fixtures
+
+- What was implemented:
+  - Created tests/conftest.py with temp_db and sample_text fixtures
+  - temp_db: Creates temporary SQLite .db file, cleans up after test
+  - sample_text: Generates ~1.45M chars with Portuguese terms (medo, ansiedade, trabalho, etc.)
+  - Added tests/test_fixtures.py to validate fixtures work correctly
+
+- Files changed:
+  - tests/conftest.py (new file)
+  - tests/test_fixtures.py (new file)
+  - PRD.md (marked task complete)
+
+- Learnings for future iterations:
+  - tempfile.mkstemp returns (file_descriptor, path) - must close fd before using path
+  - sample_text of ~1.45M chars is well above the 100k threshold for auto-indexing
+  - Fixtures in conftest.py are automatically discovered by pytest without imports
+
+---
+
+## Iteration 4 - Test save_variable and load_variable roundtrip
+
+- What was implemented:
+  - Created tests/test_persistence.py with TestSaveAndLoadVariable class
+  - 10 test cases covering:
+    - Roundtrip for string, dict, list types
+    - Empty values (empty string, dict, list)
+    - Nonexistent variable returns None
+    - Variable with metadata
+    - Overwriting existing variable
+    - Large string (~1.45M chars) with compression
+
+- Files changed:
+  - tests/test_persistence.py (new file)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - PersistenceManager(db_path=temp_db) accepts custom path for testing
+  - save_variable returns True on success, uses pickle + zlib compression
+  - load_variable returns None if variable doesn't exist (not an exception)
+  - INSERT OR REPLACE handles overwriting with same name
+
+---
+
