@@ -10,7 +10,8 @@ services:
       context: .
       dockerfile: Dockerfile
 
-    container_name: rlm-mcp-server
+    # NÃO usar container_name - causa conflitos no Dokploy
+    # container_name: rlm-mcp-server
 
     restart: unless-stopped
 
@@ -54,23 +55,14 @@ services:
     networks:
       - dokploy-network
 
-    # Labels para Traefik (Dokploy usa Traefik)
-    # IMPORTANTE: Define um único serviço (rlm-mcp-svc) referenciado por ambos routers
+    # Labels para Traefik
+    # RECOMENDADO: Configurar domínio pela UI do Dokploy (aba Domains)
+    # Dokploy adiciona labels automaticamente durante deploy
+    # Labels abaixo são fallback caso UI não esteja configurada
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=dokploy-network"
-      # Serviço único com porta correta
-      - "traefik.http.services.rlm-mcp-svc.loadbalancer.server.port=8765"
-      # Router HTTP (redireciona para HTTPS)
-      - "traefik.http.routers.rlm-mcp-http.rule=Host(`rlm.drsolution.online`)"
-      - "traefik.http.routers.rlm-mcp-http.entrypoints=web"
-      - "traefik.http.routers.rlm-mcp-http.middlewares=redirect-to-https@file"
-      - "traefik.http.routers.rlm-mcp-http.service=rlm-mcp-svc"
-      # Router HTTPS
-      - "traefik.http.routers.rlm-mcp-https.rule=Host(`rlm.drsolution.online`)"
-      - "traefik.http.routers.rlm-mcp-https.entrypoints=websecure"
-      - "traefik.http.routers.rlm-mcp-https.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.rlm-mcp-https.service=rlm-mcp-svc"
+      - "traefik.http.services.rlm-mcp.loadbalancer.server.port=8765"
 
     # Healthcheck
     healthcheck:
