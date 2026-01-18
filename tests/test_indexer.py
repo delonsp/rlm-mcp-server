@@ -426,3 +426,154 @@ class TestTextIndexSearch:
         index.search("nonexistent")
 
         assert index.terms == original_terms
+
+
+class TestSearchMultipleOrMode:
+    """Test TextIndex.search_multiple with require_all=False (OR mode)."""
+
+    def test_returns_dict_with_matching_terms(self):
+        """search_multiple returns dict with term -> matches for each found term."""
+        text = "Linha 1 com medo\nLinha 2 com trabalho\nLinha 3 com ansiedade"
+        index = create_index(text, "test_var")
+
+        results = index.search_multiple(["medo", "trabalho"], require_all=False)
+
+        assert "medo" in results
+        assert "trabalho" in results
+        assert len(results["medo"]) == 1
+        assert len(results["trabalho"]) == 1
+
+    def test_omits_terms_not_found(self):
+        """search_multiple with OR mode omits terms not in index."""
+        text = "Texto apenas com medo"
+        index = create_index(text, "test_var")
+
+        results = index.search_multiple(["medo", "trabalho"], require_all=False)
+
+        assert "medo" in results
+        assert "trabalho" not in results
+
+    def test_returns_empty_dict_when_no_terms_found(self):
+        """search_multiple returns empty dict when no terms are found."""
+        text = "Texto simples sem termos especiais"
+        index = create_index(text, "test_var")
+
+        results = index.search_multiple(["medo", "trabalho"], require_all=False)
+
+        assert results == {}
+
+    def test_is_case_insensitive(self):
+        """search_multiple performs case-insensitive search."""
+        text = "Tenho MEDO e TRABALHO"
+        index = create_index(text, "test_var")
+
+        results = index.search_multiple(["Medo", "TRABALHO"], require_all=False)
+
+        assert "medo" in results or "Medo" in results  # dict keys are lowercase input
+        # Actually, the method uses `t` (original case) as key, but search is lowercase
+        # Let me verify: `{t: self.search(t) for t in terms if self.search(t)}`
+        # So the key is the original term passed in, but search is case-insensitive
+        assert len(results) == 2
+
+    def test_preserves_original_term_as_key(self):
+        """search_multiple uses original term case as dict key."""
+        text = "Tenho medo de trabalho"
+        index = create_index(text, "test_var")
+
+        results = index.search_multiple(["MEDO", "Trabalho"], require_all=False)
+
+        # Keys should be the original terms passed in
+        assert "MEDO" in results
+        assert "Trabalho" in results
+
+    def test_with_single_term(self):
+        """search_multiple works with a single term."""
+        text = "Linha 1 com medo\nLinha 2 com medo"
+        index = create_index(text, "test_var")
+
+        results = index.search_multiple(["medo"], require_all=False)
+
+        assert "medo" in results
+        assert len(results["medo"]) == 2
+
+    def test_with_empty_term_list(self):
+        """search_multiple with empty term list returns empty dict."""
+        text = "Tenho medo de trabalho"
+        index = create_index(text, "test_var")
+
+        results = index.search_multiple([], require_all=False)
+
+        assert results == {}
+
+    def test_multiple_occurrences_per_term(self):
+        """search_multiple returns all occurrences for each term."""
+        text = "Linha 1 medo\nLinha 2 medo\nLinha 3 medo\nLinha 4 trabalho"
+        index = create_index(text, "test_var")
+
+        results = index.search_multiple(["medo", "trabalho"], require_all=False)
+
+        assert len(results["medo"]) == 3
+        assert len(results["trabalho"]) == 1
+
+    def test_matches_contain_linha_and_contexto(self):
+        """search_multiple results contain linha and contexto keys."""
+        text = "Primeira linha\nSegunda linha com medo\nTerceira linha"
+        index = create_index(text, "test_var")
+
+        results = index.search_multiple(["medo"], require_all=False)
+
+        assert "medo" in results
+        match = results["medo"][0]
+        assert "linha" in match
+        assert "contexto" in match
+        assert match["linha"] == 1
+        assert "medo" in match["contexto"]
+
+    def test_with_custom_terms(self):
+        """search_multiple works with custom terms from additional_terms."""
+        text = "O paciente tem xerostomia e epistaxe"
+        index = create_index(text, "test_var", additional_terms=["xerostomia", "epistaxe"])
+
+        results = index.search_multiple(["xerostomia", "epistaxe"], require_all=False)
+
+        assert "xerostomia" in results
+        assert "epistaxe" in results
+
+    def test_on_empty_index(self):
+        """search_multiple on empty index returns empty dict."""
+        index = create_index("", "empty_var")
+
+        results = index.search_multiple(["medo", "trabalho"], require_all=False)
+
+        assert results == {}
+
+    def test_with_many_terms(self):
+        """search_multiple handles many terms efficiently."""
+        text = "Linha com medo, ansiedade, raiva, tristeza e alegria"
+        index = create_index(text, "test_var")
+        terms = ["medo", "ansiedade", "raiva", "tristeza", "alegria", "depressão", "vergonha"]
+
+        results = index.search_multiple(terms, require_all=False)
+
+        # Only terms present in text should be in results
+        assert "medo" in results
+        assert "ansiedade" in results
+        assert "raiva" in results
+        assert "tristeza" in results
+        assert "alegria" in results
+        # These are not in the text
+        assert "depressão" not in results
+        assert "vergonha" not in results
+
+    def test_default_require_all_is_false(self):
+        """search_multiple defaults to require_all=False (OR mode)."""
+        text = "Texto com medo e trabalho"
+        index = create_index(text, "test_var")
+
+        # Call without specifying require_all
+        results = index.search_multiple(["medo", "trabalho"])
+
+        # Should behave as OR mode (dict with term -> matches)
+        assert isinstance(results, dict)
+        assert "medo" in results
+        assert "trabalho" in results

@@ -48,7 +48,7 @@ src/rlm_mcp/
 - [x] Testar create_index gera índice com termos padrão
 - [x] Testar create_index com additional_terms indexa termos customizados
 - [x] Testar TextIndex.search retorna matches corretos
-- [ ] Testar TextIndex.search_multiple com require_all=False (OR)
+- [x] Testar TextIndex.search_multiple com require_all=False (OR)
 - [ ] Testar TextIndex.search_multiple com require_all=True (AND)
 - [ ] Testar auto_index_if_large indexa apenas textos >= 100k chars
 - [ ] Testar _detect_structure detecta headers markdown
