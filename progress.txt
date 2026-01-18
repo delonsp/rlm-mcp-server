@@ -593,3 +593,88 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 21 - Test execute com código simples (print, atribuição)
+
+- What was implemented:
+  - Created tests/test_repl.py with TestExecuteSimpleCode class
+  - 23 test cases covering:
+    - execute returns ExecutionResult object
+    - execute returns success=True for valid code
+    - execute captures print output in stdout
+    - execute captures multiple print statements
+    - execute records assigned variable in variables_changed
+    - execute handles multiple assignments
+    - execute handles string, list, dict assignments
+    - execute handles arithmetic operations
+    - execute handles string operations
+    - execute handles list comprehension
+    - execute handles function definition and call
+    - execute returns execution_time_ms >= 0
+    - execute returns success=False for syntax error
+    - execute returns success=False for runtime error (ZeroDivisionError)
+    - execute returns success=False for NameError
+    - execute increments execution_count
+    - execute handles empty code
+    - execute handles code with only comments
+    - execute creates variable metadata
+    - execute creates variable metadata with preview
+
+- Files changed:
+  - tests/test_repl.py (new file)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - SafeREPL() injects llm_query, llm_stats, llm_reset_counter into namespace on every execute()
+  - These llm_* functions always appear in variables_changed because bound methods create new objects on each access
+  - To check user variables only, filter: `[v for v in variables_changed if not v.startswith("llm_")]`
+  - execute() captures stdout/stderr by temporarily replacing sys.stdout/sys.stderr
+  - Syntax errors are caught in _validate_code and return SecurityError message
+  - execution_count is incremented even on failed executions
+  - variable_metadata stores VariableInfo with name, type_name, size_bytes, size_human, preview, created_at, last_accessed
+
+---
+
+## Iteration 22 - Test execute preserva variáveis entre execuções
+
+- What was implemented:
+  - Added TestExecutePreservesVariables class to tests/test_repl.py
+  - 20 test cases covering:
+    - Variable from first execution available in second
+    - Multiple variables persist across executions
+    - Variable can be modified in subsequent executions
+    - List variable persists and can be modified (append)
+    - Dict variable persists and can be modified (key assignment)
+    - Function defined in first execution callable in second
+    - Class definition not supported in sandbox (__build_class__ not exposed)
+    - Imported module persists (e.g., statistics module)
+    - repl.variables property reflects current state
+    - del in namespace doesn't remove from repl.variables (tracked separately)
+    - Variable metadata persists (created_at preserved on update)
+    - Failed execution does not lose existing variables
+    - Partial execution preserves variables defined before error
+    - Variables isolated between different SafeREPL instances
+    - Complex nested data structures persist
+    - Generator expression result persists (when converted to list)
+    - String operations work across executions
+    - Lambda functions persist and can be used
+    - Many executions (20 variables) preserve all variables
+    - llm_query, llm_stats, llm_reset_counter always available
+
+- Files changed:
+  - tests/test_repl.py (added TestExecutePreservesVariables class)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - SafeREPL persists variables via self.variables dict, injected into namespace with **self.variables
+  - Classes don't work in sandbox because __build_class__ builtin is not exposed (security feature)
+  - del x in executed code doesn't remove from repl.variables - it's only synced on new/changed
+  - Functions defined with def persist between executions
+  - Lambdas persist between executions
+  - Modules imported in one execution are available in subsequent (via self.variables)
+  - created_at is preserved when variable is updated (uses existing metadata)
+  - Each SafeREPL instance has independent variable storage
+
+---
+

@@ -57,7 +57,7 @@ src/rlm_mcp/
 ## Fase 4: Testes do Módulo repl.py
 
 - [x] Testar execute com código simples (print, atribuição)
-- [ ] Testar execute preserva variáveis entre execuções
+- [x] Testar execute preserva variáveis entre execuções
 - [ ] Testar execute bloqueia imports perigosos (os, subprocess, socket)
 - [ ] Testar execute permite imports seguros (re, json, math, collections)
 - [ ] Testar load_data com data_type="text"
