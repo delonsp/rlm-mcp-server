@@ -36,7 +36,7 @@ src/rlm_mcp/
 - [x] Testar save_variable e load_variable (roundtrip de string, dict, list)
 - [x] Testar delete_variable remove do banco
 - [x] Testar list_variables retorna metadados corretos
-- [ ] Testar save_index e load_index (roundtrip de índice semântico)
+- [x] Testar save_index e load_index (roundtrip de índice semântico)
 - [ ] Testar clear_all remove todas as variáveis
 - [ ] Testar get_stats retorna contagens corretas
 - [ ] Testar create_collection e list_collections

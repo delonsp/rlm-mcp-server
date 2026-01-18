@@ -305,3 +305,126 @@ class TestListVariables:
         # created_at should stay the same, updated_at should change
         assert new_created_at == initial_created_at
         assert new_updated_at > initial_updated_at
+
+
+class TestSaveAndLoadIndex:
+    """Tests for save_index and load_index methods."""
+
+    def test_roundtrip_simple_index(self, temp_db):
+        """Test saving and loading a simple index with term -> positions mapping."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Create a simple index: term -> list of positions
+        index_data = {
+            "medo": [0, 100, 250],
+            "ansiedade": [50, 300],
+            "trabalho": [150, 400, 550],
+        }
+        assert pm.save_index("test_var", index_data) is True
+
+        result = pm.load_index("test_var")
+        assert result == index_data
+
+    def test_roundtrip_empty_index(self, temp_db):
+        """Test saving and loading an empty index."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        index_data = {}
+        assert pm.save_index("empty_index_var", index_data) is True
+
+        result = pm.load_index("empty_index_var")
+        assert result == index_data
+
+    def test_load_nonexistent_index(self, temp_db):
+        """Test loading an index that doesn't exist returns None."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        result = pm.load_index("nonexistent")
+        assert result is None
+
+    def test_roundtrip_large_index(self, temp_db):
+        """Test saving and loading an index with many terms."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Create a large index with 1000 terms
+        index_data = {
+            f"term_{i}": [j * 100 for j in range(10)]  # Each term has 10 positions
+            for i in range(1000)
+        }
+        assert pm.save_index("large_index_var", index_data) is True
+
+        result = pm.load_index("large_index_var")
+        assert result == index_data
+        assert len(result) == 1000
+
+    def test_overwrite_existing_index(self, temp_db):
+        """Test that saving an index with the same var_name overwrites it."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Save initial index
+        initial_index = {"term1": [0, 10], "term2": [20]}
+        pm.save_index("overwrite_var", initial_index)
+
+        # Overwrite with new index
+        new_index = {"new_term": [100, 200, 300]}
+        pm.save_index("overwrite_var", new_index)
+
+        result = pm.load_index("overwrite_var")
+        assert result == new_index
+        assert "term1" not in result
+
+    def test_index_without_associated_variable(self, temp_db):
+        """Test that index can be saved without an associated variable."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Save index without saving a variable first
+        # (The foreign key is defined but SQLite doesn't enforce it by default)
+        index_data = {"orphan_term": [0, 50]}
+        assert pm.save_index("orphan_var", index_data) is True
+
+        result = pm.load_index("orphan_var")
+        assert result == index_data
+
+    def test_index_terms_with_special_characters(self, temp_db):
+        """Test index with terms containing special characters."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        index_data = {
+            "medo-pânico": [0, 100],
+            "trabalho/estresse": [50],
+            "família (nuclear)": [200, 300],
+            "síndrome@burnout": [400],
+        }
+        assert pm.save_index("special_var", index_data) is True
+
+        result = pm.load_index("special_var")
+        assert result == index_data
+
+    def test_index_preserves_position_order(self, temp_db):
+        """Test that position lists preserve their order."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Positions intentionally not sorted
+        index_data = {
+            "termo": [500, 100, 300, 50, 999],
+        }
+        assert pm.save_index("order_var", index_data) is True
+
+        result = pm.load_index("order_var")
+        assert result["termo"] == [500, 100, 300, 50, 999]
+
+    def test_multiple_indexes_independent(self, temp_db):
+        """Test that multiple indexes for different variables are independent."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        index1 = {"term_a": [0, 10]}
+        index2 = {"term_b": [100, 200]}
+        index3 = {"term_c": [300]}
+
+        pm.save_index("var1", index1)
+        pm.save_index("var2", index2)
+        pm.save_index("var3", index3)
+
+        assert pm.load_index("var1") == index1
+        assert pm.load_index("var2") == index2
+        assert pm.load_index("var3") == index3
