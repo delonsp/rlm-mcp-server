@@ -3,17 +3,25 @@ REPL Python Persistente com Sandbox de Segurança
 
 Mantém variáveis em memória entre execuções, permitindo
 manipulação de dados massivos sem carregar no contexto do LLM.
+
+Implementa o padrão RLM (Recursive Language Models) do paper MIT CSAIL,
+permitindo sub-chamadas a LLMs de dentro do código Python.
 """
 
 import ast
 import sys
 import traceback
 from io import StringIO
-from typing import Any
+from typing import Any, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
 import re
 import json
+import logging
+
+from .llm_client import LLMClient
+
+logger = logging.getLogger("rlm-mcp.repl")
 
 
 # Imports permitidos no sandbox
@@ -96,6 +104,9 @@ class SafeREPL:
         self.variable_metadata: dict[str, VariableInfo] = {}
         self.max_memory_mb = max_memory_mb
         self.execution_count = 0
+
+        # Cliente LLM para sub-chamadas recursivas (RLM)
+        self.llm_client = LLMClient()
 
         # Namespace seguro para execução
         self._safe_builtins = self._create_safe_builtins()
@@ -206,6 +217,36 @@ class SafeREPL:
         except Exception:
             return f"<{type(obj).__name__}>"
 
+    def _llm_query_wrapper(
+        self,
+        prompt: str,
+        data: Optional[str] = None,
+        model: Optional[str] = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.0
+    ) -> str:
+        """
+        Wrapper para sub-chamadas LLM de dentro do código Python.
+
+        Esta função implementa o core do padrão RLM (Recursive Language Models),
+        permitindo que código Python chame LLMs para processar chunks de dados.
+
+        Args:
+            prompt: Instrução para o LLM
+            data: Dados opcionais para processar
+            model: Modelo a usar (default configurável via RLM_SUB_MODEL)
+            max_tokens: Máximo de tokens na resposta
+            temperature: Temperatura (0.0 = determinístico)
+
+        Returns:
+            Resposta do LLM como string
+
+        Example:
+            # Dentro de rlm_execute:
+            summary = llm_query("Resuma este texto:", data=chunk)
+        """
+        return self.llm_client.query(prompt, data, model, max_tokens, temperature)
+
     def execute(self, code: str, timeout_seconds: float = 30.0) -> ExecutionResult:
         """
         Executa código Python no sandbox.
@@ -248,6 +289,11 @@ class SafeREPL:
                 namespace[mod] = __import__(mod)
             except ImportError:
                 pass
+
+        # Injeta funções RLM para sub-chamadas a LLMs (core do paper)
+        namespace['llm_query'] = self._llm_query_wrapper
+        namespace['llm_stats'] = self.llm_client.get_stats
+        namespace['llm_reset_counter'] = self.llm_client.reset_counter
 
         variables_before = set(self.variables.keys())
         success = True

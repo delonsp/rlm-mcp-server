@@ -146,6 +146,16 @@ claude --mcp-restart
 | `rlm_clear` | Limpa variáveis |
 | `rlm_memory` | Estatísticas de memória |
 
+### Funções Disponíveis Dentro do Código (RLM)
+
+Dentro do código executado via `rlm_execute`, estas funções estão disponíveis:
+
+| Função | Descrição |
+|--------|-----------|
+| `llm_query(prompt, data=None, model=None)` | Faz sub-chamada a um LLM |
+| `llm_stats()` | Retorna estatísticas de uso |
+| `llm_reset_counter()` | Reseta contador de chamadas |
+
 ### Exemplos de Uso no Claude Code
 
 **Analisar logs massivos:**
@@ -183,6 +193,36 @@ Claude: [usa rlm_execute]:
         print(f"{hour}: {count}")
 ```
 
+**Sub-chamadas LLM (Recursive Language Model):**
+
+```
+Você: "Analise 1GB de logs e encontre padrões de erro"
+
+Claude: [usa rlm_execute com llm_query]:
+    # Divide dados massivos em chunks
+    chunk_size = 50000
+    chunks = [logs[i:i+chunk_size] for i in range(0, len(logs), chunk_size)]
+
+    # Processa cada chunk com sub-LLM (padrão map-reduce)
+    summaries = []
+    for i, chunk in enumerate(chunks):
+        summary = llm_query(
+            "Liste os erros críticos encontrados neste log:",
+            data="\n".join(chunk)
+        )
+        summaries.append(summary)
+        print(f"Chunk {i+1}/{len(chunks)} processado")
+
+    # Sintetiza resultados
+    final = llm_query(
+        "Combine estes resumos em um relatório final:",
+        data="\n---\n".join(summaries)
+    )
+    print(final)
+```
+
+Este padrão implementa o paper ["Recursive Language Models"](https://arxiv.org/abs/2512.24601) do MIT CSAIL, permitindo processar dados que excedem a janela de contexto do LLM.
+
 ## Segurança
 
 ### Sandbox Python
@@ -212,6 +252,9 @@ O REPL executa em sandbox com:
 |----------|--------|-----------|
 | `RLM_MAX_MEMORY_MB` | 1024 | Limite de memória para variáveis |
 | `RLM_API_KEY` | (vazio) | API key para autenticação (opcional) |
+| `OPENAI_API_KEY` | (obrigatório para llm_query) | API key do OpenAI |
+| `RLM_SUB_MODEL` | gpt-4o-mini | Modelo para sub-chamadas LLM |
+| `RLM_MAX_SUB_CALLS` | 100 | Limite de sub-chamadas por execução |
 
 ### Limites de Recursos (Docker)
 
