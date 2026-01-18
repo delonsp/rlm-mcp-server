@@ -456,3 +456,234 @@ class TestExecutePreservesVariables:
         assert callable(repl.variables.get("llm_query"))
         assert callable(repl.variables.get("llm_stats"))
         assert callable(repl.variables.get("llm_reset_counter"))
+
+
+class TestExecuteBlocksDangerousImports:
+    """Test that execute blocks dangerous imports (os, subprocess, socket, etc.)."""
+
+    def test_import_os_is_blocked(self):
+        """import os is blocked."""
+        repl = SafeREPL()
+        result = repl.execute("import os")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+        assert "bloqueado" in result.stderr.lower() or "blocked" in result.stderr.lower()
+
+    def test_import_subprocess_is_blocked(self):
+        """import subprocess is blocked."""
+        repl = SafeREPL()
+        result = repl.execute("import subprocess")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+        assert "subprocess" in result.stderr
+
+    def test_import_socket_is_blocked(self):
+        """import socket is blocked."""
+        repl = SafeREPL()
+        result = repl.execute("import socket")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+        assert "socket" in result.stderr
+
+    def test_import_sys_is_blocked(self):
+        """import sys is blocked."""
+        repl = SafeREPL()
+        result = repl.execute("import sys")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+        assert "sys" in result.stderr
+
+    def test_import_shutil_is_blocked(self):
+        """import shutil is blocked."""
+        repl = SafeREPL()
+        result = repl.execute("import shutil")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+        assert "shutil" in result.stderr
+
+    def test_import_pathlib_is_blocked(self):
+        """import pathlib is blocked."""
+        repl = SafeREPL()
+        result = repl.execute("import pathlib")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+        assert "pathlib" in result.stderr
+
+    def test_import_http_is_blocked(self):
+        """import http is blocked."""
+        repl = SafeREPL()
+        result = repl.execute("import http")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+        assert "http" in result.stderr
+
+    def test_import_urllib_is_blocked(self):
+        """import urllib is blocked."""
+        repl = SafeREPL()
+        result = repl.execute("import urllib")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+        assert "urllib" in result.stderr
+
+    def test_import_requests_is_blocked(self):
+        """import requests is blocked."""
+        repl = SafeREPL()
+        result = repl.execute("import requests")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+        assert "requests" in result.stderr
+
+    def test_import_pickle_is_blocked(self):
+        """import pickle is blocked."""
+        repl = SafeREPL()
+        result = repl.execute("import pickle")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+        assert "pickle" in result.stderr
+
+    def test_import_sqlite3_is_blocked(self):
+        """import sqlite3 is blocked."""
+        repl = SafeREPL()
+        result = repl.execute("import sqlite3")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+        assert "sqlite3" in result.stderr
+
+    def test_import_multiprocessing_is_blocked(self):
+        """import multiprocessing is blocked."""
+        repl = SafeREPL()
+        result = repl.execute("import multiprocessing")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+        assert "multiprocessing" in result.stderr
+
+    def test_import_threading_is_blocked(self):
+        """import threading is blocked."""
+        repl = SafeREPL()
+        result = repl.execute("import threading")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+        assert "threading" in result.stderr
+
+    def test_import_ctypes_is_blocked(self):
+        """import ctypes is blocked."""
+        repl = SafeREPL()
+        result = repl.execute("import ctypes")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+        assert "ctypes" in result.stderr
+
+    def test_import_importlib_is_blocked(self):
+        """import importlib is blocked."""
+        repl = SafeREPL()
+        result = repl.execute("import importlib")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+        assert "importlib" in result.stderr
+
+    def test_import_builtins_is_blocked(self):
+        """import builtins is blocked."""
+        repl = SafeREPL()
+        result = repl.execute("import builtins")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+        assert "builtins" in result.stderr
+
+    def test_from_os_import_is_blocked(self):
+        """from os import ... is blocked."""
+        repl = SafeREPL()
+        result = repl.execute("from os import system")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+        assert "os" in result.stderr
+
+    def test_from_subprocess_import_is_blocked(self):
+        """from subprocess import ... is blocked."""
+        repl = SafeREPL()
+        result = repl.execute("from subprocess import run")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+        assert "subprocess" in result.stderr
+
+    def test_import_os_path_is_blocked(self):
+        """import os.path is blocked (base module is os)."""
+        repl = SafeREPL()
+        result = repl.execute("import os.path")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+        assert "os" in result.stderr
+
+    def test_blocked_import_doesnt_modify_namespace(self):
+        """Blocked import doesn't add anything to the namespace."""
+        repl = SafeREPL()
+        result = repl.execute("import os")
+
+        assert result.success is False
+        assert "os" not in repl.variables
+
+    def test_error_message_mentions_blocked(self):
+        """Error message indicates the import was blocked for security."""
+        repl = SafeREPL()
+        result = repl.execute("import os")
+
+        assert result.success is False
+        # Error message should mention it's a security block
+        assert "bloqueado" in result.stderr.lower() or "seguranca" in result.stderr.lower()
+
+    def test_unknown_module_also_blocked(self):
+        """Unknown module that is not in whitelist is also blocked."""
+        repl = SafeREPL()
+        result = repl.execute("import some_unknown_module_xyz")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+        # Error message should mention it's not allowed
+        assert "nao permitido" in result.stderr.lower() or "not permitted" in result.stderr.lower() or "Permitidos" in result.stderr
+
+    def test_blocked_import_in_try_except_caught_but_module_not_loaded(self):
+        """Blocked import wrapped in try-except can be caught, but module is never loaded."""
+        repl = SafeREPL()
+        # User can catch the exception - this is fine behavior
+        # The important thing is that the dangerous module is NEVER loaded
+        result = repl.execute("""
+try:
+    import os
+    x = 1  # This line never executes
+except:
+    x = 2  # Exception caught, x set to 2
+""")
+
+        # The SecurityError is caught by the user's try-except, so execution succeeds
+        assert result.success is True
+        # User's exception handler ran
+        assert repl.variables["x"] == 2
+        # Most importantly: os is NOT in the namespace (the import failed)
+        assert "os" not in repl.variables
+
+    def test_multiple_dangerous_imports_all_blocked(self):
+        """Multiple dangerous imports are all blocked."""
+        repl = SafeREPL()
+
+        for module in ["os", "subprocess", "socket", "sys", "shutil"]:
+            result = repl.execute(f"import {module}")
+            assert result.success is False, f"Expected {module} to be blocked"
+            assert "SecurityError" in result.stderr, f"Expected SecurityError for {module}"
