@@ -46,7 +46,7 @@ services:
     # Labels para Traefik (Dokploy usa Traefik)
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.rlm-mcp.rule=Host(`rlm.${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.rlm-mcp.rule=Host(`rlm.drsolution.online`)"
       - "traefik.http.routers.rlm-mcp.entrypoints=websecure"
       - "traefik.http.routers.rlm-mcp.tls.certresolver=letsencrypt"
       - "traefik.http.services.rlm-mcp.loadbalancer.server.port=8765"
