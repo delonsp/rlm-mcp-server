@@ -100,22 +100,26 @@ Adicione ao `~/.claude/claude.json`:
 {
   "mcpServers": {
     "rlm": {
-      "command": "socat",
-      "args": ["TCP:localhost:8765", "STDIO"]
+      "type": "sse",
+      "url": "https://rlm.seudominio.com/sse",
+      "headers": {
+        "Authorization": "Bearer SUA_API_KEY_AQUI"
+      }
     }
   }
 }
 ```
 
-**Ou**, para uso local direto:
+> **Nota**: Substitua `rlm.seudominio.com` pelo domínio configurado no Traefik/Dokploy.
+
+**Alternativa** - via SSH tunnel (se não quiser expor publicamente):
 
 ```json
 {
   "mcpServers": {
     "rlm": {
-      "command": "python",
-      "args": ["-m", "rlm_mcp.server"],
-      "cwd": "/caminho/para/rlm-mcp-server"
+      "command": "socat",
+      "args": ["TCP:localhost:8765", "STDIO"]
     }
   }
 }

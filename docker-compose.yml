@@ -1,7 +1,8 @@
 # Docker Compose para RLM MCP Server
-# Compatível com Dokploy
+# Compatível com Dokploy + Traefik
 #
-# O serviço expõe porta 8765 para conexão via SSH tunnel
+# Expõe servidor HTTP/SSE na porta 8765
+# Configure no Traefik para HTTPS via domínio
 
 services:
   rlm-mcp:
@@ -16,15 +17,16 @@ services:
     environment:
       # Memória máxima para variáveis (em MB)
       - RLM_MAX_MEMORY_MB=${RLM_MAX_MEMORY_MB:-1024}
-      # Porta TCP
+      # Porta HTTP
       - RLM_PORT=8765
+      # API Key (opcional, mas recomendado em produção)
+      - RLM_API_KEY=${RLM_API_KEY:-}
 
     volumes:
       # Monte seus dados aqui - serão acessíveis via /data no container
-      # No Dokploy, configure este volume nas settings do app
       - rlm-data:/data:ro
 
-    # Expõe porta para conexão via SSH tunnel
+    # Expõe porta
     ports:
       - "8765:8765"
 
@@ -41,20 +43,24 @@ services:
     networks:
       - dokploy-network
 
-    # Labels para Dokploy
+    # Labels para Traefik (Dokploy usa Traefik)
     labels:
-      - "dokploy.enable=true"
+      - "traefik.enable=true"
+      - "traefik.http.routers.rlm-mcp.rule=Host(`rlm.${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.rlm-mcp.entrypoints=websecure"
+      - "traefik.http.routers.rlm-mcp.tls.certresolver=letsencrypt"
+      - "traefik.http.services.rlm-mcp.loadbalancer.server.port=8765"
 
     # Healthcheck
     healthcheck:
-      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.connect(('localhost',8765)); s.close()"]
+      test: ["CMD", "curl", "-f", "http://localhost:8765/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 15s
 
-    # Comando: TCP bridge
-    command: ["python", "-m", "rlm_mcp.tcp_bridge"]
+    # Comando: HTTP server
+    command: ["python", "-m", "rlm_mcp.http_server"]
 
 volumes:
   rlm-data:

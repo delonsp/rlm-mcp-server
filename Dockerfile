@@ -28,6 +28,9 @@ LABEL maintainer="seu-email@exemplo.com"
 LABEL description="RLM MCP Server - Recursive Language Model via MCP"
 LABEL version="0.1.0"
 
+# Instala curl para healthcheck
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
 # Cria usuário não-root para segurança
 RUN groupadd -r rlm && useradd -r -g rlm rlm
 
@@ -52,9 +55,9 @@ EXPOSE 8080
 # Muda para usuário não-root
 USER rlm
 
-# Health check básico
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "from rlm_mcp.server import create_server; print('OK')" || exit 1
+# Health check via HTTP
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:8765/health || exit 1
 
-# Comando padrão
-CMD ["rlm-mcp"]
+# Comando padrão - HTTP server
+CMD ["python", "-m", "rlm_mcp.http_server"]

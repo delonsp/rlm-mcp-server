@@ -9,11 +9,13 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "uvicorn>=0.30.0",
     "pydantic>=2.0.0",
+    "fastapi>=0.115.0",
 ]
 
 [project.scripts]
 rlm-mcp = "rlm_mcp.server:main"
 rlm-mcp-tcp = "rlm_mcp.tcp_bridge:main"
+rlm-mcp-http = "rlm_mcp.http_server:main"
 
 [build-system]
 requires = ["hatchling"]
