@@ -105,3 +105,29 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 6 - Test list_variables returns correct metadata
+
+- What was implemented:
+  - Added TestListVariables class to tests/test_persistence.py
+  - 7 test cases covering:
+    - Empty database returns empty list
+    - Returns all expected metadata fields (name, type, size_bytes, created_at, updated_at)
+    - Correct type names for different types (str, dict, list, int)
+    - Listing multiple variables
+    - Results ordered by updated_at descending
+    - size_bytes matches pickled size of original data
+    - updated_at changes on overwrite while created_at stays same
+
+- Files changed:
+  - tests/test_persistence.py (added TestListVariables class)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - list_variables returns list of dicts with keys: name, type, size_bytes, created_at, updated_at
+  - Results are ordered by updated_at DESC (most recently modified first)
+  - size_bytes is the pickled size before compression (not compressed size)
+  - When a variable is overwritten, created_at is preserved via COALESCE in SQL
+
+---
+
