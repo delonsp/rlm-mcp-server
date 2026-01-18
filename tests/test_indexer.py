@@ -166,3 +166,123 @@ class TestCreateIndexWithDefaultTerms:
         assert "headers" in index.structure
         assert "capitulos" in index.structure
         assert "remedios" in index.structure
+
+
+class TestCreateIndexWithAdditionalTerms:
+    """Test that create_index indexes custom terms via additional_terms parameter."""
+
+    def test_additional_terms_are_indexed(self):
+        """create_index indexes terms from additional_terms list."""
+        text = "O paciente tem xerostomia e epistaxe frequente."
+        index = create_index(text, "test_var", additional_terms=["xerostomia", "epistaxe"])
+
+        assert "xerostomia" in index.terms
+        assert "epistaxe" in index.terms
+
+    def test_additional_terms_stored_in_custom_terms(self):
+        """create_index stores additional_terms in custom_terms field."""
+        text = "Texto com termo_especial"
+        index = create_index(text, "test_var", additional_terms=["termo_especial", "outro_termo"])
+
+        assert index.custom_terms == ["termo_especial", "outro_termo"]
+
+    def test_additional_terms_case_insensitive_indexing(self):
+        """additional_terms are matched case-insensitively."""
+        text = "O paciente apresenta XEROSTOMIA severa"
+        index = create_index(text, "test_var", additional_terms=["xerostomia"])
+
+        # Term should be stored in lowercase
+        assert "xerostomia" in index.terms
+        assert "XEROSTOMIA" not in index.terms
+
+    def test_additional_terms_uppercase_in_list_still_indexed(self):
+        """additional_terms in uppercase are normalized to lowercase for indexing."""
+        text = "O paciente tem xerostomia"
+        index = create_index(text, "test_var", additional_terms=["XEROSTOMIA"])
+
+        # Should find the term despite uppercase in additional_terms
+        assert "xerostomia" in index.terms
+
+    def test_additional_terms_combined_with_default(self):
+        """additional_terms are combined with DEFAULT_INDEX_TERMS."""
+        text = "Tenho medo e xerostomia"
+        index = create_index(text, "test_var", additional_terms=["xerostomia"])
+
+        # Both default and custom terms should be indexed
+        assert "medo" in index.terms  # from DEFAULT_INDEX_TERMS
+        assert "xerostomia" in index.terms  # from additional_terms
+
+    def test_additional_terms_not_found_not_indexed(self):
+        """additional_terms not present in text are not in index."""
+        text = "Texto simples sem os termos buscados"
+        index = create_index(text, "test_var", additional_terms=["xerostomia", "epistaxe"])
+
+        assert "xerostomia" not in index.terms
+        assert "epistaxe" not in index.terms
+
+    def test_additional_terms_with_entry_details(self):
+        """additional_terms entries have correct linha and contexto."""
+        text = "Primeira linha\nSegunda linha com termo_especial\nTerceira linha"
+        index = create_index(text, "test_var", additional_terms=["termo_especial"])
+
+        assert "termo_especial" in index.terms
+        entry = index.terms["termo_especial"][0]
+        assert entry["linha"] == 1
+        assert "termo_especial" in entry["contexto"]
+
+    def test_additional_terms_multiple_occurrences(self):
+        """additional_terms with multiple occurrences create multiple entries."""
+        text = "Linha 1 com termo\nLinha 2 com termo\nLinha 3 com termo"
+        index = create_index(text, "test_var", additional_terms=["termo"])
+
+        assert "termo" in index.terms
+        assert len(index.terms["termo"]) == 3
+
+    def test_additional_terms_empty_list(self):
+        """additional_terms as empty list behaves like None."""
+        text = "Tenho medo de trabalho"
+        index = create_index(text, "test_var", additional_terms=[])
+
+        # Should only have default terms
+        assert "medo" in index.terms
+        assert "trabalho" in index.terms
+        assert index.custom_terms == []
+
+    def test_additional_terms_preserves_original_case_in_custom_terms(self):
+        """custom_terms field preserves the original case from input."""
+        text = "Texto com MixedCase"
+        index = create_index(text, "test_var", additional_terms=["MixedCase", "UPPERCASE"])
+
+        # custom_terms preserves original input
+        assert index.custom_terms == ["MixedCase", "UPPERCASE"]
+
+    def test_additional_terms_with_special_characters(self):
+        """additional_terms with Portuguese special characters work correctly."""
+        text = "Sintomas de cefaléia e diarréia crônica"
+        index = create_index(text, "test_var", additional_terms=["cefaléia", "diarréia"])
+
+        assert "cefaléia" in index.terms
+        assert "diarréia" in index.terms
+
+    def test_additional_terms_duplicate_of_default_no_issue(self):
+        """Duplicate terms (in both default and additional) don't cause issues."""
+        text = "Texto com medo"
+        # "medo" is already in DEFAULT_INDEX_TERMS
+        index = create_index(text, "test_var", additional_terms=["medo"])
+
+        # Should still work and find the term
+        assert "medo" in index.terms
+        # custom_terms stores what was passed
+        assert index.custom_terms == ["medo"]
+
+    def test_additional_terms_many_custom_terms(self):
+        """additional_terms with many terms works correctly."""
+        custom = [f"termo_{i}" for i in range(20)]
+        text = "Linha com termo_5 e termo_10 e termo_15"
+        index = create_index(text, "test_var", additional_terms=custom)
+
+        assert "termo_5" in index.terms
+        assert "termo_10" in index.terms
+        assert "termo_15" in index.terms
+        assert "termo_0" not in index.terms  # not in text
+        assert len(index.custom_terms) == 20
