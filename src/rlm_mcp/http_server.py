@@ -40,9 +40,15 @@ logger = logging.getLogger("rlm-http")
 # API Key para autenticação
 API_KEY = os.getenv("RLM_API_KEY", "")
 MAX_MEMORY_MB = int(os.getenv("RLM_MAX_MEMORY_MB", "1024"))
+CLEANUP_THRESHOLD = float(os.getenv("RLM_CLEANUP_THRESHOLD", "80.0"))  # Quando iniciar limpeza (%)
+CLEANUP_TARGET = float(os.getenv("RLM_CLEANUP_TARGET", "60.0"))  # Até quanto limpar (%)
 
-# Instância global do REPL
-repl = SafeREPL(max_memory_mb=MAX_MEMORY_MB)
+# Instância global do REPL com auto-cleanup
+repl = SafeREPL(
+    max_memory_mb=MAX_MEMORY_MB,
+    cleanup_threshold_percent=CLEANUP_THRESHOLD,
+    cleanup_target_percent=CLEANUP_TARGET
+)
 
 # Sessões SSE ativas
 sse_sessions: dict[str, asyncio.Queue] = {}

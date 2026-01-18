@@ -97,13 +97,24 @@ class SafeREPL:
     - Imports restritos a whitelist
     - Sem acesso a filesystem/rede
     - Timeout em execuções longas
+    - Auto-limpeza de memória quando atinge threshold
     """
 
-    def __init__(self, max_memory_mb: int = 1024):
+    def __init__(
+        self,
+        max_memory_mb: int = 1024,
+        cleanup_threshold_percent: float = 80.0,
+        cleanup_target_percent: float = 60.0
+    ):
         self.variables: dict[str, Any] = {}
         self.variable_metadata: dict[str, VariableInfo] = {}
         self.max_memory_mb = max_memory_mb
         self.execution_count = 0
+
+        # Auto-cleanup settings
+        self.cleanup_threshold_percent = cleanup_threshold_percent  # Quando limpar
+        self.cleanup_target_percent = cleanup_target_percent  # Até quanto limpar
+        self.last_cleanup_count = 0  # Quantas variáveis foram removidas na última limpeza
 
         # Cliente LLM para sub-chamadas recursivas (RLM)
         self.llm_client = LLMClient()
@@ -351,6 +362,11 @@ class SafeREPL:
         execution_time = (time.perf_counter() - start_time) * 1000
         self.execution_count += 1
 
+        # Auto-cleanup se necessário
+        cleanup_info = self._auto_cleanup()
+        if cleanup_info:
+            stdout += f"\n[Auto-cleanup: removidas {cleanup_info['removed_count']} variáveis antigas, liberados {cleanup_info['removed_bytes_human']}]"
+
         return ExecutionResult(
             success=success,
             stdout=stdout,
@@ -394,9 +410,15 @@ class SafeREPL:
                 last_accessed=now,
             )
 
+            # Auto-cleanup se necessário
+            cleanup_info = self._auto_cleanup()
+            stdout_msg = f"Variavel '{name}' carregada: {self._human_size(size)} ({type(value).__name__})"
+            if cleanup_info:
+                stdout_msg += f"\n[Auto-cleanup: removidas {cleanup_info['removed_count']} variáveis antigas, liberados {cleanup_info['removed_bytes_human']}]"
+
             return ExecutionResult(
                 success=True,
-                stdout=f"Variavel '{name}' carregada: {self._human_size(size)} ({type(value).__name__})",
+                stdout=stdout_msg,
                 stderr="",
                 execution_time_ms=0,
                 variables_changed=[name],
@@ -442,3 +464,73 @@ class SafeREPL:
             "max_allowed_mb": self.max_memory_mb,
             "usage_percent": (total / (self.max_memory_mb * 1024 * 1024)) * 100,
         }
+
+    def _auto_cleanup(self) -> dict:
+        """
+        Auto-limpeza de memória quando atinge threshold.
+
+        Remove variáveis mais antigas (por last_accessed) até atingir o target.
+        Preserva funções LLM (llm_query, llm_stats, llm_reset_counter).
+
+        Returns:
+            Dict com informações da limpeza (ou vazio se não foi necessário)
+        """
+        usage = self.get_memory_usage()
+
+        if usage["usage_percent"] < self.cleanup_threshold_percent:
+            return {}  # Não precisa limpar
+
+        logger.info(
+            f"Auto-cleanup triggered: {usage['usage_percent']:.1f}% > {self.cleanup_threshold_percent}%"
+        )
+
+        # Variáveis protegidas (não remover)
+        protected = {'llm_query', 'llm_stats', 'llm_reset_counter'}
+
+        # Ordena variáveis por last_accessed (mais antigas primeiro)
+        sorted_vars = sorted(
+            [(name, meta) for name, meta in self.variable_metadata.items() if name not in protected],
+            key=lambda x: x[1].last_accessed
+        )
+
+        removed = []
+        removed_bytes = 0
+        target_bytes = (self.cleanup_target_percent / 100) * (self.max_memory_mb * 1024 * 1024)
+
+        for name, meta in sorted_vars:
+            current_total = usage["total_bytes"] - removed_bytes
+
+            if current_total <= target_bytes:
+                break  # Atingiu o target
+
+            # Remove variável
+            removed_bytes += meta.size_bytes
+            removed.append({
+                "name": name,
+                "size": meta.size_human,
+                "last_accessed": meta.last_accessed.isoformat()
+            })
+
+            del self.variables[name]
+            del self.variable_metadata[name]
+
+        self.last_cleanup_count = len(removed)
+
+        if removed:
+            new_usage = self.get_memory_usage()
+            logger.info(
+                f"Auto-cleanup complete: removed {len(removed)} variables, "
+                f"freed {self._human_size(removed_bytes)}, "
+                f"usage now {new_usage['usage_percent']:.1f}%"
+            )
+
+            return {
+                "triggered": True,
+                "removed_count": len(removed),
+                "removed_bytes": removed_bytes,
+                "removed_bytes_human": self._human_size(removed_bytes),
+                "removed_variables": removed,
+                "new_usage_percent": new_usage["usage_percent"]
+            }
+
+        return {}
