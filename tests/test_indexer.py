@@ -286,3 +286,143 @@ class TestCreateIndexWithAdditionalTerms:
         assert "termo_15" in index.terms
         assert "termo_0" not in index.terms  # not in text
         assert len(index.custom_terms) == 20
+
+
+class TestTextIndexSearch:
+    """Test that TextIndex.search returns correct matches."""
+
+    def test_search_returns_matches_for_indexed_term(self):
+        """search returns list of matches for an indexed term."""
+        text = "Linha 1 com medo\nLinha 2 com trabalho\nLinha 3 com medo"
+        index = create_index(text, "test_var")
+
+        results = index.search("medo")
+
+        assert len(results) == 2
+        assert results[0]["linha"] == 0
+        assert results[1]["linha"] == 2
+
+    def test_search_returns_empty_list_for_missing_term(self):
+        """search returns empty list for term not in index."""
+        text = "Texto simples sem termos especiais"
+        index = create_index(text, "test_var")
+
+        results = index.search("medo")
+
+        assert results == []
+
+    def test_search_is_case_insensitive(self):
+        """search is case-insensitive (converts input to lowercase)."""
+        text = "Tenho medo de trabalho"
+        index = create_index(text, "test_var")
+
+        # All these should find the same term
+        assert index.search("medo") == index.search("MEDO")
+        assert index.search("medo") == index.search("Medo")
+        assert index.search("medo") == index.search("MeDo")
+
+    def test_search_limit_parameter_restricts_results(self):
+        """search respects limit parameter."""
+        text = "\n".join([f"Linha {i} com medo" for i in range(20)])
+        index = create_index(text, "test_var")
+
+        results_default = index.search("medo")  # default limit=10
+        results_limited = index.search("medo", limit=5)
+        results_large = index.search("medo", limit=100)
+
+        assert len(results_default) == 10
+        assert len(results_limited) == 5
+        assert len(results_large) == 20  # all available matches
+
+    def test_search_limit_zero_returns_empty(self):
+        """search with limit=0 returns empty list."""
+        text = "Linha com medo"
+        index = create_index(text, "test_var")
+
+        results = index.search("medo", limit=0)
+
+        assert results == []
+
+    def test_search_result_contains_linha_key(self):
+        """search results contain 'linha' key with line number."""
+        text = "Primeira\nSegunda com medo\nTerceira"
+        index = create_index(text, "test_var")
+
+        results = index.search("medo")
+
+        assert len(results) == 1
+        assert "linha" in results[0]
+        assert results[0]["linha"] == 1
+
+    def test_search_result_contains_contexto_key(self):
+        """search results contain 'contexto' key with line context."""
+        text = "Esta linha contém medo e outros sentimentos"
+        index = create_index(text, "test_var")
+
+        results = index.search("medo")
+
+        assert len(results) == 1
+        assert "contexto" in results[0]
+        assert "medo" in results[0]["contexto"]
+
+    def test_search_preserves_result_order(self):
+        """search returns results in line order (ascending)."""
+        text = "Linha 0 medo\nLinha 1\nLinha 2 medo\nLinha 3\nLinha 4 medo"
+        index = create_index(text, "test_var")
+
+        results = index.search("medo")
+
+        assert len(results) == 3
+        assert results[0]["linha"] == 0
+        assert results[1]["linha"] == 2
+        assert results[2]["linha"] == 4
+
+    def test_search_with_custom_term(self):
+        """search works with custom terms added via additional_terms."""
+        text = "O paciente apresenta xerostomia grave"
+        index = create_index(text, "test_var", additional_terms=["xerostomia"])
+
+        results = index.search("xerostomia")
+
+        assert len(results) == 1
+        assert "xerostomia" in results[0]["contexto"]
+
+    def test_search_empty_string_returns_empty(self):
+        """search for empty string returns empty list."""
+        text = "Tenho medo de trabalho"
+        index = create_index(text, "test_var")
+
+        results = index.search("")
+
+        assert results == []
+
+    def test_search_on_empty_index(self):
+        """search on empty index returns empty list."""
+        index = create_index("", "empty_var")
+
+        results = index.search("medo")
+
+        assert results == []
+
+    def test_search_with_portuguese_characters(self):
+        """search works with Portuguese special characters."""
+        text = "Sinto ansiedade e depressão frequentemente"
+        index = create_index(text, "test_var")
+
+        results_ansiedade = index.search("ansiedade")
+        results_depressao = index.search("depressão")
+
+        assert len(results_ansiedade) == 1
+        assert len(results_depressao) == 1
+
+    def test_search_does_not_modify_index(self):
+        """search is read-only and doesn't modify the index."""
+        text = "Tenho medo de trabalho"
+        index = create_index(text, "test_var")
+        original_terms = dict(index.terms)
+
+        index.search("medo")
+        index.search("trabalho")
+        index.search("nonexistent")
+
+        assert index.terms == original_terms

@@ -350,3 +350,67 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 14 - Test create_index com additional_terms indexa termos customizados
+
+- What was implemented:
+  - Added TestCreateIndexWithAdditionalTerms class to tests/test_indexer.py
+  - 13 test cases covering:
+    - additional_terms are indexed when present in text
+    - additional_terms are stored in custom_terms field
+    - Case-insensitive matching for additional_terms
+    - Uppercase terms in additional_terms list are normalized to lowercase for indexing
+    - additional_terms are combined with DEFAULT_INDEX_TERMS
+    - additional_terms not found in text are not indexed
+    - Index entries have correct linha and contexto
+    - Multiple occurrences create multiple entries
+    - Empty list behaves like None (custom_terms == [])
+    - Original case is preserved in custom_terms field
+    - Portuguese special characters work correctly (cefaléia, diarréia)
+    - Duplicate terms (in both default and additional) don't cause issues
+    - Many custom terms (20) work correctly
+
+- Files changed:
+  - tests/test_indexer.py (added TestCreateIndexWithAdditionalTerms class)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - additional_terms are normalized to lowercase via `t.lower()` before adding to terms_to_index set
+  - custom_terms field preserves the original case from the input list
+  - The set.update() method is used, so duplicates between default and additional terms are automatically handled
+  - Empty additional_terms list results in custom_terms == [] (not None)
+
+---
+
+## Iteration 15 - Test TextIndex.search retorna matches corretos
+
+- What was implemented:
+  - Added TestTextIndexSearch class to tests/test_indexer.py
+  - 13 test cases covering:
+    - search returns list of matches for an indexed term
+    - search returns empty list for term not in index
+    - search is case-insensitive (converts input to lowercase)
+    - search respects limit parameter (default 10)
+    - search with limit=0 returns empty list
+    - search results contain 'linha' key with line number
+    - search results contain 'contexto' key with line context
+    - search returns results in line order (ascending)
+    - search works with custom terms added via additional_terms
+    - search for empty string returns empty list
+    - search on empty index returns empty list
+    - search works with Portuguese special characters
+    - search is read-only and doesn't modify the index
+
+- Files changed:
+  - tests/test_indexer.py (added TestTextIndexSearch class)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - TextIndex.search converts input term to lowercase before looking up in self.terms
+  - search uses list slicing [:limit] to cap results (Python slicing handles out-of-bounds gracefully)
+  - Empty string search returns [] because "" is not a key in self.terms
+  - search returns the actual list objects from self.terms (not copies), but doesn't modify them
+
+---
+
