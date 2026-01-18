@@ -1213,3 +1213,274 @@ class TestLoadDataText:
 
         assert result.success is True
         assert repl.variables["just_spaces"] == "   \n\t  "
+
+
+class TestLoadDataJson:
+    """Test load_data with data_type='json'."""
+
+    def test_load_data_json_returns_execution_result(self):
+        """load_data returns an ExecutionResult object."""
+        repl = SafeREPL()
+        result = repl.load_data("test", '{"key": "value"}', data_type="json")
+
+        assert isinstance(result, ExecutionResult)
+
+    def test_load_data_json_success_on_valid_json(self):
+        """load_data returns success=True for valid JSON data."""
+        repl = SafeREPL()
+        result = repl.load_data("test", '{"key": "value"}', data_type="json")
+
+        assert result.success is True
+
+    def test_load_data_json_parses_object(self):
+        """load_data parses JSON object into dict."""
+        repl = SafeREPL()
+        repl.load_data("obj", '{"name": "Alice", "age": 30}', data_type="json")
+
+        assert "obj" in repl.variables
+        assert repl.variables["obj"] == {"name": "Alice", "age": 30}
+        assert isinstance(repl.variables["obj"], dict)
+
+    def test_load_data_json_parses_array(self):
+        """load_data parses JSON array into list."""
+        repl = SafeREPL()
+        repl.load_data("arr", '[1, 2, 3, "four"]', data_type="json")
+
+        assert repl.variables["arr"] == [1, 2, 3, "four"]
+        assert isinstance(repl.variables["arr"], list)
+
+    def test_load_data_json_parses_string(self):
+        """load_data parses JSON string."""
+        repl = SafeREPL()
+        repl.load_data("str_val", '"hello world"', data_type="json")
+
+        assert repl.variables["str_val"] == "hello world"
+        assert isinstance(repl.variables["str_val"], str)
+
+    def test_load_data_json_parses_number(self):
+        """load_data parses JSON number."""
+        repl = SafeREPL()
+        repl.load_data("num", '42', data_type="json")
+
+        assert repl.variables["num"] == 42
+        assert isinstance(repl.variables["num"], int)
+
+    def test_load_data_json_parses_float(self):
+        """load_data parses JSON float."""
+        repl = SafeREPL()
+        repl.load_data("flt", '3.14159', data_type="json")
+
+        assert repl.variables["flt"] == 3.14159
+        assert isinstance(repl.variables["flt"], float)
+
+    def test_load_data_json_parses_boolean_true(self):
+        """load_data parses JSON true."""
+        repl = SafeREPL()
+        repl.load_data("bool_true", 'true', data_type="json")
+
+        assert repl.variables["bool_true"] is True
+
+    def test_load_data_json_parses_boolean_false(self):
+        """load_data parses JSON false."""
+        repl = SafeREPL()
+        repl.load_data("bool_false", 'false', data_type="json")
+
+        assert repl.variables["bool_false"] is False
+
+    def test_load_data_json_parses_null(self):
+        """load_data parses JSON null."""
+        repl = SafeREPL()
+        repl.load_data("null_val", 'null', data_type="json")
+
+        assert repl.variables["null_val"] is None
+
+    def test_load_data_json_nested_object(self):
+        """load_data parses nested JSON object."""
+        repl = SafeREPL()
+        nested_json = '{"user": {"name": "Bob", "address": {"city": "NYC"}}}'
+        repl.load_data("nested", nested_json, data_type="json")
+
+        assert repl.variables["nested"]["user"]["name"] == "Bob"
+        assert repl.variables["nested"]["user"]["address"]["city"] == "NYC"
+
+    def test_load_data_json_array_of_objects(self):
+        """load_data parses array of JSON objects."""
+        repl = SafeREPL()
+        json_data = '[{"id": 1, "name": "A"}, {"id": 2, "name": "B"}]'
+        repl.load_data("items", json_data, data_type="json")
+
+        assert len(repl.variables["items"]) == 2
+        assert repl.variables["items"][0]["id"] == 1
+        assert repl.variables["items"][1]["name"] == "B"
+
+    def test_load_data_json_empty_object(self):
+        """load_data parses empty JSON object."""
+        repl = SafeREPL()
+        result = repl.load_data("empty_obj", '{}', data_type="json")
+
+        assert result.success is True
+        assert repl.variables["empty_obj"] == {}
+
+    def test_load_data_json_empty_array(self):
+        """load_data parses empty JSON array."""
+        repl = SafeREPL()
+        result = repl.load_data("empty_arr", '[]', data_type="json")
+
+        assert result.success is True
+        assert repl.variables["empty_arr"] == []
+
+    def test_load_data_json_from_bytes(self):
+        """load_data parses JSON from bytes."""
+        repl = SafeREPL()
+        json_bytes = b'{"from": "bytes"}'
+        result = repl.load_data("from_bytes", json_bytes, data_type="json")
+
+        assert result.success is True
+        assert repl.variables["from_bytes"] == {"from": "bytes"}
+
+    def test_load_data_json_utf8_content(self):
+        """load_data handles UTF-8 content in JSON."""
+        repl = SafeREPL()
+        json_data = '{"message": "Olá mundo! Ação e reação."}'
+        result = repl.load_data("utf8", json_data, data_type="json")
+
+        assert result.success is True
+        assert repl.variables["utf8"]["message"] == "Olá mundo! Ação e reação."
+
+    def test_load_data_json_unicode_content(self):
+        """load_data handles Unicode content in JSON."""
+        repl = SafeREPL()
+        json_data = '{"text": "日本語 中文 한국어"}'
+        result = repl.load_data("unicode", json_data, data_type="json")
+
+        assert result.success is True
+        assert repl.variables["unicode"]["text"] == "日本語 中文 한국어"
+
+    def test_load_data_json_invalid_json_fails(self):
+        """load_data fails on invalid JSON."""
+        repl = SafeREPL()
+        result = repl.load_data("invalid", '{not valid json}', data_type="json")
+
+        assert result.success is False
+        assert "Erro" in result.stderr  # Portuguese for "Error"
+
+    def test_load_data_json_incomplete_json_fails(self):
+        """load_data fails on incomplete JSON."""
+        repl = SafeREPL()
+        result = repl.load_data("incomplete", '{"key": ', data_type="json")
+
+        assert result.success is False
+        assert "Erro" in result.stderr
+
+    def test_load_data_json_creates_metadata(self):
+        """load_data creates variable metadata for JSON."""
+        repl = SafeREPL()
+        repl.load_data("with_meta", '{"a": 1}', data_type="json")
+
+        assert "with_meta" in repl.variable_metadata
+        meta = repl.variable_metadata["with_meta"]
+        assert meta.name == "with_meta"
+        assert meta.type_name == "dict"
+
+    def test_load_data_json_metadata_for_array_has_list_type(self):
+        """load_data metadata for JSON array has type_name 'list'."""
+        repl = SafeREPL()
+        repl.load_data("arr_meta", '[1, 2, 3]', data_type="json")
+
+        meta = repl.variable_metadata["arr_meta"]
+        assert meta.type_name == "list"
+
+    def test_load_data_json_metadata_has_preview(self):
+        """load_data metadata has preview of JSON content."""
+        repl = SafeREPL()
+        repl.load_data("preview", '{"key": "value"}', data_type="json")
+
+        meta = repl.variable_metadata["preview"]
+        assert "key" in meta.preview
+
+    def test_load_data_json_records_variable_in_result(self):
+        """load_data records variable name in variables_changed."""
+        repl = SafeREPL()
+        result = repl.load_data("recorded", '{"data": true}', data_type="json")
+
+        assert "recorded" in result.variables_changed
+
+    def test_load_data_json_stdout_contains_info(self):
+        """load_data stdout contains loading info."""
+        repl = SafeREPL()
+        result = repl.load_data("info_test", '{"x": 1}', data_type="json")
+
+        assert "info_test" in result.stdout
+        assert "carregada" in result.stdout  # Portuguese for "loaded"
+
+    def test_load_data_json_overwrites_existing_variable(self):
+        """load_data overwrites existing variable with same name."""
+        repl = SafeREPL()
+        repl.load_data("overwrite", '{"v": 1}', data_type="json")
+        repl.load_data("overwrite", '{"v": 2}', data_type="json")
+
+        assert repl.variables["overwrite"] == {"v": 2}
+
+    def test_load_data_json_variable_usable_in_execute(self):
+        """Variable loaded with load_data is usable in execute."""
+        repl = SafeREPL()
+        repl.load_data("json_data", '{"x": 10, "y": 20}', data_type="json")
+        result = repl.execute("total = json_data['x'] + json_data['y']")
+
+        assert result.success is True
+        assert repl.variables["total"] == 30
+
+    def test_load_data_json_large_object(self):
+        """load_data handles large JSON object."""
+        repl = SafeREPL()
+        import json
+        large_data = {f"key_{i}": f"value_{i}" for i in range(1000)}
+        json_str = json.dumps(large_data)
+        result = repl.load_data("large", json_str, data_type="json")
+
+        assert result.success is True
+        assert len(repl.variables["large"]) == 1000
+        assert repl.variables["large"]["key_500"] == "value_500"
+
+    def test_load_data_json_with_special_characters(self):
+        """load_data handles JSON with special characters in strings."""
+        repl = SafeREPL()
+        # JSON with escaped special characters
+        json_data = '{"text": "line1\\nline2\\ttab", "quote": "\\"quoted\\""}'
+        result = repl.load_data("special", json_data, data_type="json")
+
+        assert result.success is True
+        assert "\n" in repl.variables["special"]["text"]
+        assert "\t" in repl.variables["special"]["text"]
+        assert '"' in repl.variables["special"]["quote"]
+
+    def test_load_data_json_with_numeric_keys_in_object(self):
+        """load_data handles JSON with numeric string keys."""
+        repl = SafeREPL()
+        # JSON keys are always strings, even if they look like numbers
+        json_data = '{"1": "one", "2": "two"}'
+        result = repl.load_data("num_keys", json_data, data_type="json")
+
+        assert result.success is True
+        assert repl.variables["num_keys"]["1"] == "one"
+        assert repl.variables["num_keys"]["2"] == "two"
+
+    def test_load_data_json_preserves_order(self):
+        """load_data preserves key order in JSON object (Python 3.7+ dicts are ordered)."""
+        repl = SafeREPL()
+        json_data = '{"z": 1, "a": 2, "m": 3}'
+        result = repl.load_data("ordered", json_data, data_type="json")
+
+        assert result.success is True
+        keys = list(repl.variables["ordered"].keys())
+        assert keys == ["z", "a", "m"]
+
+    def test_load_data_json_scientific_notation(self):
+        """load_data handles scientific notation in JSON."""
+        repl = SafeREPL()
+        json_data = '{"large": 1.23e10, "small": 4.56e-5}'
+        result = repl.load_data("sci", json_data, data_type="json")
+
+        assert result.success is True
+        assert repl.variables["sci"]["large"] == 1.23e10
+        assert repl.variables["sci"]["small"] == 4.56e-5
