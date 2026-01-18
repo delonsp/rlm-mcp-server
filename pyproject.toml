@@ -5,12 +5,12 @@ description = "MCP Server para Recursive Language Model - executa codigo Python 
 requires-python = ">=3.11"
 dependencies = [
     "mcp>=1.0.0",
-    "httpx>=0.27.0",
+    "httpx>=0.28.0",
     "python-dotenv>=1.0.0",
-    "uvicorn>=0.30.0",
-    "pydantic>=2.0.0",
+    "uvicorn>=0.32.0",
+    "pydantic>=2.10.0",
     "fastapi>=0.115.0",
-    "openai>=1.0.0",  # Para sub-chamadas LLM (RLM)
+    "openai>=2.0.0",  # v2.x requerido para GPT-5 family (max_output_tokens)
 ]
 
 [project.scripts]

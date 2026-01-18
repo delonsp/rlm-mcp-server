@@ -104,20 +104,23 @@ class LLMClient:
         )
 
         try:
-            # Modelos mais novos (gpt-5, o1, etc) têm restrições diferentes:
-            # - Usam max_completion_tokens ao invés de max_tokens
-            # - Não suportam temperature customizada
-            is_new_model = any(x in model for x in ['gpt-5', 'o1', 'o3'])
+            # Modelos GPT-5 family (gpt-5, gpt-5-mini, gpt-5-nano, o1, o3) têm API diferente:
+            # - Usam max_output_tokens ao invés de max_tokens (documentação oficial OpenAI)
+            # - Não suportam temperature, top_p, logprobs
+            # - Suportam reasoning.effort e text.verbosity como alternativas
+            is_reasoning_model = any(x in model for x in ['gpt-5', 'o1', 'o3'])
 
             params = {
                 "model": model,
                 "messages": [{"role": "user", "content": content}]
             }
 
-            if is_new_model:
-                params["max_completion_tokens"] = max_tokens
-                # Não envia temperature para modelos novos (usam default=1)
+            if is_reasoning_model:
+                # Documentação oficial: https://platform.openai.com/docs/guides/reasoning
+                params["max_output_tokens"] = max_tokens
+                # Não envia temperature para modelos de raciocínio (não suportado)
             else:
+                # Modelos clássicos (gpt-4o, gpt-4o-mini, gpt-4-turbo, etc)
                 params["max_tokens"] = max_tokens
                 params["temperature"] = temperature
 
