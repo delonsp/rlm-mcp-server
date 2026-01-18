@@ -29,6 +29,7 @@ import uvicorn
 
 from .repl import SafeREPL, ExecutionResult, VariableInfo
 from .s3_client import get_s3_client
+from .pdf_parser import extract_pdf
 
 # Configuração
 logging.basicConfig(
@@ -253,7 +254,15 @@ Tipos suportados:
             "name": "rlm_load_file",
             "description": """Carrega arquivo do servidor em uma variável.
 
-O arquivo deve estar no diretório /data do container.""",
+O arquivo deve estar no diretório /data do container.
+
+Tipos suportados:
+- text: String simples
+- json: Parse JSON para dict/list
+- lines: Split por \\n para lista
+- csv: Parse CSV para lista de dicts
+- pdf: Extrai texto de PDF (auto-detecta método)
+- pdf_ocr: Força OCR para PDFs escaneados (requer MISTRAL_API_KEY)""",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -267,7 +276,7 @@ O arquivo deve estar no diretório /data do container.""",
                     },
                     "data_type": {
                         "type": "string",
-                        "enum": ["text", "json", "lines", "csv"],
+                        "enum": ["text", "json", "lines", "csv", "pdf", "pdf_ocr"],
                         "default": "text"
                     }
                 },
@@ -322,7 +331,15 @@ O arquivo deve estar no diretório /data do container.""",
 O arquivo é baixado direto do Minio para o servidor RLM,
 sem passar pelo contexto do Claude Code. Ideal para arquivos grandes.
 
-Exemplo: rlm_load_s3(key="logs/app.log", name="logs")""",
+Tipos suportados:
+- text: String simples
+- json: Parse JSON para dict/list
+- lines: Split por \\n para lista
+- csv: Parse CSV para lista de dicts
+- pdf: Extrai texto de PDF (auto-detecta método)
+- pdf_ocr: Força OCR para PDFs escaneados (requer MISTRAL_API_KEY)
+
+Exemplo: rlm_load_s3(key="pdfs/doc.pdf", name="doc", data_type="pdf")""",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -341,7 +358,7 @@ Exemplo: rlm_load_s3(key="logs/app.log", name="logs")""",
                     },
                     "data_type": {
                         "type": "string",
-                        "enum": ["text", "json", "lines", "csv"],
+                        "enum": ["text", "json", "lines", "csv", "pdf", "pdf_ocr"],
                         "default": "text",
                         "description": "Tipo de parsing dos dados"
                     }
@@ -438,6 +455,7 @@ def call_tool(name: str, arguments: dict) -> dict:
 
         elif name == "rlm_load_file":
             path = arguments["path"]
+            data_type = arguments.get("data_type", "text")
 
             # Validação de segurança
             if not path.startswith("/data/"):
@@ -459,13 +477,44 @@ def call_tool(name: str, arguments: dict) -> dict:
                 }
 
             try:
+                # PDF handling
+                if data_type in ("pdf", "pdf_ocr"):
+                    method = "ocr" if data_type == "pdf_ocr" else "auto"
+                    pdf_result = extract_pdf(path, method=method)
+
+                    if not pdf_result.success:
+                        return {
+                            "content": [
+                                {"type": "text", "text": f"Erro ao extrair PDF: {pdf_result.error}"}
+                            ],
+                            "isError": True
+                        }
+
+                    data = pdf_result.text
+                    result = repl.load_data(
+                        name=arguments["name"],
+                        data=data,
+                        data_type="text"
+                    )
+
+                    text = f"""✅ PDF extraído com sucesso:
+Arquivo: {path}
+Método: {pdf_result.method}
+Páginas: {pdf_result.pages}
+Caracteres: {len(data):,}
+Variável: {arguments["name"]}
+
+{format_execution_result(result)}"""
+                    return {"content": [{"type": "text", "text": text}]}
+
+                # Regular file handling
                 with open(path, 'r', encoding='utf-8', errors='replace') as f:
                     data = f.read()
 
                 result = repl.load_data(
                     name=arguments["name"],
                     data=data,
-                    data_type=arguments.get("data_type", "text")
+                    data_type=data_type
                 )
                 return {
                     "content": [
@@ -555,6 +604,45 @@ Uso: {mem['usage_percent']:.1f}%"""
                         "isError": True
                     }
 
+                # PDF handling - download to temp file, then extract
+                if data_type in ("pdf", "pdf_ocr"):
+                    import tempfile
+                    pdf_bytes = s3.get_object(bucket, key)
+                    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                        tmp.write(pdf_bytes)
+                        tmp_path = tmp.name
+
+                    try:
+                        method = "ocr" if data_type == "pdf_ocr" else "auto"
+                        pdf_result = extract_pdf(tmp_path, method=method)
+
+                        if not pdf_result.success:
+                            return {
+                                "content": [
+                                    {"type": "text", "text": f"Erro ao extrair PDF: {pdf_result.error}"}
+                                ],
+                                "isError": True
+                            }
+
+                        data = pdf_result.text
+                        result = repl.load_data(name=var_name, data=data, data_type="text")
+
+                        text = f"""✅ PDF extraído do Minio:
+Bucket: {bucket}
+Objeto: {key}
+Tamanho original: {info['size_human']}
+Método: {pdf_result.method}
+Páginas: {pdf_result.pages}
+Caracteres extraídos: {len(data):,}
+Variável: {var_name}
+
+{format_execution_result(result)}"""
+                        return {"content": [{"type": "text", "text": text}]}
+                    finally:
+                        import os
+                        os.unlink(tmp_path)
+
+                # Regular file handling
                 data = s3.get_object_text(bucket, key)
                 result = repl.load_data(name=var_name, data=data, data_type=data_type)
 
