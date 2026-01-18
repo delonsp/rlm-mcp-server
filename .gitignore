@@ -50,3 +50,4 @@ Thumbs.db
 
 # Docker (local)
 docker-compose.override.yml
+.mcp.json
