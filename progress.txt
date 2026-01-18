@@ -83,3 +83,25 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 5 - Test delete_variable removes from database
+
+- What was implemented:
+  - Added TestDeleteVariable class to tests/test_persistence.py
+  - 4 test cases covering:
+    - Deleting an existing variable removes it from the database
+    - Deleting a nonexistent variable returns True (SQLite DELETE succeeds)
+    - Deleting a variable also removes its associated index
+    - Deleting one variable doesn't affect other variables
+
+- Files changed:
+  - tests/test_persistence.py (added TestDeleteVariable class)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - delete_variable removes both the variable AND its associated index (from indices table)
+  - SQLite DELETE succeeds even if no rows match (no error thrown)
+  - delete_variable returns True on success, False on exception
+
+---
+

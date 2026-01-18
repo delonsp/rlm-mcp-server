@@ -34,7 +34,7 @@ src/rlm_mcp/
 ## Fase 2: Testes do Módulo persistence.py
 
 - [x] Testar save_variable e load_variable (roundtrip de string, dict, list)
-- [ ] Testar delete_variable remove do banco
+- [x] Testar delete_variable remove do banco
 - [ ] Testar list_variables retorna metadados corretos
 - [ ] Testar save_index e load_index (roundtrip de índice semântico)
 - [ ] Testar clear_all remove todas as variáveis
