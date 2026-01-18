@@ -878,3 +878,217 @@ class TestCreateCollectionAndListCollections:
 
         assert coll_by_name["collection_1"]["var_count"] == 1
         assert coll_by_name["collection_2"]["var_count"] == 0
+
+
+class TestAddToCollectionAndGetCollectionVars:
+    """Tests for add_to_collection and get_collection_vars methods."""
+
+    def test_add_to_collection_returns_count(self, temp_db):
+        """Test that add_to_collection returns the number of variables added."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        pm.create_collection("test_collection")
+        pm.save_variable("var1", "value1")
+        pm.save_variable("var2", "value2")
+
+        result = pm.add_to_collection("test_collection", ["var1", "var2"])
+        assert result == 2
+
+    def test_add_to_collection_creates_collection_if_not_exists(self, temp_db):
+        """Test that add_to_collection creates the collection if it doesn't exist."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        pm.save_variable("var1", "value1")
+
+        # Collection doesn't exist yet
+        assert pm.list_collections() == []
+
+        # add_to_collection should create it
+        result = pm.add_to_collection("auto_created", ["var1"])
+        assert result == 1
+
+        # Verify collection was created
+        collections = pm.list_collections()
+        assert len(collections) == 1
+        assert collections[0]["name"] == "auto_created"
+
+    def test_add_to_collection_ignores_duplicates(self, temp_db):
+        """Test that adding the same variable twice doesn't duplicate it."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        pm.create_collection("test_collection")
+        pm.save_variable("var1", "value1")
+
+        # Add once
+        result1 = pm.add_to_collection("test_collection", ["var1"])
+        assert result1 == 1
+
+        # Add again - should be ignored
+        result2 = pm.add_to_collection("test_collection", ["var1"])
+        assert result2 == 0
+
+        # Collection should still have only one variable
+        vars = pm.get_collection_vars("test_collection")
+        assert vars == ["var1"]
+
+    def test_add_to_collection_partial_duplicates(self, temp_db):
+        """Test adding a mix of new and existing variables."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        pm.create_collection("test_collection")
+        pm.save_variable("var1", "value1")
+        pm.save_variable("var2", "value2")
+        pm.save_variable("var3", "value3")
+
+        # Add var1
+        pm.add_to_collection("test_collection", ["var1"])
+
+        # Add var1 (duplicate) and var2, var3 (new)
+        result = pm.add_to_collection("test_collection", ["var1", "var2", "var3"])
+        assert result == 2  # Only var2 and var3 are new
+
+        vars = pm.get_collection_vars("test_collection")
+        assert set(vars) == {"var1", "var2", "var3"}
+
+    def test_add_to_collection_empty_list(self, temp_db):
+        """Test adding an empty list of variables."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        pm.create_collection("test_collection")
+
+        result = pm.add_to_collection("test_collection", [])
+        assert result == 0
+
+    def test_add_to_collection_nonexistent_variables(self, temp_db):
+        """Test adding variables that don't exist in the database."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        pm.create_collection("test_collection")
+
+        # Variables don't exist, but add_to_collection still creates associations
+        # (foreign key not enforced by SQLite by default)
+        result = pm.add_to_collection("test_collection", ["nonexistent1", "nonexistent2"])
+        assert result == 2
+
+        vars = pm.get_collection_vars("test_collection")
+        assert set(vars) == {"nonexistent1", "nonexistent2"}
+
+    def test_add_to_collection_sets_added_at(self, temp_db):
+        """Test that add_to_collection sets added_at timestamp."""
+        import sqlite3
+
+        pm = PersistenceManager(db_path=temp_db)
+
+        pm.create_collection("test_collection")
+        pm.save_variable("var1", "value1")
+        pm.add_to_collection("test_collection", ["var1"])
+
+        # Query database directly to check added_at
+        with sqlite3.connect(temp_db) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT added_at FROM collection_vars WHERE collection_name = ? AND var_name = ?",
+                ("test_collection", "var1")
+            )
+            row = cursor.fetchone()
+            assert row is not None
+            assert "T" in row[0]  # ISO format with T separator
+
+    def test_get_collection_vars_returns_list(self, temp_db):
+        """Test that get_collection_vars returns a list of variable names."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        pm.create_collection("test_collection")
+        pm.save_variable("var1", "value1")
+        pm.save_variable("var2", "value2")
+        pm.add_to_collection("test_collection", ["var1", "var2"])
+
+        result = pm.get_collection_vars("test_collection")
+
+        assert isinstance(result, list)
+        assert set(result) == {"var1", "var2"}
+
+    def test_get_collection_vars_empty_collection(self, temp_db):
+        """Test get_collection_vars for an empty collection."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        pm.create_collection("empty_collection")
+
+        result = pm.get_collection_vars("empty_collection")
+        assert result == []
+
+    def test_get_collection_vars_nonexistent_collection(self, temp_db):
+        """Test get_collection_vars for a collection that doesn't exist."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        result = pm.get_collection_vars("nonexistent")
+        assert result == []
+
+    def test_get_collection_vars_ordered_by_name(self, temp_db):
+        """Test that get_collection_vars returns variables ordered by name."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        pm.create_collection("test_collection")
+        pm.save_variable("zebra", "z")
+        pm.save_variable("apple", "a")
+        pm.save_variable("mango", "m")
+
+        pm.add_to_collection("test_collection", ["zebra", "apple", "mango"])
+
+        result = pm.get_collection_vars("test_collection")
+
+        assert result == ["apple", "mango", "zebra"]
+
+    def test_add_to_multiple_collections(self, temp_db):
+        """Test adding the same variable to multiple collections."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        pm.create_collection("collection_a")
+        pm.create_collection("collection_b")
+        pm.save_variable("shared_var", "shared value")
+
+        pm.add_to_collection("collection_a", ["shared_var"])
+        pm.add_to_collection("collection_b", ["shared_var"])
+
+        # Both collections should have the variable
+        assert pm.get_collection_vars("collection_a") == ["shared_var"]
+        assert pm.get_collection_vars("collection_b") == ["shared_var"]
+
+    def test_add_to_collection_many_variables(self, temp_db):
+        """Test adding many variables to a collection at once."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        pm.create_collection("large_collection")
+
+        # Create 50 variables
+        var_names = [f"var_{i:03d}" for i in range(50)]
+        for name in var_names:
+            pm.save_variable(name, f"value for {name}")
+
+        # Add all at once
+        result = pm.add_to_collection("large_collection", var_names)
+        assert result == 50
+
+        # Verify all were added
+        vars = pm.get_collection_vars("large_collection")
+        assert len(vars) == 50
+        assert vars[0] == "var_000"  # Ordered alphabetically
+        assert vars[-1] == "var_049"
+
+    def test_add_to_collection_with_special_characters(self, temp_db):
+        """Test adding variables with special characters in names."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        pm.create_collection("test_collection")
+        pm.save_variable("var-with-dashes", "value1")
+        pm.save_variable("var_with_underscores", "value2")
+        pm.save_variable("var.with.dots", "value3")
+
+        result = pm.add_to_collection(
+            "test_collection",
+            ["var-with-dashes", "var_with_underscores", "var.with.dots"]
+        )
+        assert result == 3
+
+        vars = pm.get_collection_vars("test_collection")
+        assert len(vars) == 3

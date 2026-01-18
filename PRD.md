@@ -40,7 +40,7 @@ src/rlm_mcp/
 - [x] Testar clear_all remove todas as variáveis
 - [x] Testar get_stats retorna contagens corretas
 - [x] Testar create_collection e list_collections
-- [ ] Testar add_to_collection e get_collection_vars
+- [x] Testar add_to_collection e get_collection_vars
 - [ ] Testar delete_collection remove associações mas não variáveis
 
 ## Fase 3: Testes do Módulo indexer.py
