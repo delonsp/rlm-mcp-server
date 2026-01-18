@@ -28,6 +28,7 @@ from pydantic import BaseModel
 import uvicorn
 
 from .repl import SafeREPL, ExecutionResult, VariableInfo
+from .s3_client import get_s3_client
 
 # Configuração
 logging.basicConfig(
@@ -307,6 +308,72 @@ O arquivo deve estar no diretório /data do container.""",
                 "type": "object",
                 "properties": {}
             }
+        },
+        {
+            "name": "rlm_load_s3",
+            "description": """Carrega arquivo do Minio/S3 diretamente em uma variável.
+
+O arquivo é baixado direto do Minio para o servidor RLM,
+sem passar pelo contexto do Claude Code. Ideal para arquivos grandes.
+
+Exemplo: rlm_load_s3(bucket="logs", key="app/2025-01.log", name="logs")""",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "bucket": {
+                        "type": "string",
+                        "description": "Nome do bucket no Minio"
+                    },
+                    "key": {
+                        "type": "string",
+                        "description": "Caminho/chave do objeto no bucket"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Nome da variável no REPL"
+                    },
+                    "data_type": {
+                        "type": "string",
+                        "enum": ["text", "json", "lines", "csv"],
+                        "default": "text",
+                        "description": "Tipo de parsing dos dados"
+                    }
+                },
+                "required": ["bucket", "key", "name"]
+            }
+        },
+        {
+            "name": "rlm_list_buckets",
+            "description": """Lista buckets disponíveis no Minio.
+
+Use para descobrir quais buckets existem antes de carregar arquivos.""",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        },
+        {
+            "name": "rlm_list_s3",
+            "description": """Lista objetos em um bucket do Minio.
+
+Retorna nome, tamanho e data de modificação dos arquivos.
+
+Exemplo: rlm_list_s3(bucket="logs", prefix="app/") para listar só arquivos em app/""",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "bucket": {
+                        "type": "string",
+                        "description": "Nome do bucket"
+                    },
+                    "prefix": {
+                        "type": "string",
+                        "default": "",
+                        "description": "Prefixo para filtrar (opcional)"
+                    }
+                },
+                "required": ["bucket"]
+            }
         }
     ]
 
@@ -427,6 +494,109 @@ Variáveis: {mem['variable_count']}
 Limite: {mem['max_allowed_mb']} MB
 Uso: {mem['usage_percent']:.1f}%"""
             return {"content": [{"type": "text", "text": text}]}
+
+        elif name == "rlm_load_s3":
+            s3 = get_s3_client()
+            if not s3.is_configured():
+                return {
+                    "content": [
+                        {"type": "text", "text": "Erro: Minio não configurado. Configure MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY."}
+                    ],
+                    "isError": True
+                }
+
+            bucket = arguments["bucket"]
+            key = arguments["key"]
+            var_name = arguments["name"]
+            data_type = arguments.get("data_type", "text")
+
+            try:
+                info = s3.get_object_info(bucket, key)
+                if not info:
+                    return {
+                        "content": [
+                            {"type": "text", "text": f"Erro: Objeto não encontrado: {bucket}/{key}"}
+                        ],
+                        "isError": True
+                    }
+
+                data = s3.get_object_text(bucket, key)
+                result = repl.load_data(name=var_name, data=data, data_type=data_type)
+
+                text = f"""✅ Carregado do Minio:
+Bucket: {bucket}
+Objeto: {key}
+Tamanho: {info['size_human']}
+Variável: {var_name} (tipo: {data_type})
+
+{format_execution_result(result)}"""
+                return {"content": [{"type": "text", "text": text}]}
+
+            except Exception as e:
+                return {
+                    "content": [
+                        {"type": "text", "text": f"Erro ao carregar do Minio: {e}"}
+                    ],
+                    "isError": True
+                }
+
+        elif name == "rlm_list_buckets":
+            s3 = get_s3_client()
+            if not s3.is_configured():
+                return {
+                    "content": [
+                        {"type": "text", "text": "Erro: Minio não configurado."}
+                    ],
+                    "isError": True
+                }
+
+            try:
+                buckets = s3.list_buckets()
+                if not buckets:
+                    text = "Nenhum bucket encontrado."
+                else:
+                    text = "Buckets disponíveis:\n" + "\n".join(f"  - {b}" for b in buckets)
+                return {"content": [{"type": "text", "text": text}]}
+            except Exception as e:
+                return {
+                    "content": [
+                        {"type": "text", "text": f"Erro ao listar buckets: {e}"}
+                    ],
+                    "isError": True
+                }
+
+        elif name == "rlm_list_s3":
+            s3 = get_s3_client()
+            if not s3.is_configured():
+                return {
+                    "content": [
+                        {"type": "text", "text": "Erro: Minio não configurado."}
+                    ],
+                    "isError": True
+                }
+
+            bucket = arguments["bucket"]
+            prefix = arguments.get("prefix", "")
+
+            try:
+                objects = s3.list_objects(bucket, prefix)
+                if not objects:
+                    text = f"Nenhum objeto encontrado em {bucket}/{prefix}"
+                else:
+                    lines = [f"Objetos em {bucket}/{prefix}:", ""]
+                    for obj in objects[:50]:
+                        lines.append(f"  {obj['name']} ({obj['size_human']})")
+                    if len(objects) > 50:
+                        lines.append(f"  ... e mais {len(objects) - 50} objetos")
+                    text = "\n".join(lines)
+                return {"content": [{"type": "text", "text": text}]}
+            except Exception as e:
+                return {
+                    "content": [
+                        {"type": "text", "text": f"Erro ao listar objetos: {e}"}
+                    ],
+                    "isError": True
+                }
 
         else:
             return {
