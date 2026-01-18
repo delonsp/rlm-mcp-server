@@ -426,6 +426,49 @@ Exemplo: rlm_upload_url(url="https://example.com/data.csv", key="data/file.csv")
                 },
                 "required": ["url", "key"]
             }
+        },
+        {
+            "name": "rlm_process_pdf",
+            "description": """Processa PDF do Minio e salva texto extraído de volta no bucket.
+
+WORKFLOW EM DUAS ETAPAS para PDFs grandes:
+1. rlm_process_pdf() → Extrai texto e salva como .txt no bucket (esta ferramenta)
+2. rlm_load_s3() com o .txt → Carrega texto rápido para análise
+
+O PDF é processado no servidor e o texto é salvo no mesmo bucket.
+NÃO carrega em variável (evita timeout em PDFs grandes).
+
+Métodos de extração:
+- auto: Usa pdfplumber primeiro, fallback para OCR se pouco texto
+- pdfplumber: Força pdfplumber (rápido, para PDFs com texto selecionável)
+- ocr: Força Mistral OCR (para PDFs escaneados, requer MISTRAL_API_KEY)
+
+Exemplo: rlm_process_pdf(key="pdfs/livro.pdf") → salva pdfs/livro.txt""",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": "Caminho do PDF no bucket (ex: pdfs/documento.pdf)"
+                    },
+                    "bucket": {
+                        "type": "string",
+                        "default": "claude-code",
+                        "description": "Nome do bucket (padrão: claude-code)"
+                    },
+                    "output_key": {
+                        "type": "string",
+                        "description": "Caminho para salvar o .txt (padrão: mesmo path com extensão .txt)"
+                    },
+                    "method": {
+                        "type": "string",
+                        "enum": ["auto", "pdfplumber", "ocr"],
+                        "default": "auto",
+                        "description": "Método de extração (padrão: auto)"
+                    }
+                },
+                "required": ["key"]
+            }
         }
     ]
 
@@ -747,6 +790,96 @@ Tamanho: {result['size_human']}"""
                 return {
                     "content": [
                         {"type": "text", "text": f"Erro ao fazer upload de URL: {e}"}
+                    ],
+                    "isError": True
+                }
+
+        elif name == "rlm_process_pdf":
+            s3 = get_s3_client()
+            if not s3.is_configured():
+                return {
+                    "content": [
+                        {"type": "text", "text": "Erro: Minio não configurado."}
+                    ],
+                    "isError": True
+                }
+
+            bucket = arguments.get("bucket", "claude-code")
+            key = arguments["key"]
+            method = arguments.get("method", "auto")
+
+            # Determinar output_key (padrão: mesmo path com .txt)
+            output_key = arguments.get("output_key")
+            if not output_key:
+                if key.lower().endswith(".pdf"):
+                    output_key = key[:-4] + ".txt"
+                else:
+                    output_key = key + ".txt"
+
+            try:
+                # Verificar se PDF existe
+                info = s3.get_object_info(bucket, key)
+                if not info:
+                    return {
+                        "content": [
+                            {"type": "text", "text": f"Erro: PDF não encontrado: {bucket}/{key}"}
+                        ],
+                        "isError": True
+                    }
+
+                logger.info(f"Processando PDF: {bucket}/{key} ({info['size_human']})")
+
+                # Baixar PDF para arquivo temporário
+                import tempfile
+                pdf_bytes = s3.get_object(bucket, key)
+                with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                    tmp.write(pdf_bytes)
+                    tmp_path = tmp.name
+
+                try:
+                    # Extrair texto
+                    pdf_result = extract_pdf(tmp_path, method=method)
+
+                    if not pdf_result.success:
+                        return {
+                            "content": [
+                                {"type": "text", "text": f"Erro ao extrair PDF: {pdf_result.error}"}
+                            ],
+                            "isError": True
+                        }
+
+                    # Salvar texto no bucket
+                    upload_result = s3.put_object_text(bucket, output_key, pdf_result.text)
+
+                    text = f"""✅ PDF processado com sucesso!
+
+📄 Origem:
+  Bucket: {bucket}
+  Arquivo: {key}
+  Tamanho: {info['size_human']}
+
+📝 Extração:
+  Método: {pdf_result.method}
+  Páginas: {pdf_result.pages}
+  Caracteres: {len(pdf_result.text):,}
+
+💾 Texto salvo:
+  Bucket: {bucket}
+  Arquivo: {output_key}
+  Tamanho: {upload_result['size_human']}
+
+Próximo passo: rlm_load_s3(key="{output_key}", name="texto", data_type="text")"""
+                    return {"content": [{"type": "text", "text": text}]}
+
+                finally:
+                    import os
+                    os.unlink(tmp_path)
+
+            except Exception as e:
+                logger.exception(f"Erro ao processar PDF {bucket}/{key}")
+                return {
+                    "content": [
+                        {"type": "text", "text": f"Erro ao processar PDF: {e}"}
                     ],
                     "isError": True
                 }

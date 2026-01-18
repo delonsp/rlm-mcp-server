@@ -17,9 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
-rlm-mcp = "rlm_mcp.server:main"
-rlm-mcp-tcp = "rlm_mcp.tcp_bridge:main"
-rlm-mcp-http = "rlm_mcp.http_server:main"
+rlm-mcp = "rlm_mcp.http_server:main"
 
 [build-system]
 requires = ["hatchling"]

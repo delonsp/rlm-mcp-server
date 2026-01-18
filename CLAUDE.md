@@ -117,22 +117,28 @@ scp arquivo.pdf user@vps:/caminho/para/rlm-data/
 ### S3/Minio
 - `rlm_list_buckets` - Lista buckets
 - `rlm_list_s3` - Lista objetos
-- `rlm_upload_url` - URL assinada para upload
+- `rlm_upload_url` - Upload de URL para bucket
+
+### Processamento de PDF (duas etapas)
+- `rlm_process_pdf` - Extrai texto de PDF e salva .txt no bucket (não bloqueia)
+  ```
+  # Etapa 1: Processar PDF grande (salva texto no bucket)
+  rlm_process_pdf(key="pdfs/livro.pdf")  # → salva pdfs/livro.txt
+
+  # Etapa 2: Carregar texto rápido para análise
+  rlm_load_s3(key="pdfs/livro.txt", name="texto", data_type="text")
+  ```
 
 ## Estrutura do Código
 
 ```
 src/rlm_mcp/
-├── server.py      # Servidor MCP stdio (NÃO usado pelo Dokploy)
-├── http_server.py # Servidor HTTP/SSE (USADO pelo Dokploy!)
+├── http_server.py # Servidor HTTP/SSE (único servidor MCP)
 ├── repl.py        # REPL Python sandboxed
 ├── pdf_parser.py  # Extração de PDF (pdfplumber + Mistral OCR)
 ├── s3_client.py   # Cliente Minio/S3
-├── llm_client.py  # Cliente para sub-chamadas LLM
-└── tcp_bridge.py  # Bridge TCP (alternativo)
+└── llm_client.py  # Cliente para sub-chamadas LLM
 ```
-
-**⚠️ ATENÇÃO**: Dokploy usa `http_server.py`, não `server.py`!
 
 ## Notas Importantes
 
@@ -142,17 +148,6 @@ src/rlm_mcp/
 - PDFs escaneados usam **Mistral OCR API** (requer API key)
 
 ## ⚠️ Dokploy + Traefik - Lições Aprendidas
-
-### Dois arquivos de servidor - CUIDADO!
-
-O projeto tem **dois modos de transporte MCP**:
-
-| Arquivo | Transporte | Quando usar |
-|---------|------------|-------------|
-| `server.py` | stdio | MCP local via `command` no claude.json |
-| `http_server.py` | HTTP/SSE | **Dokploy usa este!** Via URL HTTPS |
-
-**IMPORTANTE**: Ao modificar tools, **atualizar AMBOS os arquivos** ou remover `server.py` se não for usado.
 
 ### docker-compose.yml - Regras para Dokploy
 
