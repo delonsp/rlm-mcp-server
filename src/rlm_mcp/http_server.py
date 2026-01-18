@@ -316,14 +316,10 @@ O arquivo deve estar no diretório /data do container.""",
 O arquivo é baixado direto do Minio para o servidor RLM,
 sem passar pelo contexto do Claude Code. Ideal para arquivos grandes.
 
-Exemplo: rlm_load_s3(bucket="logs", key="app/2025-01.log", name="logs")""",
+Exemplo: rlm_load_s3(key="logs/app.log", name="logs")""",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "bucket": {
-                        "type": "string",
-                        "description": "Nome do bucket no Minio"
-                    },
                     "key": {
                         "type": "string",
                         "description": "Caminho/chave do objeto no bucket"
@@ -332,6 +328,11 @@ Exemplo: rlm_load_s3(bucket="logs", key="app/2025-01.log", name="logs")""",
                         "type": "string",
                         "description": "Nome da variável no REPL"
                     },
+                    "bucket": {
+                        "type": "string",
+                        "default": "claude-code",
+                        "description": "Nome do bucket (padrão: claude-code)"
+                    },
                     "data_type": {
                         "type": "string",
                         "enum": ["text", "json", "lines", "csv"],
@@ -339,7 +340,7 @@ Exemplo: rlm_load_s3(bucket="logs", key="app/2025-01.log", name="logs")""",
                         "description": "Tipo de parsing dos dados"
                     }
                 },
-                "required": ["bucket", "key", "name"]
+                "required": ["key", "name"]
             }
         },
         {
@@ -358,21 +359,21 @@ Use para descobrir quais buckets existem antes de carregar arquivos.""",
 
 Retorna nome, tamanho e data de modificação dos arquivos.
 
-Exemplo: rlm_list_s3(bucket="logs", prefix="app/") para listar só arquivos em app/""",
+Exemplo: rlm_list_s3() para listar bucket padrão, ou rlm_list_s3(prefix="logs/") para filtrar""",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "bucket": {
                         "type": "string",
-                        "description": "Nome do bucket"
+                        "default": "claude-code",
+                        "description": "Nome do bucket (padrão: claude-code)"
                     },
                     "prefix": {
                         "type": "string",
                         "default": "",
                         "description": "Prefixo para filtrar (opcional)"
                     }
-                },
-                "required": ["bucket"]
+                }
             }
         }
     ]
@@ -505,7 +506,7 @@ Uso: {mem['usage_percent']:.1f}%"""
                     "isError": True
                 }
 
-            bucket = arguments["bucket"]
+            bucket = arguments.get("bucket", "claude-code")
             key = arguments["key"]
             var_name = arguments["name"]
             data_type = arguments.get("data_type", "text")
@@ -575,7 +576,7 @@ Variável: {var_name} (tipo: {data_type})
                     "isError": True
                 }
 
-            bucket = arguments["bucket"]
+            bucket = arguments.get("bucket", "claude-code")
             prefix = arguments.get("prefix", "")
 
             try:
