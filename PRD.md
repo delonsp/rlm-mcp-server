@@ -50,7 +50,7 @@ src/rlm_mcp/
 - [x] Testar TextIndex.search retorna matches corretos
 - [x] Testar TextIndex.search_multiple com require_all=False (OR)
 - [x] Testar TextIndex.search_multiple com require_all=True (AND)
-- [ ] Testar auto_index_if_large indexa apenas textos >= 100k chars
+- [x] Testar auto_index_if_large indexa apenas textos >= 100k chars
 - [ ] Testar _detect_structure detecta headers markdown
 - [ ] Testar TextIndex.to_dict e from_dict (serialização)
 

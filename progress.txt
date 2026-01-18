@@ -481,3 +481,36 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 18 - Test auto_index_if_large indexa apenas textos >= 100k chars
+
+- What was implemented:
+  - Added TestAutoIndexIfLarge class to tests/test_indexer.py
+  - 13 test cases covering:
+    - Returns TextIndex for text >= 100k chars (using sample_text fixture)
+    - Returns None for text < 100k chars
+    - Returns index at exactly 100000 chars
+    - Returns None at 99999 chars (one char below threshold)
+    - Custom lower min_chars threshold works
+    - Custom higher min_chars threshold works
+    - Empty text returns None (default threshold)
+    - Empty text with min_chars=0 returns index
+    - Index contains terms from text
+    - Index has correct total_chars
+    - Index has correct total_lines
+    - Default threshold is confirmed to be 100000
+    - Uses create_index internally (same structure)
+
+- Files changed:
+  - tests/test_indexer.py (added TestAutoIndexIfLarge class)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - auto_index_if_large is a thin wrapper over create_index with a threshold check
+  - Uses `>=` comparison: `if len(text) >= min_chars`
+  - Default min_chars=100000 (100k chars)
+  - Returns None for texts below threshold, TextIndex for texts at or above threshold
+  - sample_text fixture from conftest.py is ~1.45M chars, perfect for testing this
+
+---
+

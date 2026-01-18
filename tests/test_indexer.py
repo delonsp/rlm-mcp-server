@@ -737,3 +737,121 @@ class TestSearchMultipleAndMode:
         # AND mode: dict with linha -> terms
         assert 0 in and_results
         assert 1 not in and_results
+
+
+class TestAutoIndexIfLarge:
+    """Test that auto_index_if_large indexes only texts >= min_chars threshold."""
+
+    def test_returns_index_for_text_above_default_threshold(self, sample_text):
+        """auto_index_if_large returns TextIndex for text >= 100k chars."""
+        # sample_text fixture is ~1.45M chars, well above 100k
+        result = auto_index_if_large(sample_text, "large_var")
+
+        assert result is not None
+        assert isinstance(result, TextIndex)
+        assert result.var_name == "large_var"
+
+    def test_returns_none_for_text_below_default_threshold(self):
+        """auto_index_if_large returns None for text < 100k chars."""
+        small_text = "medo trabalho ansiedade" * 1000  # ~24k chars
+        result = auto_index_if_large(small_text, "small_var")
+
+        assert result is None
+
+    def test_returns_index_at_exact_threshold(self):
+        """auto_index_if_large returns TextIndex at exactly 100k chars."""
+        # Create text of exactly 100000 chars
+        exact_text = "a" * 100000
+        result = auto_index_if_large(exact_text, "exact_var")
+
+        assert result is not None
+        assert isinstance(result, TextIndex)
+        assert result.total_chars == 100000
+
+    def test_returns_none_one_char_below_threshold(self):
+        """auto_index_if_large returns None at 99999 chars."""
+        almost_text = "a" * 99999
+        result = auto_index_if_large(almost_text, "almost_var")
+
+        assert result is None
+
+    def test_custom_min_chars_threshold_lower(self):
+        """auto_index_if_large respects custom lower min_chars threshold."""
+        text = "medo trabalho" * 1000  # ~13k chars
+        result = auto_index_if_large(text, "test_var", min_chars=10000)
+
+        assert result is not None
+        assert result.var_name == "test_var"
+
+    def test_custom_min_chars_threshold_higher(self):
+        """auto_index_if_large respects custom higher min_chars threshold."""
+        text = "medo trabalho" * 10000  # ~130k chars
+        result = auto_index_if_large(text, "test_var", min_chars=200000)
+
+        assert result is None
+
+    def test_empty_text_returns_none(self):
+        """auto_index_if_large returns None for empty text."""
+        result = auto_index_if_large("", "empty_var")
+
+        assert result is None
+
+    def test_empty_text_with_zero_threshold_returns_index(self):
+        """auto_index_if_large with min_chars=0 indexes empty text."""
+        result = auto_index_if_large("", "empty_var", min_chars=0)
+
+        assert result is not None
+        assert result.total_chars == 0
+
+    def test_index_contains_terms_from_text(self, sample_text):
+        """auto_index_if_large creates proper index with indexed terms."""
+        # sample_text contains "medo", "ansiedade", "trabalho", "família"
+        result = auto_index_if_large(sample_text, "test_var")
+
+        assert result is not None
+        assert "medo" in result.terms
+        assert "ansiedade" in result.terms
+        assert "trabalho" in result.terms
+        assert "família" in result.terms
+
+    def test_index_has_correct_char_count(self):
+        """auto_index_if_large creates index with correct total_chars."""
+        text = "a" * 150000
+        result = auto_index_if_large(text, "test_var")
+
+        assert result is not None
+        assert result.total_chars == 150000
+
+    def test_index_has_correct_line_count(self):
+        """auto_index_if_large creates index with correct total_lines."""
+        # 100 lines of 1010 chars each = 101000 chars (above 100k)
+        lines = ["medo " * 200 + "ansiedade"] * 100  # 100 lines, each ~1010 chars
+        text = "\n".join(lines)
+        result = auto_index_if_large(text, "test_var")
+
+        assert result is not None
+        assert result.total_lines == 100
+
+    def test_default_threshold_is_100000(self):
+        """auto_index_if_large uses 100000 as default min_chars."""
+        # 99999 chars should return None
+        text_99999 = "x" * 99999
+        result_below = auto_index_if_large(text_99999, "below")
+        assert result_below is None
+
+        # 100000 chars should return index
+        text_100000 = "x" * 100000
+        result_at = auto_index_if_large(text_100000, "at")
+        assert result_at is not None
+
+    def test_uses_create_index_internally(self, sample_text):
+        """auto_index_if_large creates index using create_index function."""
+        # Verify that the returned index has the same structure as create_index would produce
+        result = auto_index_if_large(sample_text, "test_var")
+        direct_index = create_index(sample_text, "test_var")
+
+        assert result is not None
+        assert result.var_name == direct_index.var_name
+        assert result.total_chars == direct_index.total_chars
+        assert result.total_lines == direct_index.total_lines
+        assert result.terms.keys() == direct_index.terms.keys()
