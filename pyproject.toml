@@ -10,7 +10,8 @@ dependencies = [
     "uvicorn>=0.32.0",
     "pydantic>=2.10.0",
     "fastapi>=0.115.0",
-    "openai>=2.0.0",  # v2.x requerido para GPT-5 family (max_output_tokens)
+    "openai>=2.0.0",  # v2.x requerido para GPT-5 family
+    "minio>=7.2.0",   # Cliente S3/Minio para rlm_load_s3
 ]
 
 [project.scripts]
