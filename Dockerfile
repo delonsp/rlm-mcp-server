@@ -4,9 +4,12 @@
 # =============================================================================
 # Stage 1: Builder
 # =============================================================================
-FROM python:3.12-slim as builder
+FROM python:3.12-slim AS builder
 
 WORKDIR /build
+
+# Cache buster - mude para forçar rebuild
+ARG CACHE_BUST=2026011801
 
 # Instala dependências de build
 RUN pip install --no-cache-dir hatchling
@@ -15,13 +18,13 @@ RUN pip install --no-cache-dir hatchling
 COPY pyproject.toml .
 COPY src/ src/
 
-# Build do wheel
-RUN pip wheel --no-deps --wheel-dir /wheels .
+# Build do wheel (cache bust garante rebuild)
+RUN echo "Build version: ${CACHE_BUST}" && pip wheel --no-deps --wheel-dir /wheels .
 
 # =============================================================================
 # Stage 2: Runtime
 # =============================================================================
-FROM python:3.12-slim as runtime
+FROM python:3.12-slim AS runtime
 
 # Labels para Dokploy/Portainer
 LABEL maintainer="seu-email@exemplo.com"
