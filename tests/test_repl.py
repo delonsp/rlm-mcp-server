@@ -991,3 +991,225 @@ now = datetime.datetime.now()
         assert result.success is True
         assert "unicodedata" in repl.variables
         assert repl.variables["name"] == "LATIN CAPITAL LETTER A"
+
+
+class TestLoadDataText:
+    """Test load_data with data_type='text'."""
+
+    def test_load_data_text_returns_execution_result(self):
+        """load_data returns an ExecutionResult object."""
+        repl = SafeREPL()
+        result = repl.load_data("test", "hello world", data_type="text")
+
+        assert isinstance(result, ExecutionResult)
+
+    def test_load_data_text_success_on_valid_string(self):
+        """load_data returns success=True for valid string data."""
+        repl = SafeREPL()
+        result = repl.load_data("test", "hello world", data_type="text")
+
+        assert result.success is True
+
+    def test_load_data_text_stores_string_value(self):
+        """load_data stores the string value in variables."""
+        repl = SafeREPL()
+        repl.load_data("my_text", "hello world", data_type="text")
+
+        assert "my_text" in repl.variables
+        assert repl.variables["my_text"] == "hello world"
+
+    def test_load_data_text_stores_as_string_type(self):
+        """load_data stores data as str type."""
+        repl = SafeREPL()
+        repl.load_data("text_var", "test content", data_type="text")
+
+        assert isinstance(repl.variables["text_var"], str)
+
+    def test_load_data_text_with_empty_string(self):
+        """load_data handles empty string."""
+        repl = SafeREPL()
+        result = repl.load_data("empty", "", data_type="text")
+
+        assert result.success is True
+        assert repl.variables["empty"] == ""
+
+    def test_load_data_text_with_multiline_string(self):
+        """load_data handles multiline string."""
+        repl = SafeREPL()
+        multiline = "line 1\nline 2\nline 3"
+        result = repl.load_data("lines", multiline, data_type="text")
+
+        assert result.success is True
+        assert repl.variables["lines"] == multiline
+        assert "\n" in repl.variables["lines"]
+
+    def test_load_data_text_with_bytes_decodes_to_string(self):
+        """load_data decodes bytes to string for data_type='text'."""
+        repl = SafeREPL()
+        data_bytes = b"hello bytes"
+        result = repl.load_data("from_bytes", data_bytes, data_type="text")
+
+        assert result.success is True
+        assert repl.variables["from_bytes"] == "hello bytes"
+        assert isinstance(repl.variables["from_bytes"], str)
+
+    def test_load_data_text_with_utf8_bytes(self):
+        """load_data decodes UTF-8 bytes correctly."""
+        repl = SafeREPL()
+        data_bytes = "Olá, mundo! Ação e reação.".encode('utf-8')
+        result = repl.load_data("utf8", data_bytes, data_type="text")
+
+        assert result.success is True
+        assert repl.variables["utf8"] == "Olá, mundo! Ação e reação."
+
+    def test_load_data_text_with_unicode_content(self):
+        """load_data handles Unicode content."""
+        repl = SafeREPL()
+        unicode_text = "日本語 中文 한국어 العربية"
+        result = repl.load_data("unicode", unicode_text, data_type="text")
+
+        assert result.success is True
+        assert repl.variables["unicode"] == unicode_text
+
+    def test_load_data_text_creates_metadata(self):
+        """load_data creates variable metadata."""
+        repl = SafeREPL()
+        repl.load_data("with_meta", "some content", data_type="text")
+
+        assert "with_meta" in repl.variable_metadata
+        meta = repl.variable_metadata["with_meta"]
+        assert meta.name == "with_meta"
+        assert meta.type_name == "str"
+
+    def test_load_data_text_metadata_has_correct_size(self):
+        """load_data metadata has correct size_bytes."""
+        repl = SafeREPL()
+        content = "hello world"
+        repl.load_data("sized", content, data_type="text")
+
+        meta = repl.variable_metadata["sized"]
+        # Size should be UTF-8 encoded bytes (11 bytes for "hello world")
+        assert meta.size_bytes == len(content.encode('utf-8'))
+        assert meta.size_bytes == 11
+
+    def test_load_data_text_metadata_has_human_size(self):
+        """load_data metadata has human-readable size."""
+        repl = SafeREPL()
+        repl.load_data("human", "test", data_type="text")
+
+        meta = repl.variable_metadata["human"]
+        assert "B" in meta.size_human  # Should end with B, KB, MB, etc.
+
+    def test_load_data_text_metadata_has_preview(self):
+        """load_data metadata has preview of content."""
+        repl = SafeREPL()
+        content = "This is a preview test"
+        repl.load_data("preview_test", content, data_type="text")
+
+        meta = repl.variable_metadata["preview_test"]
+        assert "This is a preview test" in meta.preview
+
+    def test_load_data_text_metadata_preview_truncated_for_long_text(self):
+        """load_data metadata preview is truncated for long text."""
+        repl = SafeREPL()
+        long_content = "x" * 500
+        repl.load_data("long_text", long_content, data_type="text")
+
+        meta = repl.variable_metadata["long_text"]
+        # Preview should be truncated and show total chars
+        assert len(meta.preview) < len(long_content)
+        assert "chars total" in meta.preview
+
+    def test_load_data_text_metadata_has_timestamps(self):
+        """load_data metadata has created_at and last_accessed timestamps."""
+        repl = SafeREPL()
+        from datetime import datetime
+        before = datetime.now()
+        repl.load_data("timestamped", "content", data_type="text")
+        after = datetime.now()
+
+        meta = repl.variable_metadata["timestamped"]
+        assert before <= meta.created_at <= after
+        assert before <= meta.last_accessed <= after
+
+    def test_load_data_text_records_variable_in_result(self):
+        """load_data records variable name in variables_changed."""
+        repl = SafeREPL()
+        result = repl.load_data("recorded", "data", data_type="text")
+
+        assert "recorded" in result.variables_changed
+
+    def test_load_data_text_stdout_contains_info(self):
+        """load_data stdout contains loading info."""
+        repl = SafeREPL()
+        result = repl.load_data("info_test", "some data", data_type="text")
+
+        assert "info_test" in result.stdout
+        assert "carregada" in result.stdout  # Portuguese for "loaded"
+        assert "str" in result.stdout  # Type name
+
+    def test_load_data_text_overwrites_existing_variable(self):
+        """load_data overwrites existing variable with same name."""
+        repl = SafeREPL()
+        repl.load_data("overwrite", "original value", data_type="text")
+        repl.load_data("overwrite", "new value", data_type="text")
+
+        assert repl.variables["overwrite"] == "new value"
+
+    def test_load_data_text_variable_usable_in_execute(self):
+        """Variable loaded with load_data is usable in execute."""
+        repl = SafeREPL()
+        repl.load_data("text_data", "hello world", data_type="text")
+        result = repl.execute("upper_text = text_data.upper()")
+
+        assert result.success is True
+        assert repl.variables["upper_text"] == "HELLO WORLD"
+
+    def test_load_data_text_large_string(self):
+        """load_data handles large text (1MB+)."""
+        repl = SafeREPL()
+        large_text = "x" * (1024 * 1024)  # 1 MB of 'x'
+        result = repl.load_data("large", large_text, data_type="text")
+
+        assert result.success is True
+        assert len(repl.variables["large"]) == 1024 * 1024
+
+    def test_load_data_text_with_special_characters(self):
+        """load_data handles text with special characters."""
+        repl = SafeREPL()
+        special = "Tab:\tNewline:\nQuote:\"Backslash:\\"
+        result = repl.load_data("special", special, data_type="text")
+
+        assert result.success is True
+        assert repl.variables["special"] == special
+        assert "\t" in repl.variables["special"]
+        assert "\n" in repl.variables["special"]
+
+    def test_load_data_text_default_data_type(self):
+        """load_data defaults to data_type='text' when not specified."""
+        repl = SafeREPL()
+        # Note: data_type="text" is the default
+        result = repl.load_data("default_type", "content")
+
+        assert result.success is True
+        assert repl.variables["default_type"] == "content"
+        assert isinstance(repl.variables["default_type"], str)
+
+    def test_load_data_text_preserves_whitespace(self):
+        """load_data preserves leading/trailing whitespace."""
+        repl = SafeREPL()
+        whitespace_text = "  leading and trailing  "
+        result = repl.load_data("whitespace", whitespace_text, data_type="text")
+
+        assert result.success is True
+        assert repl.variables["whitespace"] == whitespace_text
+        assert repl.variables["whitespace"].startswith("  ")
+        assert repl.variables["whitespace"].endswith("  ")
+
+    def test_load_data_text_with_only_whitespace(self):
+        """load_data handles text with only whitespace."""
+        repl = SafeREPL()
+        result = repl.load_data("just_spaces", "   \n\t  ", data_type="text")
+
+        assert result.success is True
+        assert repl.variables["just_spaces"] == "   \n\t  "

@@ -60,7 +60,7 @@ src/rlm_mcp/
 - [x] Testar execute preserva variáveis entre execuções
 - [x] Testar execute bloqueia imports perigosos (os, subprocess, socket)
 - [x] Testar execute permite imports seguros (re, json, math, collections)
-- [ ] Testar load_data com data_type="text"
+- [x] Testar load_data com data_type="text"
 - [ ] Testar load_data com data_type="json"
 - [ ] Testar load_data com data_type="csv"
 - [ ] Testar load_data com data_type="lines"
