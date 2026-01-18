@@ -1092,3 +1092,203 @@ class TestAddToCollectionAndGetCollectionVars:
 
         vars = pm.get_collection_vars("test_collection")
         assert len(vars) == 3
+
+
+class TestDeleteCollection:
+    """Tests for delete_collection method."""
+
+    def test_delete_collection_returns_true(self, temp_db):
+        """Test that delete_collection returns True on success."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        pm.create_collection("test_collection", description="Test")
+
+        result = pm.delete_collection("test_collection")
+        assert result is True
+
+    def test_delete_collection_removes_from_database(self, temp_db):
+        """Test that delete_collection removes the collection from the database."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        pm.create_collection("to_delete", description="Will be deleted")
+
+        # Verify it exists
+        collections = pm.list_collections()
+        assert len(collections) == 1
+        assert collections[0]["name"] == "to_delete"
+
+        # Delete it
+        pm.delete_collection("to_delete")
+
+        # Verify it's gone
+        collections = pm.list_collections()
+        assert len(collections) == 0
+
+    def test_delete_collection_removes_associations(self, temp_db):
+        """Test that delete_collection removes associations from collection_vars table."""
+        import sqlite3
+
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Create collection and add variables
+        pm.create_collection("test_collection")
+        pm.save_variable("var1", "value1")
+        pm.save_variable("var2", "value2")
+        pm.add_to_collection("test_collection", ["var1", "var2"])
+
+        # Verify associations exist
+        with sqlite3.connect(temp_db) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM collection_vars WHERE collection_name = ?", ("test_collection",))
+            count = cursor.fetchone()[0]
+            assert count == 2
+
+        # Delete collection
+        pm.delete_collection("test_collection")
+
+        # Verify associations are gone
+        with sqlite3.connect(temp_db) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM collection_vars WHERE collection_name = ?", ("test_collection",))
+            count = cursor.fetchone()[0]
+            assert count == 0
+
+    def test_delete_collection_does_not_delete_variables(self, temp_db):
+        """Test that delete_collection does NOT delete the variables themselves."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Create collection and add variables
+        pm.create_collection("test_collection")
+        pm.save_variable("var1", "value1")
+        pm.save_variable("var2", "value2")
+        pm.add_to_collection("test_collection", ["var1", "var2"])
+
+        # Delete collection
+        pm.delete_collection("test_collection")
+
+        # Variables should still exist
+        assert pm.load_variable("var1") == "value1"
+        assert pm.load_variable("var2") == "value2"
+
+        # Variables should still appear in list_variables
+        vars_list = pm.list_variables()
+        names = {v["name"] for v in vars_list}
+        assert names == {"var1", "var2"}
+
+    def test_delete_nonexistent_collection(self, temp_db):
+        """Test that deleting a collection that doesn't exist returns True."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # SQLite DELETE succeeds even if no rows match
+        result = pm.delete_collection("nonexistent")
+        assert result is True
+
+    def test_delete_empty_collection(self, temp_db):
+        """Test deleting a collection that has no variables."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        pm.create_collection("empty_collection")
+
+        result = pm.delete_collection("empty_collection")
+        assert result is True
+
+        collections = pm.list_collections()
+        assert len(collections) == 0
+
+    def test_delete_collection_does_not_affect_other_collections(self, temp_db):
+        """Test that deleting one collection doesn't affect others."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Create multiple collections
+        pm.create_collection("collection_a", description="First")
+        pm.create_collection("collection_b", description="Second")
+        pm.create_collection("collection_c", description="Third")
+
+        # Add variables to each
+        pm.save_variable("var_a", "value_a")
+        pm.save_variable("var_b", "value_b")
+        pm.save_variable("var_c", "value_c")
+        pm.add_to_collection("collection_a", ["var_a"])
+        pm.add_to_collection("collection_b", ["var_b"])
+        pm.add_to_collection("collection_c", ["var_c"])
+
+        # Delete collection_b
+        pm.delete_collection("collection_b")
+
+        # Other collections should still exist
+        collections = pm.list_collections()
+        names = {c["name"] for c in collections}
+        assert names == {"collection_a", "collection_c"}
+
+        # Their variables should still be in the collections
+        assert pm.get_collection_vars("collection_a") == ["var_a"]
+        assert pm.get_collection_vars("collection_c") == ["var_c"]
+
+    def test_delete_collection_variable_can_be_added_to_new_collection(self, temp_db):
+        """Test that after deleting a collection, its variables can be added to a new collection."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Create collection and add variable
+        pm.create_collection("old_collection")
+        pm.save_variable("var1", "value1")
+        pm.add_to_collection("old_collection", ["var1"])
+
+        # Delete collection
+        pm.delete_collection("old_collection")
+
+        # Create new collection and add the same variable
+        pm.create_collection("new_collection")
+        result = pm.add_to_collection("new_collection", ["var1"])
+        assert result == 1
+
+        # Variable should be in new collection
+        vars = pm.get_collection_vars("new_collection")
+        assert vars == ["var1"]
+
+    def test_delete_collection_with_shared_variable(self, temp_db):
+        """Test deleting a collection when a variable belongs to multiple collections."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Create two collections
+        pm.create_collection("collection_a")
+        pm.create_collection("collection_b")
+
+        # Add same variable to both
+        pm.save_variable("shared_var", "shared value")
+        pm.add_to_collection("collection_a", ["shared_var"])
+        pm.add_to_collection("collection_b", ["shared_var"])
+
+        # Delete collection_a
+        pm.delete_collection("collection_a")
+
+        # Variable should still be in collection_b
+        assert pm.get_collection_vars("collection_b") == ["shared_var"]
+
+        # Variable itself should still exist
+        assert pm.load_variable("shared_var") == "shared value"
+
+    def test_delete_collection_with_many_variables(self, temp_db):
+        """Test deleting a collection with many variables."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        pm.create_collection("large_collection")
+
+        # Create and add 50 variables
+        var_names = [f"var_{i:03d}" for i in range(50)]
+        for name in var_names:
+            pm.save_variable(name, f"value for {name}")
+        pm.add_to_collection("large_collection", var_names)
+
+        # Verify all variables are in collection
+        assert len(pm.get_collection_vars("large_collection")) == 50
+
+        # Delete collection
+        result = pm.delete_collection("large_collection")
+        assert result is True
+
+        # Collection should be gone
+        assert pm.list_collections() == []
+
+        # All variables should still exist
+        for name in var_names:
+            assert pm.load_variable(name) is not None

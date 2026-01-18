@@ -249,3 +249,66 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 11 - Test add_to_collection and get_collection_vars
+
+- What was implemented:
+  - Added TestAddToCollectionAndGetCollectionVars class to tests/test_persistence.py
+  - 14 test cases covering:
+    - add_to_collection returns count of added variables
+    - add_to_collection creates collection automatically if it doesn't exist
+    - add_to_collection ignores duplicate variables (returns 0 for duplicates)
+    - Partial duplicates scenario (mix of new and existing)
+    - Adding empty list returns 0
+    - Adding nonexistent variables works (foreign key not enforced)
+    - add_to_collection sets added_at timestamp in ISO format
+    - get_collection_vars returns list of variable names
+    - get_collection_vars for empty collection returns empty list
+    - get_collection_vars for nonexistent collection returns empty list
+    - get_collection_vars returns variables ordered by name ASC
+    - Adding same variable to multiple collections works
+    - Adding many variables (50) at once
+    - Special characters in variable names
+
+- Files changed:
+  - tests/test_persistence.py (added TestAddToCollectionAndGetCollectionVars class)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - add_to_collection uses INSERT OR IGNORE to avoid duplicates
+  - add_to_collection checks rowcount to track how many were actually added
+  - add_to_collection auto-creates collection if it doesn't exist (avoids need for pre-create)
+  - get_collection_vars returns variables ordered by var_name ASC
+  - Foreign keys in SQLite are not enforced by default - variables can be added to collection even if they don't exist in variables table
+
+---
+
+## Iteration 12 - Test delete_collection removes associations but not variables
+
+- What was implemented:
+  - Added TestDeleteCollection class to tests/test_persistence.py
+  - 10 test cases covering:
+    - delete_collection returns True on success
+    - delete_collection removes collection from database
+    - delete_collection removes associations from collection_vars table (verified with direct SQL query)
+    - delete_collection does NOT delete the variables themselves
+    - Deleting nonexistent collection returns True
+    - Deleting empty collection works
+    - Deleting one collection doesn't affect other collections
+    - Variables can be added to new collection after old collection is deleted
+    - Deleting collection with shared variable doesn't affect other collections
+    - Deleting collection with many variables (50)
+
+- Files changed:
+  - tests/test_persistence.py (added TestDeleteCollection class)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - delete_collection deletes from both collection_vars and collections tables (in that order)
+  - SQLite DELETE succeeds even if no rows match (no error thrown)
+  - Variables are independent of collections - they persist after collection deletion
+  - Same variable can be in multiple collections; deleting one collection doesn't affect others
+
+---
+
