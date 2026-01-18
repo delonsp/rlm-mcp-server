@@ -29,7 +29,7 @@ src/rlm_mcp/
 
 - [x] Adicionar pytest e pytest-asyncio ao pyproject.toml (dev dependencies)
 - [x] Criar diretório tests/ com __init__.py
-- [ ] Criar tests/conftest.py com fixtures: temp_db (SQLite em memória), sample_text (texto de 200k chars para indexação)
+- [x] Criar tests/conftest.py com fixtures: temp_db (SQLite em memória), sample_text (texto de 200k chars para indexação)
 
 ## Fase 2: Testes do Módulo persistence.py
 
