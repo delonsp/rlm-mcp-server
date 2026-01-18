@@ -1044,3 +1044,360 @@ Quadro de Sulphur"""
         structure = _detect_structure(text)
 
         assert structure["headers"] == []
+
+
+class TestTextIndexSerialization:
+    """Test TextIndex.to_dict and from_dict for serialization/deserialization."""
+
+    def test_to_dict_returns_dict(self):
+        """to_dict returns a dictionary."""
+        index = create_index("Tenho medo de trabalho", "test_var")
+
+        result = index.to_dict()
+
+        assert isinstance(result, dict)
+
+    def test_to_dict_contains_all_fields(self):
+        """to_dict returns dict with all expected keys."""
+        index = create_index("Tenho medo de trabalho", "test_var")
+
+        result = index.to_dict()
+
+        assert "var_name" in result
+        assert "total_chars" in result
+        assert "total_lines" in result
+        assert "terms" in result
+        assert "structure" in result
+        assert "custom_terms" in result
+
+    def test_to_dict_var_name_correct(self):
+        """to_dict preserves var_name correctly."""
+        index = create_index("Texto simples", "minha_variavel")
+
+        result = index.to_dict()
+
+        assert result["var_name"] == "minha_variavel"
+
+    def test_to_dict_total_chars_correct(self):
+        """to_dict preserves total_chars correctly."""
+        text = "Texto com medo de trabalho"
+        index = create_index(text, "test_var")
+
+        result = index.to_dict()
+
+        assert result["total_chars"] == len(text)
+
+    def test_to_dict_total_lines_correct(self):
+        """to_dict preserves total_lines correctly."""
+        text = "Linha 1 medo\nLinha 2 trabalho\nLinha 3"
+        index = create_index(text, "test_var")
+
+        result = index.to_dict()
+
+        assert result["total_lines"] == 3
+
+    def test_to_dict_terms_correct(self):
+        """to_dict preserves terms dictionary correctly."""
+        text = "Linha com medo\nLinha com trabalho"
+        index = create_index(text, "test_var")
+
+        result = index.to_dict()
+
+        assert "medo" in result["terms"]
+        assert "trabalho" in result["terms"]
+        assert result["terms"]["medo"][0]["linha"] == 0
+        assert result["terms"]["trabalho"][0]["linha"] == 1
+
+    def test_to_dict_structure_correct(self):
+        """to_dict preserves structure correctly."""
+        text = "# Header\nTexto normal\n4.8 Ferrum\nQuadro de Sulphur"
+        index = create_index(text, "test_var")
+
+        result = index.to_dict()
+
+        assert "headers" in result["structure"]
+        assert "capitulos" in result["structure"]
+        assert "remedios" in result["structure"]
+        assert len(result["structure"]["headers"]) == 1
+        assert len(result["structure"]["capitulos"]) == 1
+        assert len(result["structure"]["remedios"]) == 1
+
+    def test_to_dict_custom_terms_correct(self):
+        """to_dict preserves custom_terms correctly."""
+        text = "Texto com xerostomia e epistaxe"
+        index = create_index(text, "test_var", additional_terms=["xerostomia", "epistaxe"])
+
+        result = index.to_dict()
+
+        assert result["custom_terms"] == ["xerostomia", "epistaxe"]
+
+    def test_to_dict_empty_index(self):
+        """to_dict works on empty index."""
+        index = create_index("", "empty_var")
+
+        result = index.to_dict()
+
+        assert result["var_name"] == "empty_var"
+        assert result["total_chars"] == 0
+        assert result["total_lines"] == 0
+        assert result["terms"] == {}
+        assert result["custom_terms"] == []
+
+    def test_from_dict_returns_text_index(self):
+        """from_dict returns a TextIndex instance."""
+        data = {
+            "var_name": "test_var",
+            "total_chars": 100,
+            "total_lines": 5,
+            "terms": {},
+            "structure": {"headers": [], "capitulos": [], "remedios": []},
+            "custom_terms": []
+        }
+
+        result = TextIndex.from_dict(data)
+
+        assert isinstance(result, TextIndex)
+
+    def test_from_dict_restores_var_name(self):
+        """from_dict restores var_name correctly."""
+        data = {
+            "var_name": "minha_variavel",
+            "total_chars": 100,
+            "total_lines": 5,
+            "terms": {},
+            "structure": {},
+            "custom_terms": []
+        }
+
+        result = TextIndex.from_dict(data)
+
+        assert result.var_name == "minha_variavel"
+
+    def test_from_dict_restores_total_chars(self):
+        """from_dict restores total_chars correctly."""
+        data = {
+            "var_name": "test_var",
+            "total_chars": 12345,
+            "total_lines": 100,
+            "terms": {},
+            "structure": {},
+            "custom_terms": []
+        }
+
+        result = TextIndex.from_dict(data)
+
+        assert result.total_chars == 12345
+
+    def test_from_dict_restores_total_lines(self):
+        """from_dict restores total_lines correctly."""
+        data = {
+            "var_name": "test_var",
+            "total_chars": 1000,
+            "total_lines": 42,
+            "terms": {},
+            "structure": {},
+            "custom_terms": []
+        }
+
+        result = TextIndex.from_dict(data)
+
+        assert result.total_lines == 42
+
+    def test_from_dict_restores_terms(self):
+        """from_dict restores terms dictionary correctly."""
+        data = {
+            "var_name": "test_var",
+            "total_chars": 100,
+            "total_lines": 2,
+            "terms": {
+                "medo": [{"linha": 0, "contexto": "Linha com medo"}],
+                "trabalho": [{"linha": 1, "contexto": "Linha com trabalho"}]
+            },
+            "structure": {},
+            "custom_terms": []
+        }
+
+        result = TextIndex.from_dict(data)
+
+        assert "medo" in result.terms
+        assert "trabalho" in result.terms
+        assert result.terms["medo"][0]["linha"] == 0
+        assert result.terms["trabalho"][0]["contexto"] == "Linha com trabalho"
+
+    def test_from_dict_restores_structure(self):
+        """from_dict restores structure correctly."""
+        data = {
+            "var_name": "test_var",
+            "total_chars": 100,
+            "total_lines": 2,
+            "terms": {},
+            "structure": {
+                "headers": [{"linha": 0, "nivel": 1, "titulo": "Title"}],
+                "capitulos": [{"linha": 1, "numero": "4.8", "titulo": "Ferrum"}],
+                "remedios": [{"linha": 2, "nome": "Sulphur"}]
+            },
+            "custom_terms": []
+        }
+
+        result = TextIndex.from_dict(data)
+
+        assert len(result.structure["headers"]) == 1
+        assert result.structure["headers"][0]["titulo"] == "Title"
+        assert len(result.structure["capitulos"]) == 1
+        assert result.structure["capitulos"][0]["numero"] == "4.8"
+        assert len(result.structure["remedios"]) == 1
+        assert result.structure["remedios"][0]["nome"] == "Sulphur"
+
+    def test_from_dict_restores_custom_terms(self):
+        """from_dict restores custom_terms correctly."""
+        data = {
+            "var_name": "test_var",
+            "total_chars": 100,
+            "total_lines": 2,
+            "terms": {},
+            "structure": {},
+            "custom_terms": ["xerostomia", "epistaxe", "MixedCase"]
+        }
+
+        result = TextIndex.from_dict(data)
+
+        assert result.custom_terms == ["xerostomia", "epistaxe", "MixedCase"]
+
+    def test_from_dict_handles_missing_optional_keys(self):
+        """from_dict handles missing optional keys with defaults."""
+        # Only required keys (var_name, total_chars, total_lines)
+        data = {
+            "var_name": "test_var",
+            "total_chars": 100,
+            "total_lines": 5
+        }
+
+        result = TextIndex.from_dict(data)
+
+        assert result.var_name == "test_var"
+        assert result.total_chars == 100
+        assert result.total_lines == 5
+        assert result.terms == {}  # default
+        assert result.structure == {}  # default
+        assert result.custom_terms == []  # default
+
+    def test_roundtrip_simple_index(self):
+        """to_dict and from_dict roundtrip preserves simple index."""
+        text = "Tenho medo de trabalho e ansiedade"
+        original = create_index(text, "test_var")
+
+        # Serialize and deserialize
+        data = original.to_dict()
+        restored = TextIndex.from_dict(data)
+
+        assert restored.var_name == original.var_name
+        assert restored.total_chars == original.total_chars
+        assert restored.total_lines == original.total_lines
+        assert restored.terms == original.terms
+        assert restored.structure == original.structure
+        assert restored.custom_terms == original.custom_terms
+
+    def test_roundtrip_with_custom_terms(self):
+        """to_dict and from_dict roundtrip preserves custom terms."""
+        text = "Texto com xerostomia e epistaxe grave"
+        original = create_index(text, "test_var", additional_terms=["xerostomia", "epistaxe"])
+
+        # Serialize and deserialize
+        data = original.to_dict()
+        restored = TextIndex.from_dict(data)
+
+        assert restored.custom_terms == original.custom_terms
+        assert "xerostomia" in restored.terms
+        assert "epistaxe" in restored.terms
+
+    def test_roundtrip_with_structure(self):
+        """to_dict and from_dict roundtrip preserves structure."""
+        text = "# Título Principal\n## Subtítulo\n4.8 Ferrum\nQuadro de Sulphur\nMais texto"
+        original = create_index(text, "test_var")
+
+        # Serialize and deserialize
+        data = original.to_dict()
+        restored = TextIndex.from_dict(data)
+
+        assert restored.structure == original.structure
+        assert len(restored.structure["headers"]) == 2
+        assert len(restored.structure["capitulos"]) == 1
+        assert len(restored.structure["remedios"]) == 1
+
+    def test_roundtrip_empty_index(self):
+        """to_dict and from_dict roundtrip preserves empty index."""
+        original = create_index("", "empty_var")
+
+        # Serialize and deserialize
+        data = original.to_dict()
+        restored = TextIndex.from_dict(data)
+
+        assert restored.var_name == original.var_name
+        assert restored.total_chars == 0
+        assert restored.total_lines == 0
+        assert restored.terms == {}
+        assert restored.custom_terms == []
+
+    def test_roundtrip_large_index(self, sample_text):
+        """to_dict and from_dict roundtrip preserves large index."""
+        original = create_index(sample_text, "large_var")
+
+        # Serialize and deserialize
+        data = original.to_dict()
+        restored = TextIndex.from_dict(data)
+
+        assert restored.var_name == original.var_name
+        assert restored.total_chars == original.total_chars
+        assert restored.total_lines == original.total_lines
+        assert restored.terms.keys() == original.terms.keys()
+        # Verify terms have same number of entries
+        for term in original.terms:
+            assert len(restored.terms[term]) == len(original.terms[term])
+
+    def test_restored_index_search_works(self):
+        """Restored index from from_dict can perform searches."""
+        text = "Linha 1 com medo\nLinha 2 com trabalho\nLinha 3 com medo"
+        original = create_index(text, "test_var")
+
+        # Serialize and deserialize
+        data = original.to_dict()
+        restored = TextIndex.from_dict(data)
+
+        # Search on restored index should work
+        results = restored.search("medo")
+        assert len(results) == 2
+        assert results[0]["linha"] == 0
+        assert results[1]["linha"] == 2
+
+    def test_restored_index_search_multiple_works(self):
+        """Restored index from from_dict can perform search_multiple."""
+        text = "Linha com medo e trabalho juntos"
+        original = create_index(text, "test_var")
+
+        # Serialize and deserialize
+        data = original.to_dict()
+        restored = TextIndex.from_dict(data)
+
+        # OR mode
+        or_results = restored.search_multiple(["medo", "trabalho"], require_all=False)
+        assert "medo" in or_results
+        assert "trabalho" in or_results
+
+        # AND mode
+        and_results = restored.search_multiple(["medo", "trabalho"], require_all=True)
+        assert 0 in and_results
+
+    def test_restored_index_get_stats_works(self):
+        """Restored index from from_dict can return stats."""
+        text = "Linha com medo\nLinha com trabalho\nLinha com ansiedade"
+        original = create_index(text, "test_var")
+
+        # Serialize and deserialize
+        data = original.to_dict()
+        restored = TextIndex.from_dict(data)
+
+        stats = restored.get_stats()
+        assert stats["var_name"] == "test_var"
+        assert stats["total_chars"] == len(text)
+        assert stats["total_lines"] == 3
+        assert stats["indexed_terms"] > 0

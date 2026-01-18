@@ -552,3 +552,44 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 20 - Test TextIndex.to_dict and from_dict (serialização)
+
+- What was implemented:
+  - Added TestTextIndexSerialization class to tests/test_indexer.py
+  - 25 test cases covering:
+    - to_dict returns a dictionary
+    - to_dict contains all expected keys (var_name, total_chars, total_lines, terms, structure, custom_terms)
+    - to_dict preserves var_name, total_chars, total_lines correctly
+    - to_dict preserves terms dictionary correctly
+    - to_dict preserves structure correctly
+    - to_dict preserves custom_terms correctly
+    - to_dict works on empty index
+    - from_dict returns a TextIndex instance
+    - from_dict restores var_name, total_chars, total_lines correctly
+    - from_dict restores terms dictionary correctly
+    - from_dict restores structure correctly
+    - from_dict restores custom_terms correctly
+    - from_dict handles missing optional keys with defaults
+    - Roundtrip test with simple index
+    - Roundtrip test with custom terms
+    - Roundtrip test with structure
+    - Roundtrip test with empty index
+    - Roundtrip test with large index (sample_text fixture)
+    - Restored index search works
+    - Restored index search_multiple works (both OR and AND modes)
+    - Restored index get_stats works
+
+- Files changed:
+  - tests/test_indexer.py (added TestTextIndexSerialization class)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - to_dict serializes all dataclass fields: var_name, total_chars, total_lines, terms, structure, custom_terms
+  - from_dict uses data.get() with defaults for optional fields (terms={}, structure={}, custom_terms=[])
+  - Required fields for from_dict: var_name, total_chars, total_lines
+  - Restored TextIndex is fully functional (search, search_multiple, get_stats all work)
+  - Roundtrip tests (to_dict -> from_dict) are important for verifying serialization integrity
+
+---
+
