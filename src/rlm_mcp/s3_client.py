@@ -119,6 +119,37 @@ class S3Client:
         except Exception:
             return False
 
+    def put_object(self, bucket: str, key: str, data: bytes, content_type: str = "application/octet-stream") -> dict:
+        """Faz upload de objeto para o Minio."""
+        try:
+            data_stream = BytesIO(data)
+            size = len(data)
+
+            result = self.client.put_object(
+                bucket,
+                key,
+                data_stream,
+                size,
+                content_type=content_type
+            )
+
+            logger.info(f"Objeto enviado: {bucket}/{key} ({self._human_size(size)})")
+            return {
+                "bucket": bucket,
+                "key": key,
+                "size": size,
+                "size_human": self._human_size(size),
+                "etag": result.etag
+            }
+        except Exception as e:
+            logger.error(f"Erro ao enviar objeto {bucket}/{key}: {e}")
+            raise RuntimeError(f"Erro ao enviar {bucket}/{key}: {e}")
+
+    def put_object_text(self, bucket: str, key: str, text: str, encoding: str = "utf-8") -> dict:
+        """Faz upload de texto para o Minio."""
+        data = text.encode(encoding)
+        return self.put_object(bucket, key, data, content_type="text/plain; charset=utf-8")
+
     def get_object_info(self, bucket: str, key: str) -> Optional[dict]:
         """Retorna informações do objeto sem baixar."""
         try:

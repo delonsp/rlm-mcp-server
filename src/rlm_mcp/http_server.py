@@ -375,6 +375,34 @@ Exemplo: rlm_list_s3() para listar bucket padrão, ou rlm_list_s3(prefix="logs/"
                     }
                 }
             }
+        },
+        {
+            "name": "rlm_upload_s3",
+            "description": """Faz upload de dados para o Minio/S3.
+
+Permite enviar texto/dados diretamente para um arquivo no Minio.
+Útil para salvar resultados de análises ou criar arquivos de teste.
+
+Exemplo: rlm_upload_s3(key="logs/test.log", data="conteudo do arquivo")""",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": "Caminho/chave do objeto no bucket"
+                    },
+                    "data": {
+                        "type": "string",
+                        "description": "Conteúdo do arquivo (texto)"
+                    },
+                    "bucket": {
+                        "type": "string",
+                        "default": "claude-code",
+                        "description": "Nome do bucket (padrão: claude-code)"
+                    }
+                },
+                "required": ["key", "data"]
+            }
         }
     ]
 
@@ -595,6 +623,35 @@ Variável: {var_name} (tipo: {data_type})
                 return {
                     "content": [
                         {"type": "text", "text": f"Erro ao listar objetos: {e}"}
+                    ],
+                    "isError": True
+                }
+
+        elif name == "rlm_upload_s3":
+            s3 = get_s3_client()
+            if not s3.is_configured():
+                return {
+                    "content": [
+                        {"type": "text", "text": "Erro: Minio não configurado."}
+                    ],
+                    "isError": True
+                }
+
+            bucket = arguments.get("bucket", "claude-code")
+            key = arguments["key"]
+            data = arguments["data"]
+
+            try:
+                result = s3.put_object_text(bucket, key, data)
+                text = f"""✅ Upload concluído:
+Bucket: {result['bucket']}
+Objeto: {result['key']}
+Tamanho: {result['size_human']}"""
+                return {"content": [{"type": "text", "text": text}]}
+            except Exception as e:
+                return {
+                    "content": [
+                        {"type": "text", "text": f"Erro ao fazer upload: {e}"}
                     ],
                     "isError": True
                 }
