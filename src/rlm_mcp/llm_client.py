@@ -104,20 +104,22 @@ class LLMClient:
         )
 
         try:
-            # Modelos mais novos (gpt-5, o1, etc) usam max_completion_tokens
-            # Modelos antigos (gpt-4o, gpt-4o-mini) usam max_tokens
+            # Modelos mais novos (gpt-5, o1, etc) têm restrições diferentes:
+            # - Usam max_completion_tokens ao invés de max_tokens
+            # - Não suportam temperature customizada
             is_new_model = any(x in model for x in ['gpt-5', 'o1', 'o3'])
 
             params = {
                 "model": model,
-                "temperature": temperature,
                 "messages": [{"role": "user", "content": content}]
             }
 
             if is_new_model:
                 params["max_completion_tokens"] = max_tokens
+                # Não envia temperature para modelos novos (usam default=1)
             else:
                 params["max_tokens"] = max_tokens
+                params["temperature"] = temperature
 
             response = self.client.chat.completions.create(**params)
 
