@@ -45,7 +45,7 @@ src/rlm_mcp/
 
 ## Fase 3: Testes do Módulo indexer.py
 
-- [ ] Testar create_index gera índice com termos padrão
+- [x] Testar create_index gera índice com termos padrão
 - [ ] Testar create_index com additional_terms indexa termos customizados
 - [ ] Testar TextIndex.search retorna matches corretos
 - [ ] Testar TextIndex.search_multiple com require_all=False (OR)

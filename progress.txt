@@ -312,3 +312,41 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 13 - Test create_index gera índice com termos padrão
+
+- What was implemented:
+  - Created tests/test_indexer.py with TestCreateIndexWithDefaultTerms class
+  - 17 test cases covering:
+    - var_name is set correctly
+    - total_chars calculated correctly
+    - total_lines calculated correctly
+    - Default terms present in text are indexed
+    - Terms not in text are not indexed
+    - Index entries contain line number (0-indexed)
+    - Index entries contain context around the term
+    - Case-insensitive matching (MEDO, Trabalho found as medo, trabalho)
+    - Multiple occurrences on different lines
+    - Avoids duplicates on same line
+    - Empty text creates empty index (0 chars, 0 lines, no terms)
+    - custom_terms is empty list by default
+    - Emotion terms from DEFAULT_INDEX_TERMS are indexed
+    - Relationship terms from DEFAULT_INDEX_TERMS are indexed
+    - Body part terms from DEFAULT_INDEX_TERMS are indexed
+    - context_chars parameter is respected
+    - structure field is populated
+
+- Files changed:
+  - tests/test_indexer.py (new file)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - create_index uses splitlines() for total_lines - empty string returns 0, not 1
+  - Terms are stored in lowercase in index.terms
+  - Index uses case-insensitive matching for terms in text
+  - Same line with multiple occurrences only creates one index entry
+  - context_chars truncates the line content (uses line[:context_chars].strip())
+  - DEFAULT_INDEX_TERMS is a set of ~70 Portuguese terms covering emotions, relationships, work, symptoms, body parts, and modalities
+
+---
+
