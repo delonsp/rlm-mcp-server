@@ -1,0 +1,65 @@
+# Docker Compose para RLM MCP Server
+# Compatível com Dokploy
+#
+# O serviço expõe porta 8765 para conexão via SSH tunnel
+
+services:
+  rlm-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: rlm-mcp-server
+
+    restart: unless-stopped
+
+    environment:
+      # Memória máxima para variáveis (em MB)
+      - RLM_MAX_MEMORY_MB=${RLM_MAX_MEMORY_MB:-1024}
+      # Porta TCP
+      - RLM_PORT=8765
+
+    volumes:
+      # Monte seus dados aqui - serão acessíveis via /data no container
+      # No Dokploy, configure este volume nas settings do app
+      - rlm-data:/data:ro
+
+    # Expõe porta para conexão via SSH tunnel
+    ports:
+      - "8765:8765"
+
+    # Limites de recursos
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+    networks:
+      - dokploy-network
+
+    # Labels para Dokploy
+    labels:
+      - "dokploy.enable=true"
+
+    # Healthcheck
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.connect(('localhost',8765)); s.close()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+    # Comando: TCP bridge
+    command: ["python", "-m", "rlm_mcp.tcp_bridge"]
+
+volumes:
+  rlm-data:
+    driver: local
+
+networks:
+  dokploy-network:
+    external: true

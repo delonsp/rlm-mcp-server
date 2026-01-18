@@ -1,0 +1,23 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/claude-code/main/schemas/settings.json",
+  "_comment": "Copie o conteúdo de 'mcpServers' para seu ~/.claude/claude.json",
+
+  "mcpServers": {
+    "rlm": {
+      "_comment": "Opção 1: Via SSH tunnel (recomendado para servidor remoto)",
+      "_comment2": "Requer: socat instalado e túnel SSH ativo",
+      "command": "socat",
+      "args": ["TCP:localhost:8765", "STDIO"]
+    },
+
+    "rlm-local": {
+      "_comment": "Opção 2: Execução local direta",
+      "_comment2": "Requer: pip install -e . no diretório do projeto",
+      "command": "python",
+      "args": ["-m", "rlm_mcp.server"],
+      "env": {
+        "RLM_MAX_MEMORY_MB": "1024"
+      }
+    }
+  }
+}

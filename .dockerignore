@@ -1,0 +1,30 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*.egg-info
+.eggs
+venv/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+
+# Docs (não precisa no container)
+*.md
+!README.md
+
+# Local configs
+.env
+.env.local
+docker-compose.override.yml
+
+# Data (será montado como volume)
+data/
+
+# Scripts de dev
+scripts/

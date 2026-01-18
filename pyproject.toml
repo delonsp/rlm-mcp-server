@@ -1,0 +1,23 @@
+[project]
+name = "rlm-mcp-server"
+version = "0.1.0"
+description = "MCP Server para Recursive Language Model - executa codigo Python em REPL persistente"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.0.0",
+    "httpx>=0.27.0",
+    "python-dotenv>=1.0.0",
+    "uvicorn>=0.30.0",
+    "pydantic>=2.0.0",
+]
+
+[project.scripts]
+rlm-mcp = "rlm_mcp.server:main"
+rlm-mcp-tcp = "rlm_mcp.tcp_bridge:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rlm_mcp"]
