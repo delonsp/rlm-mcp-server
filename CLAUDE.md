@@ -27,28 +27,50 @@ Local (Claude Code) ──── SSH/HTTPS ────► VPS (Docker: rlm-mcp-
 
 O CLI do Minio (`mc`) já está instalado e configurado.
 
+### Estrutura de pastas no bucket `claude-code`
+
+| Pasta | Tipo de arquivo | Extensões |
+|-------|-----------------|-----------|
+| `data/` | Dados estruturados | `.csv`, `.json`, `.txt`, `.xml` |
+| `pdfs/` | Documentos PDF | `.pdf` |
+| `logs/` | Arquivos de log | `.log` |
+
+### Exemplos de upload
+
 ```bash
-# Upload de PDF para o Minio
-mc cp arquivo.pdf minio/bucket-name/pasta/
+# Dados estruturados → data/
+mc cp planilha.csv minio/claude-code/data/
+mc cp config.json minio/claude-code/data/
+
+# PDFs → pdfs/
+mc cp relatorio.pdf minio/claude-code/pdfs/
+mc cp documento-escaneado.pdf minio/claude-code/pdfs/
+
+# Logs → logs/
+mc cp app.log minio/claude-code/logs/
 
 # Listar arquivos
-mc ls minio/bucket-name/
-
-# Download
-mc cp minio/bucket-name/arquivo.pdf ./
+mc ls minio/claude-code/ --recursive
 ```
 
-Depois do upload, no Claude Code:
-```
-# Para arquivos de texto
-rlm_load_s3(bucket="bucket-name", key="pasta/arquivo.json", name="data", data_type="json")
+### Exemplos de carregamento no Claude Code
 
-# Para PDFs (auto-detecta se precisa OCR)
-rlm_load_s3(bucket="bucket-name", key="pasta/relatorio.pdf", name="doc", data_type="pdf")
-
-# Para PDFs escaneados (força OCR)
-rlm_load_s3(bucket="bucket-name", key="pasta/escaneado.pdf", name="doc", data_type="pdf_ocr")
 ```
+# Dados estruturados
+rlm_load_s3(key="data/planilha.csv", name="dados", data_type="csv")
+rlm_load_s3(key="data/config.json", name="config", data_type="json")
+
+# PDFs (auto-detecta se precisa OCR)
+rlm_load_s3(key="pdfs/relatorio.pdf", name="doc", data_type="pdf")
+
+# PDFs escaneados (força OCR - requer MISTRAL_API_KEY)
+rlm_load_s3(key="pdfs/escaneado.pdf", name="doc", data_type="pdf_ocr")
+
+# Logs
+rlm_load_s3(key="logs/app.log", name="logs", data_type="lines")
+```
+
+**Nota:** O bucket padrão é `claude-code`, não precisa especificar.
 
 ### Alternativa: URL assinada (rlm_upload_url)
 ```
@@ -101,14 +123,16 @@ scp arquivo.pdf user@vps:/caminho/para/rlm-data/
 
 ```
 src/rlm_mcp/
-├── server.py      # Servidor MCP principal (tools)
+├── server.py      # Servidor MCP stdio (NÃO usado pelo Dokploy)
+├── http_server.py # Servidor HTTP/SSE (USADO pelo Dokploy!)
 ├── repl.py        # REPL Python sandboxed
 ├── pdf_parser.py  # Extração de PDF (pdfplumber + Mistral OCR)
 ├── s3_client.py   # Cliente Minio/S3
 ├── llm_client.py  # Cliente para sub-chamadas LLM
-├── http_server.py # Servidor HTTP/SSE
 └── tcp_bridge.py  # Bridge TCP (alternativo)
 ```
+
+**⚠️ ATENÇÃO**: Dokploy usa `http_server.py`, não `server.py`!
 
 ## Notas Importantes
 
@@ -116,3 +140,73 @@ src/rlm_mcp/
 - REPL Python roda em **sandbox** (imports limitados)
 - PDFs machine readable usam **pdfplumber** (local, rápido)
 - PDFs escaneados usam **Mistral OCR API** (requer API key)
+
+## ⚠️ Dokploy + Traefik - Lições Aprendidas
+
+### Dois arquivos de servidor - CUIDADO!
+
+O projeto tem **dois modos de transporte MCP**:
+
+| Arquivo | Transporte | Quando usar |
+|---------|------------|-------------|
+| `server.py` | stdio | MCP local via `command` no claude.json |
+| `http_server.py` | HTTP/SSE | **Dokploy usa este!** Via URL HTTPS |
+
+**IMPORTANTE**: Ao modificar tools, **atualizar AMBOS os arquivos** ou remover `server.py` se não for usado.
+
+### docker-compose.yml - Regras para Dokploy
+
+1. **NÃO usar `container_name`** - Causa conflito no redeploy
+   ```yaml
+   # ERRADO - causa "container name already in use"
+   container_name: rlm-mcp-server
+
+   # CERTO - deixar Docker gerar nome automático
+   # (não colocar container_name)
+   ```
+
+2. **Configurar domínios pela UI do Dokploy** (recomendado)
+   - Aba "Domains" no painel do Dokploy
+   - Dokploy adiciona labels Traefik automaticamente
+   - Referência: https://docs.dokploy.com/docs/core/docker-compose/domains
+
+3. **Se usar labels manuais**, manter simples:
+   ```yaml
+   labels:
+     - "traefik.enable=true"
+     - "traefik.docker.network=dokploy-network"
+     - "traefik.http.services.NOME.loadbalancer.server.port=PORTA"
+   ```
+
+4. **NÃO duplicar routers** (HTTP + HTTPS separados causa conflito)
+   - Dokploy/Traefik gerencia redirecionamento HTTP→HTTPS automaticamente
+
+### Dockerfile - Cache busting
+
+Para forçar rebuild quando código Python muda:
+```dockerfile
+# No builder stage
+ARG CACHE_BUST=YYYYMMDDHH
+
+# No runtime stage (também!)
+ARG CACHE_BUST=YYYYMMDDHH
+RUN echo "Version: ${CACHE_BUST}" && pip install ...
+```
+
+Incrementar `CACHE_BUST` força rebuild completo.
+
+### Troubleshooting comum
+
+| Erro | Causa | Solução |
+|------|-------|---------|
+| 502 Bad Gateway | Container não na dokploy-network | Adicionar `traefik.docker.network=dokploy-network` |
+| Container name conflict | `container_name` no compose | Remover diretiva |
+| Código antigo após deploy | Docker cache | Incrementar CACHE_BUST |
+| MCP não aparece em /mcp | Servidor 502 | Verificar health endpoint |
+| Multiple services conflict | Labels Traefik duplicadas | Usar UI do Dokploy para domínios |
+
+### Referências
+
+- [Dokploy Domains](https://docs.dokploy.com/docs/core/docker-compose/domains)
+- [Issue #3435 - Traefik routing](https://github.com/Dokploy/dokploy/issues/3435)
+- [Traefik Docker docs](https://doc.traefik.io/traefik/reference/routing-configuration/other-providers/docker/)
