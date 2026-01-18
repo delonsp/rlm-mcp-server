@@ -23,3 +23,18 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 2 - Create tests/ directory with __init__.py
+
+- What was implemented:
+  - Created tests/ directory
+  - Created tests/__init__.py with minimal header comment
+
+- Files changed:
+  - tests/__init__.py (new file)
+
+- Learnings for future iterations:
+  - pytest exit code 5 means "no tests collected" - this is expected for empty test suite
+  - pytest correctly discovers the tests/ directory as a package
+
+---
+
