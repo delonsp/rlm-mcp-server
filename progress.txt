@@ -678,3 +678,70 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 23 - Test execute blocks dangerous imports (os, subprocess, socket)
+
+- What was implemented:
+  - Added TestExecuteBlocksDangerousImports class to tests/test_repl.py
+  - 24 test cases covering:
+    - Import os, subprocess, socket, sys, shutil are blocked
+    - Import pathlib, http, urllib, requests are blocked
+    - Import pickle, sqlite3 are blocked
+    - Import multiprocessing, threading, concurrent are blocked
+    - Import ctypes, importlib, builtins are blocked
+    - from X import Y syntax is also blocked (e.g., from os import system)
+    - Import os.path is blocked (base module check)
+    - Blocked import doesn't modify namespace
+    - Error message mentions "bloqueado" (blocked in Portuguese)
+    - Unknown modules not in whitelist are also blocked with different error message
+    - Blocked import in try-except can be caught BUT module is never loaded
+    - Multiple dangerous imports tested in loop
+
+- Files changed:
+  - tests/test_repl.py (added TestExecuteBlocksDangerousImports class)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - _safe_import checks base module (name.split('.')[0]) against BLOCKED_IMPORTS first
+  - If blocked, raises SecurityError: "Import bloqueado por seguranca: 'X'"
+  - If not in ALLOWED_IMPORTS, raises SecurityError: "Import nao permitido: 'X'. Permitidos: ..."
+  - SecurityError is a custom exception defined in repl.py
+  - Try-except in user code CAN catch SecurityError - module is never loaded, user gets exception
+  - This is correct behavior: security is maintained, user can handle gracefully if desired
+  - BLOCKED_IMPORTS includes: os, sys, subprocess, shutil, pathlib, socket, http, urllib, requests, httpx, pickle, shelve, sqlite3, multiprocessing, threading, concurrent, ctypes, cffi, importlib, builtins, __builtins__
+
+---
+
+## Iteration 24 - Test execute permite imports seguros (re, json, math, collections)
+
+- What was implemented:
+  - Added TestExecuteAllowsSafeImports class to tests/test_repl.py
+  - 30 test cases covering:
+    - import re, json, math, collections are allowed (pre-imported modules)
+    - import statistics, itertools, functools, operator, string are allowed
+    - import textwrap, datetime, time, calendar are allowed
+    - import dataclasses, typing, enum are allowed
+    - import csv, hashlib, base64 are allowed
+    - import gzip, zipfile are allowed
+    - import unicodedata is allowed
+    - from X import Y syntax is allowed (from collections import Counter, etc.)
+    - Pre-imported modules available without explicit import statement
+    - Safe imports persist for subsequent executions
+    - Multiple safe imports tested in loop
+    - Non-preimported modules ARE tracked in self.variables
+    - Safe import doesn't produce security error message
+
+- Files changed:
+  - tests/test_repl.py (added TestExecuteAllowsSafeImports class)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - Modules re, json, math, collections, datetime are pre-imported into namespace (lines 298-302 in repl.py)
+  - Pre-imported modules are EXCLUDED from self.variables tracking (lines 334-337 checks name against these)
+  - Non-pre-imported modules (statistics, itertools, etc.) ARE tracked in self.variables
+  - ALLOWED_IMPORTS set contains ~25 safe modules: re, json, math, statistics, collections, itertools, functools, operator, string, textwrap, unicodedata, datetime, time, calendar, dataclasses, typing, enum, csv, html, xml.etree.ElementTree, hashlib, base64, gzip, zipfile, tarfile
+  - _safe_import allows base_module if it's in ALLOWED_IMPORTS
+
+---
+

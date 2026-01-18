@@ -687,3 +687,307 @@ except:
             result = repl.execute(f"import {module}")
             assert result.success is False, f"Expected {module} to be blocked"
             assert "SecurityError" in result.stderr, f"Expected SecurityError for {module}"
+
+
+class TestExecuteAllowsSafeImports:
+    """Test that execute allows safe imports (re, json, math, collections, etc.)."""
+
+    def test_import_re_is_allowed(self):
+        """import re is allowed."""
+        repl = SafeREPL()
+        result = repl.execute("import re\npattern = re.compile(r'\\d+')")
+
+        assert result.success is True
+        # Note: re is pre-imported and excluded from self.variables tracking
+        # But the import succeeds and the module is usable
+        assert "pattern" in repl.variables
+
+    def test_import_json_is_allowed(self):
+        """import json is allowed."""
+        repl = SafeREPL()
+        result = repl.execute("import json\ndata = json.loads('{\"key\": \"value\"}')")
+
+        assert result.success is True
+        # Note: json is pre-imported and excluded from self.variables tracking
+        # But the import succeeds and the module is usable
+        assert repl.variables["data"] == {"key": "value"}
+
+    def test_import_math_is_allowed(self):
+        """import math is allowed."""
+        repl = SafeREPL()
+        result = repl.execute("import math\npi = math.pi\nsqrt2 = math.sqrt(2)")
+
+        assert result.success is True
+        # Note: math is pre-imported and excluded from self.variables tracking
+        # But the import succeeds and the module is usable
+        assert abs(repl.variables["pi"] - 3.14159265) < 0.001
+        assert abs(repl.variables["sqrt2"] - 1.41421356) < 0.001
+
+    def test_import_collections_is_allowed(self):
+        """import collections is allowed."""
+        repl = SafeREPL()
+        result = repl.execute("import collections\ncounter = collections.Counter(['a', 'b', 'a', 'c', 'a'])")
+
+        assert result.success is True
+        # Note: collections is pre-imported and excluded from self.variables tracking
+        # But the import succeeds and the module is usable
+        assert repl.variables["counter"]["a"] == 3
+        assert repl.variables["counter"]["b"] == 1
+        assert repl.variables["counter"]["c"] == 1
+
+    def test_import_statistics_is_allowed(self):
+        """import statistics is allowed."""
+        repl = SafeREPL()
+        result = repl.execute("import statistics\navg = statistics.mean([1, 2, 3, 4, 5])")
+
+        assert result.success is True
+        assert "statistics" in repl.variables
+        assert repl.variables["avg"] == 3.0
+
+    def test_import_itertools_is_allowed(self):
+        """import itertools is allowed."""
+        repl = SafeREPL()
+        result = repl.execute("import itertools\ncombs = list(itertools.combinations([1, 2, 3], 2))")
+
+        assert result.success is True
+        assert "itertools" in repl.variables
+        assert repl.variables["combs"] == [(1, 2), (1, 3), (2, 3)]
+
+    def test_import_functools_is_allowed(self):
+        """import functools is allowed."""
+        repl = SafeREPL()
+        result = repl.execute("import functools\npartial_add = functools.partial(lambda a, b: a + b, 10)")
+
+        assert result.success is True
+        assert "functools" in repl.variables
+        assert callable(repl.variables["partial_add"])
+
+    def test_import_operator_is_allowed(self):
+        """import operator is allowed."""
+        repl = SafeREPL()
+        result = repl.execute("import operator\nresult = operator.add(5, 3)")
+
+        assert result.success is True
+        assert "operator" in repl.variables
+        assert repl.variables["result"] == 8
+
+    def test_import_string_is_allowed(self):
+        """import string is allowed."""
+        repl = SafeREPL()
+        result = repl.execute("import string\nletters = string.ascii_lowercase")
+
+        assert result.success is True
+        assert "string" in repl.variables
+        assert repl.variables["letters"] == "abcdefghijklmnopqrstuvwxyz"
+
+    def test_import_textwrap_is_allowed(self):
+        """import textwrap is allowed."""
+        repl = SafeREPL()
+        result = repl.execute("import textwrap\nwrapped = textwrap.fill('Hello world', width=5)")
+
+        assert result.success is True
+        assert "textwrap" in repl.variables
+        assert "Hello" in repl.variables["wrapped"]
+
+    def test_import_datetime_is_allowed(self):
+        """import datetime is allowed."""
+        repl = SafeREPL()
+        result = repl.execute("import datetime\nnow = datetime.datetime.now()")
+
+        assert result.success is True
+        # Note: datetime is pre-imported and excluded from self.variables tracking
+        # But the import succeeds and the module is usable
+        import datetime as dt_module
+        assert isinstance(repl.variables["now"], dt_module.datetime)
+
+    def test_import_time_is_allowed(self):
+        """import time is allowed."""
+        repl = SafeREPL()
+        result = repl.execute("import time\nt = time.time()")
+
+        assert result.success is True
+        assert "time" in repl.variables
+        assert isinstance(repl.variables["t"], float)
+        assert repl.variables["t"] > 0
+
+    def test_import_calendar_is_allowed(self):
+        """import calendar is allowed."""
+        repl = SafeREPL()
+        result = repl.execute("import calendar\nis_leap = calendar.isleap(2024)")
+
+        assert result.success is True
+        assert "calendar" in repl.variables
+        assert repl.variables["is_leap"] is True
+
+    def test_import_dataclasses_is_allowed(self):
+        """import dataclasses is allowed."""
+        repl = SafeREPL()
+        # Note: Can't define classes (no __build_class__), but can import the module
+        result = repl.execute("import dataclasses")
+
+        assert result.success is True
+        assert "dataclasses" in repl.variables
+
+    def test_import_typing_is_allowed(self):
+        """import typing is allowed."""
+        repl = SafeREPL()
+        result = repl.execute("import typing\nMyType = typing.List[int]")
+
+        assert result.success is True
+        assert "typing" in repl.variables
+
+    def test_import_enum_is_allowed(self):
+        """import enum is allowed."""
+        repl = SafeREPL()
+        # Note: Can't define classes (no __build_class__), but can import the module
+        result = repl.execute("import enum")
+
+        assert result.success is True
+        assert "enum" in repl.variables
+
+    def test_import_csv_is_allowed(self):
+        """import csv is allowed."""
+        repl = SafeREPL()
+        result = repl.execute("import csv\nreader = csv.reader")
+
+        assert result.success is True
+        assert "csv" in repl.variables
+        assert callable(repl.variables["reader"])
+
+    def test_import_hashlib_is_allowed(self):
+        """import hashlib is allowed."""
+        repl = SafeREPL()
+        result = repl.execute("import hashlib\nhash_obj = hashlib.md5(b'hello')\ndigest = hash_obj.hexdigest()")
+
+        assert result.success is True
+        assert "hashlib" in repl.variables
+        assert repl.variables["digest"] == "5d41402abc4b2a76b9719d911017c592"
+
+    def test_import_base64_is_allowed(self):
+        """import base64 is allowed."""
+        repl = SafeREPL()
+        result = repl.execute("import base64\nencoded = base64.b64encode(b'hello').decode()")
+
+        assert result.success is True
+        assert "base64" in repl.variables
+        assert repl.variables["encoded"] == "aGVsbG8="
+
+    def test_import_gzip_is_allowed(self):
+        """import gzip is allowed."""
+        repl = SafeREPL()
+        result = repl.execute("import gzip")
+
+        assert result.success is True
+        assert "gzip" in repl.variables
+
+    def test_import_zipfile_is_allowed(self):
+        """import zipfile is allowed."""
+        repl = SafeREPL()
+        result = repl.execute("import zipfile")
+
+        assert result.success is True
+        assert "zipfile" in repl.variables
+
+    def test_from_collections_import_counter_is_allowed(self):
+        """from collections import Counter is allowed."""
+        repl = SafeREPL()
+        result = repl.execute("from collections import Counter\nc = Counter(['a', 'a', 'b'])")
+
+        assert result.success is True
+        assert "Counter" in repl.variables
+        assert repl.variables["c"]["a"] == 2
+        assert repl.variables["c"]["b"] == 1
+
+    def test_from_math_import_sqrt_is_allowed(self):
+        """from math import sqrt is allowed."""
+        repl = SafeREPL()
+        result = repl.execute("from math import sqrt, pi\nresult = sqrt(16)")
+
+        assert result.success is True
+        assert "sqrt" in repl.variables
+        assert "pi" in repl.variables
+        assert repl.variables["result"] == 4.0
+
+    def test_from_json_import_loads_is_allowed(self):
+        """from json import loads is allowed."""
+        repl = SafeREPL()
+        result = repl.execute("from json import loads, dumps\ndata = loads('[1, 2, 3]')")
+
+        assert result.success is True
+        assert "loads" in repl.variables
+        assert "dumps" in repl.variables
+        assert repl.variables["data"] == [1, 2, 3]
+
+    def test_pre_imported_modules_available_without_import(self):
+        """Common modules (re, json, math, collections, datetime) are pre-imported."""
+        repl = SafeREPL()
+        # These modules are pre-imported in execute(), so they're available without explicit import
+        result = repl.execute("""
+pattern = re.compile(r'\\d+')
+data = json.dumps({'a': 1})
+pi_val = math.pi
+counter = collections.Counter([1, 1, 2])
+now = datetime.datetime.now()
+""")
+
+        assert result.success is True
+        assert "pattern" in repl.variables
+        assert "data" in repl.variables
+        assert "pi_val" in repl.variables
+        assert "counter" in repl.variables
+        assert "now" in repl.variables
+
+    def test_safe_import_persists_module_for_subsequent_executions(self):
+        """Imported module persists and can be used in subsequent executions."""
+        repl = SafeREPL()
+        repl.execute("import statistics")
+        result = repl.execute("result = statistics.median([1, 3, 5, 7, 9])")
+
+        assert result.success is True
+        assert repl.variables["result"] == 5
+
+    def test_multiple_safe_imports_all_allowed(self):
+        """Multiple safe imports are all allowed."""
+        repl = SafeREPL()
+
+        allowed_modules = [
+            "re", "json", "math", "statistics", "collections",
+            "itertools", "functools", "operator", "string"
+        ]
+
+        for module in allowed_modules:
+            result = repl.execute(f"import {module}")
+            assert result.success is True, f"Expected {module} to be allowed"
+            # Note: Some modules (re, json, math, collections, datetime) are pre-imported
+            # and excluded from self.variables tracking. We just verify the import succeeds.
+
+    def test_non_preimported_modules_are_tracked_in_variables(self):
+        """Modules that are NOT pre-imported ARE tracked in self.variables."""
+        repl = SafeREPL()
+
+        # These modules are not in the pre-import list, so they get tracked
+        non_preimported = ["statistics", "itertools", "functools", "operator", "string"]
+
+        for module in non_preimported:
+            result = repl.execute(f"import {module}")
+            assert result.success is True, f"Expected {module} to be allowed"
+            assert module in repl.variables, f"Expected {module} to be in variables"
+
+    def test_safe_import_does_not_pollute_error_message(self):
+        """Allowed import doesn't produce security error message."""
+        repl = SafeREPL()
+        result = repl.execute("import math")
+
+        assert result.success is True
+        assert "SecurityError" not in result.stderr
+        assert "bloqueado" not in result.stderr.lower()
+        assert "nao permitido" not in result.stderr.lower()
+
+    def test_unicodedata_is_allowed(self):
+        """import unicodedata is allowed."""
+        repl = SafeREPL()
+        result = repl.execute("import unicodedata\nname = unicodedata.name('A')")
+
+        assert result.success is True
+        assert "unicodedata" in repl.variables
+        assert repl.variables["name"] == "LATIN CAPITAL LETTER A"
