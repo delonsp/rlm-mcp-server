@@ -1805,3 +1805,265 @@ class TestLoadDataCsv:
         assert repl.variables["special"][0]["symbol"] == "<"
         assert repl.variables["special"][1]["symbol"] == ">"
         assert repl.variables["special"][2]["symbol"] == "&"
+
+
+class TestLoadDataLines:
+    """Test load_data with data_type='lines'."""
+
+    def test_load_data_lines_returns_execution_result(self):
+        """load_data returns an ExecutionResult object."""
+        repl = SafeREPL()
+        result = repl.load_data("test", "line1\nline2", data_type="lines")
+
+        assert isinstance(result, ExecutionResult)
+
+    def test_load_data_lines_success_on_valid_data(self):
+        """load_data returns success=True for valid data."""
+        repl = SafeREPL()
+        result = repl.load_data("test", "line1\nline2", data_type="lines")
+
+        assert result.success is True
+
+    def test_load_data_lines_splits_on_newline(self):
+        """load_data splits string on newline into list."""
+        repl = SafeREPL()
+        repl.load_data("lines", "line1\nline2\nline3", data_type="lines")
+
+        assert "lines" in repl.variables
+        assert repl.variables["lines"] == ["line1", "line2", "line3"]
+
+    def test_load_data_lines_returns_list_type(self):
+        """load_data with lines returns a list type."""
+        repl = SafeREPL()
+        repl.load_data("lines", "a\nb\nc", data_type="lines")
+
+        assert isinstance(repl.variables["lines"], list)
+
+    def test_load_data_lines_single_line_no_newline(self):
+        """load_data with single line (no newline) returns list with one item."""
+        repl = SafeREPL()
+        repl.load_data("single", "just one line", data_type="lines")
+
+        assert repl.variables["single"] == ["just one line"]
+        assert len(repl.variables["single"]) == 1
+
+    def test_load_data_lines_empty_string_returns_list_with_empty_string(self):
+        """load_data with empty string returns list containing one empty string."""
+        repl = SafeREPL()
+        result = repl.load_data("empty", "", data_type="lines")
+
+        assert result.success is True
+        # "".split('\n') returns ['']
+        assert repl.variables["empty"] == [""]
+
+    def test_load_data_lines_preserves_empty_lines(self):
+        """load_data preserves empty lines."""
+        repl = SafeREPL()
+        repl.load_data("data", "line1\n\nline3", data_type="lines")
+
+        # Should have: ["line1", "", "line3"]
+        assert repl.variables["data"] == ["line1", "", "line3"]
+        assert len(repl.variables["data"]) == 3
+
+    def test_load_data_lines_trailing_newline_creates_empty_element(self):
+        """load_data with trailing newline creates empty string at end."""
+        repl = SafeREPL()
+        repl.load_data("data", "line1\nline2\n", data_type="lines")
+
+        # "line1\nline2\n".split('\n') returns ["line1", "line2", ""]
+        assert repl.variables["data"] == ["line1", "line2", ""]
+
+    def test_load_data_lines_leading_newline_creates_empty_element(self):
+        """load_data with leading newline creates empty string at beginning."""
+        repl = SafeREPL()
+        repl.load_data("data", "\nline1\nline2", data_type="lines")
+
+        # "\nline1\nline2".split('\n') returns ["", "line1", "line2"]
+        assert repl.variables["data"] == ["", "line1", "line2"]
+
+    def test_load_data_lines_multiple_consecutive_newlines(self):
+        """load_data handles multiple consecutive newlines."""
+        repl = SafeREPL()
+        repl.load_data("data", "a\n\n\nb", data_type="lines")
+
+        # "a\n\n\nb".split('\n') returns ["a", "", "", "b"]
+        assert repl.variables["data"] == ["a", "", "", "b"]
+
+    def test_load_data_lines_from_bytes(self):
+        """load_data decodes bytes and splits into lines."""
+        repl = SafeREPL()
+        data_bytes = b"line1\nline2\nline3"
+        result = repl.load_data("from_bytes", data_bytes, data_type="lines")
+
+        assert result.success is True
+        assert repl.variables["from_bytes"] == ["line1", "line2", "line3"]
+
+    def test_load_data_lines_from_utf8_bytes(self):
+        """load_data decodes UTF-8 bytes correctly."""
+        repl = SafeREPL()
+        data_bytes = "Olá\nMundo\nAção".encode('utf-8')
+        result = repl.load_data("utf8", data_bytes, data_type="lines")
+
+        assert result.success is True
+        assert repl.variables["utf8"] == ["Olá", "Mundo", "Ação"]
+
+    def test_load_data_lines_unicode_content(self):
+        """load_data handles Unicode content in lines."""
+        repl = SafeREPL()
+        unicode_text = "日本語\n中文\n한국어\nالعربية"
+        result = repl.load_data("unicode", unicode_text, data_type="lines")
+
+        assert result.success is True
+        assert repl.variables["unicode"] == ["日本語", "中文", "한국어", "العربية"]
+
+    def test_load_data_lines_preserves_whitespace_in_lines(self):
+        """load_data preserves whitespace within lines."""
+        repl = SafeREPL()
+        repl.load_data("data", "  leading\ntrailing  \n  both  ", data_type="lines")
+
+        assert repl.variables["data"][0] == "  leading"
+        assert repl.variables["data"][1] == "trailing  "
+        assert repl.variables["data"][2] == "  both  "
+
+    def test_load_data_lines_only_newlines(self):
+        """load_data handles string with only newlines."""
+        repl = SafeREPL()
+        repl.load_data("data", "\n\n\n", data_type="lines")
+
+        # "\n\n\n".split('\n') returns ["", "", "", ""]
+        assert repl.variables["data"] == ["", "", "", ""]
+        assert len(repl.variables["data"]) == 4
+
+    def test_load_data_lines_creates_metadata(self):
+        """load_data creates variable metadata for lines."""
+        repl = SafeREPL()
+        repl.load_data("with_meta", "a\nb\nc", data_type="lines")
+
+        assert "with_meta" in repl.variable_metadata
+        meta = repl.variable_metadata["with_meta"]
+        assert meta.name == "with_meta"
+        assert meta.type_name == "list"
+
+    def test_load_data_lines_metadata_has_preview(self):
+        """load_data metadata has preview of lines content."""
+        repl = SafeREPL()
+        repl.load_data("preview", "first line\nsecond line", data_type="lines")
+
+        meta = repl.variable_metadata["preview"]
+        # Preview should show list structure
+        assert "[" in meta.preview
+
+    def test_load_data_lines_metadata_has_human_size(self):
+        """load_data metadata has human-readable size."""
+        repl = SafeREPL()
+        repl.load_data("sized", "a\nb\nc", data_type="lines")
+
+        meta = repl.variable_metadata["sized"]
+        assert "B" in meta.size_human  # Should end with B, KB, MB, etc.
+
+    def test_load_data_lines_metadata_has_timestamps(self):
+        """load_data metadata has created_at and last_accessed timestamps."""
+        repl = SafeREPL()
+        from datetime import datetime
+        before = datetime.now()
+        repl.load_data("timestamped", "line1\nline2", data_type="lines")
+        after = datetime.now()
+
+        meta = repl.variable_metadata["timestamped"]
+        assert before <= meta.created_at <= after
+        assert before <= meta.last_accessed <= after
+
+    def test_load_data_lines_records_variable_in_result(self):
+        """load_data records variable name in variables_changed."""
+        repl = SafeREPL()
+        result = repl.load_data("recorded", "a\nb", data_type="lines")
+
+        assert "recorded" in result.variables_changed
+
+    def test_load_data_lines_stdout_contains_info(self):
+        """load_data stdout contains loading info."""
+        repl = SafeREPL()
+        result = repl.load_data("info_test", "line1\nline2", data_type="lines")
+
+        assert "info_test" in result.stdout
+        assert "carregada" in result.stdout  # Portuguese for "loaded"
+        assert "list" in result.stdout  # Type name
+
+    def test_load_data_lines_overwrites_existing_variable(self):
+        """load_data overwrites existing variable with same name."""
+        repl = SafeREPL()
+        repl.load_data("overwrite", "old1\nold2", data_type="lines")
+        repl.load_data("overwrite", "new1\nnew2\nnew3", data_type="lines")
+
+        assert repl.variables["overwrite"] == ["new1", "new2", "new3"]
+
+    def test_load_data_lines_variable_usable_in_execute(self):
+        """Variable loaded with load_data is usable in execute."""
+        repl = SafeREPL()
+        repl.load_data("lines_data", "apple\nbanana\ncherry", data_type="lines")
+        result = repl.execute("count = len(lines_data)")
+
+        assert result.success is True
+        assert repl.variables["count"] == 3
+
+    def test_load_data_lines_can_access_individual_lines(self):
+        """Variable loaded with lines can access individual lines by index."""
+        repl = SafeREPL()
+        repl.load_data("lines", "first\nsecond\nthird", data_type="lines")
+        result = repl.execute("second_line = lines[1]")
+
+        assert result.success is True
+        assert repl.variables["second_line"] == "second"
+
+    def test_load_data_lines_can_iterate(self):
+        """Variable loaded with lines can be iterated."""
+        repl = SafeREPL()
+        repl.load_data("lines", "a\nb\nc", data_type="lines")
+        result = repl.execute("upper_lines = [line.upper() for line in lines]")
+
+        assert result.success is True
+        assert repl.variables["upper_lines"] == ["A", "B", "C"]
+
+    def test_load_data_lines_large_data(self):
+        """load_data handles large data with many lines."""
+        repl = SafeREPL()
+        # Generate 10000 lines
+        large_data = "\n".join([f"line_{i}" for i in range(10000)])
+        result = repl.load_data("large", large_data, data_type="lines")
+
+        assert result.success is True
+        assert len(repl.variables["large"]) == 10000
+        assert repl.variables["large"][0] == "line_0"
+        assert repl.variables["large"][5000] == "line_5000"
+        assert repl.variables["large"][9999] == "line_9999"
+
+    def test_load_data_lines_with_special_characters(self):
+        """load_data handles lines with special characters."""
+        repl = SafeREPL()
+        special_text = 'Tab:\there\nQuote:"quoted"\nBackslash:\\'
+        result = repl.load_data("special", special_text, data_type="lines")
+
+        assert result.success is True
+        assert "\t" in repl.variables["special"][0]
+        assert '"' in repl.variables["special"][1]
+        assert "\\" in repl.variables["special"][2]
+
+    def test_load_data_lines_does_not_split_on_carriage_return(self):
+        """load_data only splits on \\n, not \\r."""
+        repl = SafeREPL()
+        # Windows-style line endings (\r\n)
+        windows_text = "line1\r\nline2\r\nline3"
+        repl.load_data("data", windows_text, data_type="lines")
+
+        # Split on \n only, so \r remains attached to lines
+        assert repl.variables["data"] == ["line1\r", "line2\r", "line3"]
+
+    def test_load_data_lines_handles_carriage_return_only(self):
+        """load_data handles text with only carriage returns (old Mac style)."""
+        repl = SafeREPL()
+        mac_text = "line1\rline2\rline3"
+        repl.load_data("data", mac_text, data_type="lines")
+
+        # No \n, so entire string is one line
+        assert repl.variables["data"] == ["line1\rline2\rline3"]
+        assert len(repl.variables["data"]) == 1

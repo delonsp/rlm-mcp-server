@@ -63,7 +63,7 @@ src/rlm_mcp/
 - [x] Testar load_data com data_type="text"
 - [x] Testar load_data com data_type="json"
 - [x] Testar load_data com data_type="csv"
-- [ ] Testar load_data com data_type="lines"
+- [x] Testar load_data com data_type="lines"
 - [ ] Testar get_memory_usage retorna valores razoáveis
 - [ ] Testar clear_namespace limpa variáveis
 
