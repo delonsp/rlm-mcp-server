@@ -577,3 +577,163 @@ class TestSearchMultipleOrMode:
         assert isinstance(results, dict)
         assert "medo" in results
         assert "trabalho" in results
+
+
+class TestSearchMultipleAndMode:
+    """Test TextIndex.search_multiple with require_all=True (AND mode)."""
+
+    def test_returns_lines_with_all_terms(self):
+        """search_multiple with AND mode returns only lines containing ALL terms."""
+        text = "Linha 1 com medo e trabalho\nLinha 2 apenas medo\nLinha 3 apenas trabalho"
+        index = create_index(text, "test_var")
+
+        results = index.search_multiple(["medo", "trabalho"], require_all=True)
+
+        # Only line 0 has both terms
+        assert 0 in results
+        assert 1 not in results
+        assert 2 not in results
+
+    def test_returns_dict_with_linha_as_key(self):
+        """search_multiple with AND mode returns dict with linha as key."""
+        text = "Linha com medo e trabalho juntos"
+        index = create_index(text, "test_var")
+
+        results = index.search_multiple(["medo", "trabalho"], require_all=True)
+
+        # Key should be line number (int), not term string
+        assert isinstance(results, dict)
+        for key in results.keys():
+            assert isinstance(key, int)
+
+    def test_returns_list_of_terms_as_value(self):
+        """search_multiple with AND mode returns list of found terms as value."""
+        text = "Linha com medo e trabalho"
+        index = create_index(text, "test_var")
+
+        results = index.search_multiple(["medo", "trabalho"], require_all=True)
+
+        assert 0 in results
+        # Value should be list of terms
+        assert isinstance(results[0], list)
+        assert "medo" in results[0]
+        assert "trabalho" in results[0]
+
+    def test_returns_empty_dict_when_no_line_has_all_terms(self):
+        """search_multiple with AND returns empty dict when no line has all terms."""
+        text = "Linha 1 com medo\nLinha 2 com trabalho"
+        index = create_index(text, "test_var")
+
+        results = index.search_multiple(["medo", "trabalho"], require_all=True)
+
+        assert results == {}
+
+    def test_returns_empty_dict_when_terms_not_found(self):
+        """search_multiple with AND returns empty dict when terms not found."""
+        text = "Texto simples sem termos especiais"
+        index = create_index(text, "test_var")
+
+        results = index.search_multiple(["medo", "trabalho"], require_all=True)
+
+        assert results == {}
+
+    def test_is_case_insensitive(self):
+        """search_multiple with AND mode is case-insensitive."""
+        text = "Linha com MEDO e TRABALHO"
+        index = create_index(text, "test_var")
+
+        results = index.search_multiple(["Medo", "trabalho"], require_all=True)
+
+        # Should find the line despite case differences
+        assert 0 in results
+
+    def test_terms_in_result_are_lowercase(self):
+        """search_multiple with AND mode returns terms in lowercase."""
+        text = "Linha com medo e trabalho"
+        index = create_index(text, "test_var")
+
+        results = index.search_multiple(["MEDO", "TRABALHO"], require_all=True)
+
+        assert 0 in results
+        # Terms in result should be lowercase (per the code: term.lower())
+        assert "medo" in results[0]
+        assert "trabalho" in results[0]
+
+    def test_multiple_lines_with_all_terms(self):
+        """search_multiple with AND returns multiple lines if they have all terms."""
+        text = "Linha 0 medo trabalho\nLinha 1 só medo\nLinha 2 medo trabalho\nLinha 3 medo trabalho"
+        index = create_index(text, "test_var")
+
+        results = index.search_multiple(["medo", "trabalho"], require_all=True)
+
+        assert 0 in results
+        assert 1 not in results
+        assert 2 in results
+        assert 3 in results
+
+    def test_with_three_terms(self):
+        """search_multiple with AND works with three or more terms."""
+        text = "Linha 0 medo trabalho ansiedade\nLinha 1 medo trabalho\nLinha 2 medo ansiedade"
+        index = create_index(text, "test_var")
+
+        results = index.search_multiple(["medo", "trabalho", "ansiedade"], require_all=True)
+
+        # Only line 0 has all three terms
+        assert 0 in results
+        assert 1 not in results
+        assert 2 not in results
+
+    def test_with_single_term(self):
+        """search_multiple with AND and single term returns lines with that term."""
+        text = "Linha 0 com medo\nLinha 1 sem\nLinha 2 com medo"
+        index = create_index(text, "test_var")
+
+        results = index.search_multiple(["medo"], require_all=True)
+
+        assert 0 in results
+        assert 1 not in results
+        assert 2 in results
+
+    def test_with_empty_term_list(self):
+        """search_multiple with AND and empty term list returns empty dict."""
+        text = "Tenho medo de trabalho"
+        index = create_index(text, "test_var")
+
+        results = index.search_multiple([], require_all=True)
+
+        assert results == {}
+
+    def test_with_custom_terms(self):
+        """search_multiple with AND works with custom terms."""
+        text = "O paciente tem xerostomia e epistaxe na mesma linha"
+        index = create_index(text, "test_var", additional_terms=["xerostomia", "epistaxe"])
+
+        results = index.search_multiple(["xerostomia", "epistaxe"], require_all=True)
+
+        assert 0 in results
+        assert "xerostomia" in results[0]
+        assert "epistaxe" in results[0]
+
+    def test_on_empty_index(self):
+        """search_multiple with AND on empty index returns empty dict."""
+        index = create_index("", "empty_var")
+
+        results = index.search_multiple(["medo", "trabalho"], require_all=True)
+
+        assert results == {}
+
+    def test_different_from_or_mode(self):
+        """AND mode returns different result structure than OR mode."""
+        text = "Linha 0 medo e trabalho\nLinha 1 apenas medo"
+        index = create_index(text, "test_var")
+
+        or_results = index.search_multiple(["medo", "trabalho"], require_all=False)
+        and_results = index.search_multiple(["medo", "trabalho"], require_all=True)
+
+        # OR mode: dict with term -> matches
+        assert "medo" in or_results
+        assert "trabalho" in or_results
+
+        # AND mode: dict with linha -> terms
+        assert 0 in and_results
+        assert 1 not in and_results

@@ -414,3 +414,70 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 16 - Test TextIndex.search_multiple with require_all=False (OR)
+
+- What was implemented:
+  - Added TestSearchMultipleOrMode class to tests/test_indexer.py
+  - 13 test cases covering:
+    - Returns dict with term -> matches for each found term
+    - Omits terms not found in index
+    - Returns empty dict when no terms are found
+    - Case-insensitive search (search is lowercase but original term preserved as key)
+    - Preserves original term case as dict key
+    - Works with single term
+    - Works with empty term list (returns {})
+    - Multiple occurrences per term returned correctly
+    - Matches contain linha and contexto keys
+    - Works with custom terms from additional_terms
+    - Returns empty dict on empty index
+    - Handles many terms efficiently
+    - Default require_all is False (OR mode)
+
+- Files changed:
+  - tests/test_indexer.py (added TestSearchMultipleOrMode class)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - search_multiple with require_all=False uses dict comprehension: `{t: self.search(t) for t in terms if self.search(t)}`
+  - The original term passed in is used as the dict key (preserves case), but search itself is case-insensitive
+  - Empty list of terms returns {} (empty dict)
+  - search_multiple defaults to require_all=False (OR mode) when not specified
+  - OR mode returns dict[term, list[match]], AND mode (next task) returns dict[linha, list[terms]]
+
+---
+
+## Iteration 17 - Test TextIndex.search_multiple with require_all=True (AND)
+
+- What was implemented:
+  - Added TestSearchMultipleAndMode class to tests/test_indexer.py
+  - 14 test cases covering:
+    - Returns only lines containing ALL terms (require_all=True logic)
+    - Returns dict with linha (int) as key, not term (string)
+    - Returns list of found terms as value (lowercase)
+    - Returns empty dict when no line has all terms
+    - Returns empty dict when terms not found
+    - Case-insensitive search
+    - Terms in result are lowercase (per code: term.lower())
+    - Multiple lines with all terms
+    - Works with three or more terms
+    - Works with single term
+    - Empty term list returns empty dict
+    - Works with custom terms from additional_terms
+    - Returns empty dict on empty index
+    - Confirms different structure from OR mode
+
+- Files changed:
+  - tests/test_indexer.py (added TestSearchMultipleAndMode class)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - search_multiple with require_all=True uses defaultdict(set) to track terms per line
+  - AND mode returns {linha: [terms]} while OR mode returns {term: [matches]}
+  - The set comparison `found_terms == all_terms_set` ensures ALL terms must be present
+  - Terms in AND mode result are stored as lowercase (via term.lower() when adding to set)
+  - Empty term list causes all_terms_set to be empty, so no line can match (returns {})
+
+---
+
