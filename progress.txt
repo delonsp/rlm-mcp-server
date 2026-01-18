@@ -1,0 +1,25 @@
+# Progress Log - RLM MCP Server Test Suite
+
+Este arquivo registra o progresso do Ralph em cada iteração.
+
+---
+
+## Iteration 1 - Add pytest and pytest-asyncio to pyproject.toml
+
+- What was implemented:
+  - Added `[project.optional-dependencies]` section with `dev` group
+  - Added pytest>=8.0.0 and pytest-asyncio>=0.24.0 as dev dependencies
+  - Added `[tool.pytest.ini_options]` section with asyncio configuration
+
+- Files changed:
+  - pyproject.toml
+
+- Learnings for future iterations:
+  - pytest-asyncio requires `asyncio_default_fixture_loop_scope` config to avoid deprecation warning
+  - Dev dependencies go in `[project.optional-dependencies]` section in modern pyproject.toml
+  - Install with `pip install -e ".[dev]"` to get dev dependencies
+  - pytest config can be added in `[tool.pytest.ini_options]` section
+  - Setting `asyncio_mode = "auto"` makes async tests easier (no need for @pytest.mark.asyncio)
+
+---
+
