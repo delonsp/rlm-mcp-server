@@ -51,7 +51,7 @@ src/rlm_mcp/
 - [x] Testar TextIndex.search_multiple com require_all=False (OR)
 - [x] Testar TextIndex.search_multiple com require_all=True (AND)
 - [x] Testar auto_index_if_large indexa apenas textos >= 100k chars
-- [ ] Testar _detect_structure detecta headers markdown
+- [x] Testar _detect_structure detecta headers markdown
 - [ ] Testar TextIndex.to_dict e from_dict (serialização)
 
 ## Fase 4: Testes do Módulo repl.py

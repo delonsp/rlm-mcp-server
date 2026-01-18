@@ -514,3 +514,41 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 19 - Test _detect_structure detecta headers markdown
+
+- What was implemented:
+  - Added TestDetectStructure class to tests/test_indexer.py
+  - 20 test cases covering:
+    - H1, H2, H3 markdown headers detection
+    - Multiple headers at different levels
+    - Correct line number recording for headers
+    - Header title stripping of whitespace
+    - Header title truncation at 100 chars
+    - Empty text returns empty lists
+    - Text without headers returns empty lists
+    - Returns dict with headers, capitulos, remedios keys
+    - Numeric chapter pattern like "4.8 Ferrum"
+    - Multiple chapters detection
+    - Chapter requires capital letter
+    - "Quadro de" remedio pattern
+    - Remedio with two word name
+    - Multiple remedios detection
+    - Combined headers, chapters, and remedios
+    - Headers with special characters (Portuguese)
+    - Empty header after hash symbols
+    - Hash in middle of line is not detected
+
+- Files changed:
+  - tests/test_indexer.py (added TestDetectStructure class)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - _detect_structure detects three patterns: markdown headers, numeric chapters, and "Quadro de" remedios
+  - Header level is calculated via `len(line) - len(line.lstrip('#'))`
+  - Title is truncated with `title[:100]`
+  - Chapter regex: `r'^(\d+\.\d+)\s+([A-Z][a-zA-Z]+)'` - requires capital letter
+  - Remedio regex: `r'Quadro de (\w+(?:\s+\w+)?)'` - captures 1-2 words
+
+---
+

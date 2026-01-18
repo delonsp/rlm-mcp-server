@@ -855,3 +855,192 @@ class TestAutoIndexIfLarge:
         assert result.total_chars == direct_index.total_chars
         assert result.total_lines == direct_index.total_lines
         assert result.terms.keys() == direct_index.terms.keys()
+
+
+class TestDetectStructure:
+    """Test that _detect_structure detects markdown headers and document patterns."""
+
+    def test_detects_h1_markdown_header(self):
+        """_detect_structure detects level 1 markdown header."""
+        text = "# Main Title"
+        structure = _detect_structure(text)
+
+        assert len(structure["headers"]) == 1
+        assert structure["headers"][0]["nivel"] == 1
+        assert structure["headers"][0]["titulo"] == "Main Title"
+        assert structure["headers"][0]["linha"] == 0
+
+    def test_detects_h2_markdown_header(self):
+        """_detect_structure detects level 2 markdown header."""
+        text = "## Subtitle"
+        structure = _detect_structure(text)
+
+        assert len(structure["headers"]) == 1
+        assert structure["headers"][0]["nivel"] == 2
+        assert structure["headers"][0]["titulo"] == "Subtitle"
+
+    def test_detects_h3_markdown_header(self):
+        """_detect_structure detects level 3 markdown header."""
+        text = "### Section"
+        structure = _detect_structure(text)
+
+        assert len(structure["headers"]) == 1
+        assert structure["headers"][0]["nivel"] == 3
+        assert structure["headers"][0]["titulo"] == "Section"
+
+    def test_detects_multiple_headers_different_levels(self):
+        """_detect_structure detects multiple headers at different levels."""
+        text = "# Title\n## Subtitle\n### Section\n#### Subsection"
+        structure = _detect_structure(text)
+
+        assert len(structure["headers"]) == 4
+        assert structure["headers"][0]["nivel"] == 1
+        assert structure["headers"][1]["nivel"] == 2
+        assert structure["headers"][2]["nivel"] == 3
+        assert structure["headers"][3]["nivel"] == 4
+
+    def test_header_line_number_is_correct(self):
+        """_detect_structure records correct line number for headers."""
+        text = "Some text\nMore text\n# Title\nMore text\n## Subtitle"
+        structure = _detect_structure(text)
+
+        assert len(structure["headers"]) == 2
+        assert structure["headers"][0]["linha"] == 2  # # Title
+        assert structure["headers"][1]["linha"] == 4  # ## Subtitle
+
+    def test_header_title_is_stripped(self):
+        """_detect_structure strips whitespace from header title."""
+        text = "##   Title with spaces   "
+        structure = _detect_structure(text)
+
+        assert structure["headers"][0]["titulo"] == "Title with spaces"
+
+    def test_header_title_truncated_at_100_chars(self):
+        """_detect_structure truncates header title at 100 characters."""
+        long_title = "A" * 150
+        text = f"# {long_title}"
+        structure = _detect_structure(text)
+
+        assert len(structure["headers"][0]["titulo"]) == 100
+
+    def test_empty_text_returns_empty_headers(self):
+        """_detect_structure on empty text returns empty headers list."""
+        structure = _detect_structure("")
+
+        assert structure["headers"] == []
+        assert structure["capitulos"] == []
+        assert structure["remedios"] == []
+
+    def test_text_without_headers_returns_empty_headers(self):
+        """_detect_structure on text without headers returns empty headers list."""
+        text = "Just some regular text\nWithout any markdown headers"
+        structure = _detect_structure(text)
+
+        assert structure["headers"] == []
+
+    def test_returns_dict_with_required_keys(self):
+        """_detect_structure returns dict with headers, capitulos, remedios keys."""
+        structure = _detect_structure("Some text")
+
+        assert "headers" in structure
+        assert "capitulos" in structure
+        assert "remedios" in structure
+
+    def test_detects_numeric_chapter_pattern(self):
+        """_detect_structure detects numeric chapter pattern like '4.8 Ferrum'."""
+        text = "4.8 Ferrum"
+        structure = _detect_structure(text)
+
+        assert len(structure["capitulos"]) == 1
+        assert structure["capitulos"][0]["numero"] == "4.8"
+        assert structure["capitulos"][0]["titulo"] == "Ferrum"
+        assert structure["capitulos"][0]["linha"] == 0
+
+    def test_detects_multiple_chapters(self):
+        """_detect_structure detects multiple numeric chapters."""
+        text = "4.8 Ferrum\nSome text\n5.1 Calcarea\n5.2 Sulphur"
+        structure = _detect_structure(text)
+
+        assert len(structure["capitulos"]) == 3
+        assert structure["capitulos"][0]["numero"] == "4.8"
+        assert structure["capitulos"][1]["numero"] == "5.1"
+        assert structure["capitulos"][2]["numero"] == "5.2"
+
+    def test_chapter_requires_capital_letter(self):
+        """_detect_structure chapter pattern requires capitalized word."""
+        # Should match
+        text = "4.8 Ferrum"
+        structure1 = _detect_structure(text)
+        assert len(structure1["capitulos"]) == 1
+
+        # Should NOT match (lowercase)
+        text2 = "4.8 ferrum"
+        structure2 = _detect_structure(text2)
+        assert len(structure2["capitulos"]) == 0
+
+    def test_detects_remedio_pattern(self):
+        """_detect_structure detects 'Quadro de' remedio pattern."""
+        text = "Quadro de Ferrum"
+        structure = _detect_structure(text)
+
+        assert len(structure["remedios"]) == 1
+        assert structure["remedios"][0]["nome"] == "Ferrum"
+        assert structure["remedios"][0]["linha"] == 0
+
+    def test_detects_remedio_with_two_words(self):
+        """_detect_structure detects remedio with two word name."""
+        text = "Quadro de Ferrum metallicum"
+        structure = _detect_structure(text)
+
+        assert len(structure["remedios"]) == 1
+        assert structure["remedios"][0]["nome"] == "Ferrum metallicum"
+
+    def test_detects_multiple_remedios(self):
+        """_detect_structure detects multiple remedios."""
+        text = "Quadro de Ferrum\nSome text\nQuadro de Sulphur\nQuadro de Calcarea carbonica"
+        structure = _detect_structure(text)
+
+        assert len(structure["remedios"]) == 3
+        assert structure["remedios"][0]["nome"] == "Ferrum"
+        assert structure["remedios"][1]["nome"] == "Sulphur"
+        assert structure["remedios"][2]["nome"] == "Calcarea carbonica"
+
+    def test_combined_headers_chapters_remedios(self):
+        """_detect_structure detects all pattern types in same text."""
+        text = """# Materia Medica
+## Parte 1
+4.8 Ferrum
+Texto sobre Ferrum
+Quadro de Ferrum metallicum
+## Parte 2
+5.1 Sulphur
+Quadro de Sulphur"""
+        structure = _detect_structure(text)
+
+        assert len(structure["headers"]) == 3
+        assert len(structure["capitulos"]) == 2
+        assert len(structure["remedios"]) == 2
+
+    def test_header_with_special_characters(self):
+        """_detect_structure handles headers with special characters."""
+        text = "# Título com acentuação (ç, é, ã)"
+        structure = _detect_structure(text)
+
+        assert len(structure["headers"]) == 1
+        assert "acentuação" in structure["headers"][0]["titulo"]
+
+    def test_header_empty_after_hash(self):
+        """_detect_structure handles header with only hash symbols."""
+        text = "###"
+        structure = _detect_structure(text)
+
+        assert len(structure["headers"]) == 1
+        assert structure["headers"][0]["nivel"] == 3
+        assert structure["headers"][0]["titulo"] == ""
+
+    def test_does_not_detect_hash_in_middle_of_line(self):
+        """_detect_structure only detects # at start of line."""
+        text = "Some text with # in the middle"
+        structure = _detect_structure(text)
+
+        assert structure["headers"] == []
