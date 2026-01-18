@@ -97,6 +97,7 @@ scp arquivo.pdf user@vps:/caminho/para/rlm-data/
 | `OPENAI_API_KEY` | Para llm_query | Sub-chamadas LLM |
 | `MISTRAL_API_KEY` | Para OCR | PDFs escaneados |
 | `MINIO_*` | Opcional | Storage S3 |
+| `RLM_PERSIST_DIR` | Opcional | Diretório SQLite (padrão: /persist) |
 
 ## Tools Disponíveis
 
@@ -119,6 +120,10 @@ scp arquivo.pdf user@vps:/caminho/para/rlm-data/
 - `rlm_list_s3` - Lista objetos
 - `rlm_upload_url` - Upload de URL para bucket
 
+### Busca e Persistência
+- `rlm_search_index` - Busca termos no índice semântico (criado auto para textos >= 100k chars)
+- `rlm_persistence_stats` - Estatísticas de variáveis/índices persistidos
+
 ### Processamento de PDF (duas etapas)
 - `rlm_process_pdf` - Extrai texto de PDF e salva .txt no bucket (não bloqueia)
   ```
@@ -133,16 +138,44 @@ scp arquivo.pdf user@vps:/caminho/para/rlm-data/
 
 ```
 src/rlm_mcp/
-├── http_server.py # Servidor HTTP/SSE (único servidor MCP)
-├── repl.py        # REPL Python sandboxed
-├── pdf_parser.py  # Extração de PDF (pdfplumber + Mistral OCR)
-├── s3_client.py   # Cliente Minio/S3
-└── llm_client.py  # Cliente para sub-chamadas LLM
+├── http_server.py   # Servidor HTTP/SSE (único servidor MCP)
+├── repl.py          # REPL Python sandboxed
+├── pdf_parser.py    # Extração de PDF (pdfplumber + Mistral OCR)
+├── s3_client.py     # Cliente Minio/S3
+├── llm_client.py    # Cliente para sub-chamadas LLM
+├── persistence.py   # Persistência SQLite (variáveis + índices)
+└── indexer.py       # Indexação semântica automática
+```
+
+## Persistência e Indexação
+
+### Persistência automática (SQLite)
+- Variáveis carregadas com `rlm_load_s3` ou `rlm_load_data` são **automaticamente persistidas**
+- Ao reiniciar o servidor, variáveis são restauradas automaticamente
+- Dados ficam em `/persist/rlm_data.db` (volume Docker)
+
+### Indexação automática
+- Textos com **100k+ caracteres** são **indexados automaticamente**
+- Índice permite busca rápida por termos sem varrer o texto todo
+- Termos padrão: emoções, relações, trabalho, sintomas físicos, partes do corpo
+- Use `rlm_search_index(var_name, terms)` para buscar
+
+### Exemplos de uso
+```
+# Busca simples
+rlm_search_index(var_name="scholten1", terms=["medo", "trabalho"])
+
+# Busca com todos os termos (AND)
+rlm_search_index(var_name="scholten1", terms=["medo", "fracasso"], require_all=True)
+
+# Ver estatísticas de persistência
+rlm_persistence_stats()
 ```
 
 ## Notas Importantes
 
 - Volume `/data` é **read-only** por segurança
+- Volume `/persist` guarda SQLite com variáveis e índices
 - REPL Python roda em **sandbox** (imports limitados)
 - PDFs machine readable usam **pdfplumber** (local, rápido)
 - PDFs escaneados usam **Mistral OCR API** (requer API key)

@@ -30,6 +30,8 @@ import uvicorn
 from .repl import SafeREPL, ExecutionResult, VariableInfo
 from .s3_client import get_s3_client
 from .pdf_parser import extract_pdf
+from .persistence import get_persistence
+from .indexer import create_index, get_index, set_index, clear_index, TextIndex, auto_index_if_large
 
 # Configuração
 logging.basicConfig(
@@ -86,6 +88,27 @@ async def verify_api_key(request: Request):
 async def lifespan(app: FastAPI):
     """Lifecycle hooks"""
     logger.info(f"RLM MCP Server iniciando (max_memory={MAX_MEMORY_MB}MB)")
+
+    # Restaurar variáveis persistidas
+    try:
+        persistence = get_persistence()
+        saved_vars = persistence.list_variables()
+        if saved_vars:
+            logger.info(f"Restaurando {len(saved_vars)} variáveis persistidas...")
+            for var_info in saved_vars:
+                name = var_info["name"]
+                value = persistence.load_variable(name)
+                if value is not None:
+                    repl.namespace[name] = value
+                    # Restaurar índice se existir
+                    index_data = persistence.load_index(name)
+                    if index_data:
+                        set_index(name, TextIndex.from_dict(index_data))
+                    logger.info(f"  Restaurado: {name} ({var_info['type']})")
+            logger.info("Variáveis restauradas com sucesso")
+    except Exception as e:
+        logger.warning(f"Erro ao restaurar variáveis (pode ser primeira execução): {e}")
+
     yield
     logger.info("RLM MCP Server encerrando")
 
@@ -496,6 +519,55 @@ Exemplo: rlm_process_pdf(key="pdfs/livro.pdf") → salva pdfs/livro.txt""",
                 },
                 "required": ["key"]
             }
+        },
+        {
+            "name": "rlm_search_index",
+            "description": """Busca termos no índice semântico de uma variável.
+
+O índice é criado automaticamente ao carregar textos grandes (100k+ chars).
+Permite busca rápida sem varrer o texto todo.
+
+Modos de busca:
+- termo único: retorna linhas onde o termo aparece
+- múltiplos termos: retorna linhas com qualquer um dos termos
+- require_all=true: retorna apenas linhas com TODOS os termos
+
+Exemplo: rlm_search_index(var_name="scholten1", terms=["medo", "fracasso"])""",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "var_name": {
+                        "type": "string",
+                        "description": "Nome da variável indexada"
+                    },
+                    "terms": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Lista de termos para buscar"
+                    },
+                    "require_all": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Se True, retorna apenas linhas com TODOS os termos"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Máximo de resultados por termo"
+                    }
+                },
+                "required": ["var_name", "terms"]
+            }
+        },
+        {
+            "name": "rlm_persistence_stats",
+            "description": """Retorna estatísticas de persistência (variáveis salvas, índices, etc).
+
+Mostra quais variáveis estão persistidas e sobreviverão ao restart do servidor.""",
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
         }
     ]
 
@@ -512,16 +584,38 @@ def call_tool(name: str, arguments: dict) -> dict:
             }
 
         elif name == "rlm_load_data":
-            result = repl.load_data(
-                name=arguments["name"],
-                data=arguments["data"],
-                data_type=arguments.get("data_type", "text")
-            )
-            return {
-                "content": [
-                    {"type": "text", "text": format_execution_result(result)}
-                ]
-            }
+            var_name = arguments["name"]
+            data = arguments["data"]
+            data_type = arguments.get("data_type", "text")
+
+            result = repl.load_data(name=var_name, data=data, data_type=data_type)
+
+            # Auto-persistência e indexação
+            persist_msg = ""
+            index_msg = ""
+            try:
+                # Persistir variável
+                persistence = get_persistence()
+                value = repl.namespace.get(var_name)
+                if value is not None:
+                    persistence.save_variable(var_name, value)
+                    persist_msg = "💾 Persistido"
+
+                    # Indexar se for texto grande
+                    if isinstance(value, str) and len(value) >= 100000:
+                        idx = auto_index_if_large(value, var_name)
+                        if idx:
+                            set_index(var_name, idx)
+                            persistence.save_index(var_name, idx.to_dict())
+                            index_msg = f"📑 Indexado ({idx.get_stats()['indexed_terms']} termos)"
+            except Exception as e:
+                logger.warning(f"Erro ao persistir/indexar {var_name}: {e}")
+
+            output = format_execution_result(result)
+            if persist_msg or index_msg:
+                output += f"\n\n{persist_msg} {index_msg}".strip()
+
+            return {"content": [{"type": "text", "text": output}]}
 
         elif name == "rlm_load_file":
             path = arguments["path"]
@@ -697,6 +791,27 @@ Uso: {mem['usage_percent']:.1f}%"""
                         data = pdf_result.text
                         result = repl.load_data(name=var_name, data=data, data_type="text")
 
+                        # Auto-persistência e indexação
+                        persist_msg = ""
+                        index_msg = ""
+                        try:
+                            persistence = get_persistence()
+                            value = repl.namespace.get(var_name)
+                            if value is not None:
+                                persistence.save_variable(var_name, value)
+                                persist_msg = "💾 Persistido"
+
+                                if isinstance(value, str) and len(value) >= 100000:
+                                    idx = auto_index_if_large(value, var_name)
+                                    if idx:
+                                        set_index(var_name, idx)
+                                        persistence.save_index(var_name, idx.to_dict())
+                                        index_msg = f"📑 Indexado ({idx.get_stats()['indexed_terms']} termos)"
+                        except Exception as e:
+                            logger.warning(f"Erro ao persistir/indexar {var_name}: {e}")
+
+                        extras = f"\n{persist_msg} {index_msg}".strip() if (persist_msg or index_msg) else ""
+
                         text = f"""✅ PDF extraído do Minio:
 Bucket: {bucket}
 Objeto: {key}
@@ -704,7 +819,7 @@ Tamanho original: {info['size_human']}
 Método: {pdf_result.method}
 Páginas: {pdf_result.pages}
 Caracteres extraídos: {len(data):,}
-Variável: {var_name}
+Variável: {var_name}{extras}
 
 {format_execution_result(result)}"""
                         return {"content": [{"type": "text", "text": text}]}
@@ -716,11 +831,32 @@ Variável: {var_name}
                 data = s3.get_object_text(bucket, key)
                 result = repl.load_data(name=var_name, data=data, data_type=data_type)
 
+                # Auto-persistência e indexação
+                persist_msg = ""
+                index_msg = ""
+                try:
+                    persistence = get_persistence()
+                    value = repl.namespace.get(var_name)
+                    if value is not None:
+                        persistence.save_variable(var_name, value)
+                        persist_msg = "💾 Persistido"
+
+                        if isinstance(value, str) and len(value) >= 100000:
+                            idx = auto_index_if_large(value, var_name)
+                            if idx:
+                                set_index(var_name, idx)
+                                persistence.save_index(var_name, idx.to_dict())
+                                index_msg = f"📑 Indexado ({idx.get_stats()['indexed_terms']} termos)"
+                except Exception as e:
+                    logger.warning(f"Erro ao persistir/indexar {var_name}: {e}")
+
+                extras = f"\n{persist_msg} {index_msg}".strip() if (persist_msg or index_msg) else ""
+
                 text = f"""✅ Carregado do Minio:
 Bucket: {bucket}
 Objeto: {key}
 Tamanho: {info['size_human']}
-Variável: {var_name} (tipo: {data_type})
+Variável: {var_name} (tipo: {data_type}){extras}
 
 {format_execution_result(result)}"""
                 return {"content": [{"type": "text", "text": text}]}
@@ -907,6 +1043,99 @@ Próximo passo: rlm_load_s3(key="{output_key}", name="texto", data_type="text")"
                 return {
                     "content": [
                         {"type": "text", "text": f"Erro ao processar PDF: {e}"}
+                    ],
+                    "isError": True
+                }
+
+        elif name == "rlm_search_index":
+            var_name = arguments["var_name"]
+            terms = arguments["terms"]
+            require_all = arguments.get("require_all", False)
+            limit = arguments.get("limit", 20)
+
+            # Verificar se variável existe
+            if var_name not in repl.namespace:
+                return {
+                    "content": [
+                        {"type": "text", "text": f"Erro: Variável '{var_name}' não encontrada no REPL."}
+                    ],
+                    "isError": True
+                }
+
+            # Verificar se tem índice
+            index = get_index(var_name)
+            if not index:
+                return {
+                    "content": [
+                        {"type": "text", "text": f"Erro: Variável '{var_name}' não possui índice. Indexação automática ocorre para textos >= 100k chars."}
+                    ],
+                    "isError": True
+                }
+
+            try:
+                if require_all:
+                    results = index.search_multiple(terms, require_all=True)
+                    if not results:
+                        text = f"Nenhuma linha encontrada com TODOS os termos: {', '.join(terms)}"
+                    else:
+                        lines = [f"Linhas com todos os termos ({len(results)} encontradas):", ""]
+                        for linha, found_terms in sorted(results.items())[:limit]:
+                            lines.append(f"  Linha {linha}: {found_terms}")
+                        text = "\n".join(lines)
+                else:
+                    results = index.search_multiple(terms, require_all=False)
+                    if not results:
+                        text = f"Nenhum resultado para: {', '.join(terms)}"
+                    else:
+                        lines = ["Resultados da busca:", ""]
+                        for term, matches in results.items():
+                            lines.append(f"📌 '{term}' ({len(matches)} ocorrências):")
+                            for m in matches[:limit]:
+                                lines.append(f"    Linha {m['linha']}: {m['contexto'][:80]}...")
+                            lines.append("")
+                        text = "\n".join(lines)
+
+                # Adicionar stats do índice
+                stats = index.get_stats()
+                text += f"\n\n📊 Índice: {stats['indexed_terms']} termos, {stats['total_occurrences']} ocorrências totais"
+
+                return {"content": [{"type": "text", "text": text}]}
+
+            except Exception as e:
+                return {
+                    "content": [
+                        {"type": "text", "text": f"Erro na busca: {e}"}
+                    ],
+                    "isError": True
+                }
+
+        elif name == "rlm_persistence_stats":
+            try:
+                persistence = get_persistence()
+                stats = persistence.get_stats()
+                saved_vars = persistence.list_variables()
+
+                lines = ["📦 Estatísticas de Persistência", ""]
+                lines.append(f"Variáveis salvas: {stats.get('variables_count', 0)}")
+                lines.append(f"Tamanho total: {stats.get('variables_total_size', 0):,} bytes")
+                lines.append(f"Índices salvos: {stats.get('indices_count', 0)}")
+                lines.append(f"Termos indexados: {stats.get('total_indexed_terms', 0):,}")
+                lines.append(f"Arquivo DB: {stats.get('db_path', 'N/A')}")
+                lines.append(f"Tamanho DB: {stats.get('db_file_size', 0):,} bytes")
+
+                if saved_vars:
+                    lines.append("")
+                    lines.append("Variáveis persistidas:")
+                    for v in saved_vars:
+                        lines.append(f"  - {v['name']} ({v['type']}, {v['size_bytes']:,} bytes)")
+                        lines.append(f"    Atualizado: {v['updated_at']}")
+
+                return {"content": [{"type": "text", "text": "\n".join(lines)}]}
+
+            except Exception as e:
+                return {
+                    "content": [
+                        {"type": "text", "text": f"Erro ao obter estatísticas: {e}"}
                     ],
                     "isError": True
                 }

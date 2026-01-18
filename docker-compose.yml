@@ -33,10 +33,14 @@ services:
       - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-}
       - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-}
       - MINIO_SECURE=${MINIO_SECURE:-true}
+      # Diretório de persistência SQLite
+      - RLM_PERSIST_DIR=/persist
 
     volumes:
       # Monte seus dados aqui - serão acessíveis via /data no container
       - rlm-data:/data:ro
+      # Volume para persistência SQLite (variáveis + índices)
+      - rlm-persist:/persist
 
     # Expõe porta
     ports:
@@ -77,6 +81,8 @@ services:
 
 volumes:
   rlm-data:
+    driver: local
+  rlm-persist:
     driver: local
 
 networks:
