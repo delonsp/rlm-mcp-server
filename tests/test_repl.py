@@ -1484,3 +1484,324 @@ class TestLoadDataJson:
         assert result.success is True
         assert repl.variables["sci"]["large"] == 1.23e10
         assert repl.variables["sci"]["small"] == 4.56e-5
+
+
+class TestLoadDataCsv:
+    """Test load_data with data_type='csv'."""
+
+    def test_load_data_csv_returns_execution_result(self):
+        """load_data returns an ExecutionResult object."""
+        repl = SafeREPL()
+        csv_data = "name,age\nAlice,30\nBob,25"
+        result = repl.load_data("test", csv_data, data_type="csv")
+
+        assert isinstance(result, ExecutionResult)
+
+    def test_load_data_csv_success_on_valid_csv(self):
+        """load_data returns success=True for valid CSV data."""
+        repl = SafeREPL()
+        csv_data = "name,age\nAlice,30"
+        result = repl.load_data("test", csv_data, data_type="csv")
+
+        assert result.success is True
+
+    def test_load_data_csv_parses_to_list_of_dicts(self):
+        """load_data parses CSV into list of dicts (DictReader)."""
+        repl = SafeREPL()
+        csv_data = "name,age\nAlice,30\nBob,25"
+        repl.load_data("data", csv_data, data_type="csv")
+
+        assert "data" in repl.variables
+        assert isinstance(repl.variables["data"], list)
+        assert len(repl.variables["data"]) == 2
+        assert isinstance(repl.variables["data"][0], dict)
+
+    def test_load_data_csv_uses_header_as_keys(self):
+        """load_data uses CSV header row as dict keys."""
+        repl = SafeREPL()
+        csv_data = "name,age,city\nAlice,30,NYC"
+        repl.load_data("data", csv_data, data_type="csv")
+
+        row = repl.variables["data"][0]
+        assert "name" in row
+        assert "age" in row
+        assert "city" in row
+        assert row["name"] == "Alice"
+        assert row["age"] == "30"  # CSV values are strings
+        assert row["city"] == "NYC"
+
+    def test_load_data_csv_values_are_strings(self):
+        """load_data CSV values are all strings (DictReader behavior)."""
+        repl = SafeREPL()
+        csv_data = "id,value,active\n1,3.14,true"
+        repl.load_data("data", csv_data, data_type="csv")
+
+        row = repl.variables["data"][0]
+        # All values are strings - no type conversion
+        assert row["id"] == "1"
+        assert row["value"] == "3.14"
+        assert row["active"] == "true"
+        assert isinstance(row["id"], str)
+        assert isinstance(row["value"], str)
+        assert isinstance(row["active"], str)
+
+    def test_load_data_csv_multiple_rows(self):
+        """load_data parses multiple CSV rows."""
+        repl = SafeREPL()
+        csv_data = "name,score\nAlice,100\nBob,95\nCharlie,88\nDiana,92"
+        repl.load_data("scores", csv_data, data_type="csv")
+
+        assert len(repl.variables["scores"]) == 4
+        assert repl.variables["scores"][0]["name"] == "Alice"
+        assert repl.variables["scores"][1]["name"] == "Bob"
+        assert repl.variables["scores"][2]["name"] == "Charlie"
+        assert repl.variables["scores"][3]["name"] == "Diana"
+
+    def test_load_data_csv_with_empty_values(self):
+        """load_data handles CSV with empty values."""
+        repl = SafeREPL()
+        csv_data = "name,email\nAlice,alice@example.com\nBob,"
+        result = repl.load_data("data", csv_data, data_type="csv")
+
+        assert result.success is True
+        assert repl.variables["data"][1]["email"] == ""
+
+    def test_load_data_csv_with_quoted_fields(self):
+        """load_data handles CSV with quoted fields."""
+        repl = SafeREPL()
+        csv_data = 'name,description\nAlice,"A person, friendly"\nBob,"Has ""quotes"" inside"'
+        result = repl.load_data("data", csv_data, data_type="csv")
+
+        assert result.success is True
+        assert repl.variables["data"][0]["description"] == "A person, friendly"
+        assert repl.variables["data"][1]["description"] == 'Has "quotes" inside'
+
+    def test_load_data_csv_with_newlines_in_quoted_field(self):
+        """load_data handles CSV with newlines inside quoted fields."""
+        repl = SafeREPL()
+        csv_data = 'name,bio\nAlice,"Line 1\nLine 2"'
+        result = repl.load_data("data", csv_data, data_type="csv")
+
+        assert result.success is True
+        assert "\n" in repl.variables["data"][0]["bio"]
+
+    def test_load_data_csv_header_only(self):
+        """load_data handles CSV with only header (no data rows)."""
+        repl = SafeREPL()
+        csv_data = "col1,col2,col3"
+        result = repl.load_data("empty", csv_data, data_type="csv")
+
+        assert result.success is True
+        assert repl.variables["empty"] == []
+
+    def test_load_data_csv_single_column(self):
+        """load_data handles CSV with single column."""
+        repl = SafeREPL()
+        csv_data = "name\nAlice\nBob\nCharlie"
+        result = repl.load_data("names", csv_data, data_type="csv")
+
+        assert result.success is True
+        assert len(repl.variables["names"]) == 3
+        assert repl.variables["names"][0] == {"name": "Alice"}
+
+    def test_load_data_csv_from_bytes(self):
+        """load_data parses CSV from bytes."""
+        repl = SafeREPL()
+        csv_bytes = b"name,value\ntest,123"
+        result = repl.load_data("from_bytes", csv_bytes, data_type="csv")
+
+        assert result.success is True
+        assert repl.variables["from_bytes"][0]["name"] == "test"
+        assert repl.variables["from_bytes"][0]["value"] == "123"
+
+    def test_load_data_csv_utf8_content(self):
+        """load_data handles UTF-8 content in CSV."""
+        repl = SafeREPL()
+        csv_data = "nome,cidade\nJoão,São Paulo\nMaria,Ação"
+        result = repl.load_data("utf8", csv_data, data_type="csv")
+
+        assert result.success is True
+        assert repl.variables["utf8"][0]["nome"] == "João"
+        assert repl.variables["utf8"][0]["cidade"] == "São Paulo"
+        assert repl.variables["utf8"][1]["cidade"] == "Ação"
+
+    def test_load_data_csv_unicode_content(self):
+        """load_data handles Unicode content in CSV."""
+        repl = SafeREPL()
+        csv_data = "text\n日本語\n中文\n한국어"
+        result = repl.load_data("unicode", csv_data, data_type="csv")
+
+        assert result.success is True
+        assert repl.variables["unicode"][0]["text"] == "日本語"
+        assert repl.variables["unicode"][1]["text"] == "中文"
+        assert repl.variables["unicode"][2]["text"] == "한국어"
+
+    def test_load_data_csv_creates_metadata(self):
+        """load_data creates variable metadata for CSV."""
+        repl = SafeREPL()
+        csv_data = "a,b\n1,2"
+        repl.load_data("with_meta", csv_data, data_type="csv")
+
+        assert "with_meta" in repl.variable_metadata
+        meta = repl.variable_metadata["with_meta"]
+        assert meta.name == "with_meta"
+        assert meta.type_name == "list"
+
+    def test_load_data_csv_metadata_has_preview(self):
+        """load_data metadata has preview of CSV content."""
+        repl = SafeREPL()
+        csv_data = "name,value\ntest,123"
+        repl.load_data("preview", csv_data, data_type="csv")
+
+        meta = repl.variable_metadata["preview"]
+        # Preview should show list structure
+        assert "name" in meta.preview or "[" in meta.preview
+
+    def test_load_data_csv_records_variable_in_result(self):
+        """load_data records variable name in variables_changed."""
+        repl = SafeREPL()
+        csv_data = "a,b\n1,2"
+        result = repl.load_data("recorded", csv_data, data_type="csv")
+
+        assert "recorded" in result.variables_changed
+
+    def test_load_data_csv_stdout_contains_info(self):
+        """load_data stdout contains loading info."""
+        repl = SafeREPL()
+        csv_data = "x,y\n1,2"
+        result = repl.load_data("info_test", csv_data, data_type="csv")
+
+        assert "info_test" in result.stdout
+        assert "carregada" in result.stdout  # Portuguese for "loaded"
+        assert "list" in result.stdout  # Type name
+
+    def test_load_data_csv_overwrites_existing_variable(self):
+        """load_data overwrites existing variable with same name."""
+        repl = SafeREPL()
+        repl.load_data("overwrite", "a,b\n1,2", data_type="csv")
+        repl.load_data("overwrite", "x,y\n3,4", data_type="csv")
+
+        assert repl.variables["overwrite"][0] == {"x": "3", "y": "4"}
+
+    def test_load_data_csv_variable_usable_in_execute(self):
+        """Variable loaded with load_data is usable in execute."""
+        repl = SafeREPL()
+        csv_data = "name,score\nAlice,100\nBob,95"
+        repl.load_data("scores", csv_data, data_type="csv")
+        result = repl.execute("total = sum(int(row['score']) for row in scores)")
+
+        assert result.success is True
+        assert repl.variables["total"] == 195
+
+    def test_load_data_csv_large_file(self):
+        """load_data handles large CSV file."""
+        repl = SafeREPL()
+        # Generate 1000 rows
+        header = "id,name,value"
+        rows = [f"{i},name_{i},{i * 10}" for i in range(1000)]
+        csv_data = header + "\n" + "\n".join(rows)
+        result = repl.load_data("large", csv_data, data_type="csv")
+
+        assert result.success is True
+        assert len(repl.variables["large"]) == 1000
+        assert repl.variables["large"][500]["id"] == "500"
+        assert repl.variables["large"][500]["name"] == "name_500"
+        assert repl.variables["large"][500]["value"] == "5000"
+
+    def test_load_data_csv_with_spaces_in_header(self):
+        """load_data handles CSV with spaces in header names."""
+        repl = SafeREPL()
+        csv_data = "First Name,Last Name,Email Address\nJohn,Doe,john@example.com"
+        result = repl.load_data("data", csv_data, data_type="csv")
+
+        assert result.success is True
+        row = repl.variables["data"][0]
+        assert row["First Name"] == "John"
+        assert row["Last Name"] == "Doe"
+        assert row["Email Address"] == "john@example.com"
+
+    def test_load_data_csv_with_numeric_header(self):
+        """load_data handles CSV with numeric header names."""
+        repl = SafeREPL()
+        csv_data = "1,2,3\na,b,c"
+        result = repl.load_data("data", csv_data, data_type="csv")
+
+        assert result.success is True
+        row = repl.variables["data"][0]
+        # Header names are strings even if they look like numbers
+        assert row["1"] == "a"
+        assert row["2"] == "b"
+        assert row["3"] == "c"
+
+    def test_load_data_csv_preserves_row_order(self):
+        """load_data preserves order of CSV rows."""
+        repl = SafeREPL()
+        csv_data = "letter\nz\na\nm\nb"
+        result = repl.load_data("data", csv_data, data_type="csv")
+
+        assert result.success is True
+        letters = [row["letter"] for row in repl.variables["data"]]
+        assert letters == ["z", "a", "m", "b"]
+
+    def test_load_data_csv_metadata_has_timestamps(self):
+        """load_data metadata has created_at and last_accessed timestamps."""
+        repl = SafeREPL()
+        from datetime import datetime
+        before = datetime.now()
+        repl.load_data("timestamped", "a\n1", data_type="csv")
+        after = datetime.now()
+
+        meta = repl.variable_metadata["timestamped"]
+        assert before <= meta.created_at <= after
+        assert before <= meta.last_accessed <= after
+
+    def test_load_data_csv_with_tab_delimiter_not_supported(self):
+        """load_data with csv uses comma delimiter (DictReader default)."""
+        repl = SafeREPL()
+        # Tab-separated data won't parse correctly with default DictReader
+        tsv_data = "name\tage\nAlice\t30"
+        result = repl.load_data("data", tsv_data, data_type="csv")
+
+        assert result.success is True
+        # The entire header is treated as one column name because no comma
+        row = repl.variables["data"][0]
+        assert "name\tage" in row
+
+    def test_load_data_csv_single_row(self):
+        """load_data handles CSV with single data row."""
+        repl = SafeREPL()
+        csv_data = "name,value\ntest,123"
+        result = repl.load_data("single", csv_data, data_type="csv")
+
+        assert result.success is True
+        assert len(repl.variables["single"]) == 1
+        assert repl.variables["single"][0] == {"name": "test", "value": "123"}
+
+    def test_load_data_csv_with_trailing_newline(self):
+        """load_data handles CSV with trailing newline."""
+        repl = SafeREPL()
+        csv_data = "name\nAlice\nBob\n"
+        result = repl.load_data("data", csv_data, data_type="csv")
+
+        assert result.success is True
+        # Trailing newline should not create an extra empty row
+        assert len(repl.variables["data"]) == 2
+
+    def test_load_data_csv_empty_string_creates_empty_list(self):
+        """load_data with empty CSV string creates empty list."""
+        repl = SafeREPL()
+        result = repl.load_data("empty", "", data_type="csv")
+
+        assert result.success is True
+        assert repl.variables["empty"] == []
+
+    def test_load_data_csv_with_special_characters_in_values(self):
+        """load_data handles special characters in CSV values."""
+        repl = SafeREPL()
+        csv_data = 'symbol,meaning\n"<",less than\n">",greater than\n"&",ampersand'
+        result = repl.load_data("special", csv_data, data_type="csv")
+
+        assert result.success is True
+        assert repl.variables["special"][0]["symbol"] == "<"
+        assert repl.variables["special"][1]["symbol"] == ">"
+        assert repl.variables["special"][2]["symbol"] == "&"

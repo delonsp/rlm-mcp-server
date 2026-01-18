@@ -788,3 +788,103 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 26 - Test load_data with data_type="json"
+
+- What was implemented:
+  - Added TestLoadDataJson class to tests/test_repl.py
+  - 31 test cases covering:
+    - load_data returns ExecutionResult object
+    - load_data returns success=True for valid JSON data
+    - Parses JSON object into dict
+    - Parses JSON array into list
+    - Parses JSON string, number, float, boolean (true/false), null
+    - Parses nested JSON object
+    - Parses array of JSON objects
+    - Handles empty object {} and empty array []
+    - Parses JSON from bytes (decodes first)
+    - Handles UTF-8 content (Portuguese characters)
+    - Handles Unicode content (Japanese, Chinese, Korean)
+    - Fails on invalid JSON with error message
+    - Fails on incomplete JSON with error message
+    - Creates variable metadata with correct type_name (dict/list)
+    - Metadata has preview of JSON content
+    - Records variable in result.variables_changed
+    - stdout contains loading info
+    - Overwrites existing variable with same name
+    - Variable usable in subsequent execute() calls
+    - Handles large JSON object (1000 keys)
+    - Handles JSON with special characters (escaped newlines, tabs, quotes)
+    - Handles JSON with numeric string keys
+    - Preserves key order (Python 3.7+ dicts are ordered)
+    - Handles scientific notation in JSON
+
+- Files changed:
+  - tests/test_repl.py (added TestLoadDataJson class with 31 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - load_data with data_type="json" uses json.loads(data) directly on the string/bytes
+  - json.loads handles bytes automatically if passed, but repl.py doesn't decode first for json (unlike text)
+  - Actually looking at code: json.loads(data) works directly, no need to decode bytes first
+  - Invalid JSON raises JSONDecodeError which is caught and returns success=False
+  - type_name in metadata reflects the parsed type (dict for objects, list for arrays, str for strings, etc.)
+  - Python's json module preserves key order since Python 3.7 (dict insertion order)
+
+---
+
+## Iteration 27 - Test load_data with data_type="csv"
+
+- What was implemented:
+  - Added TestLoadDataCsv class to tests/test_repl.py
+  - 30 test cases covering:
+    - load_data returns ExecutionResult object
+    - load_data returns success=True for valid CSV data
+    - CSV is parsed into list of dicts using DictReader
+    - CSV header row is used as dict keys
+    - All CSV values are strings (no type conversion)
+    - Multiple rows parsing
+    - Empty values handling
+    - Quoted fields with commas
+    - Quoted fields with escaped quotes ("")
+    - Newlines inside quoted fields
+    - Header-only CSV creates empty list
+    - Single column CSV
+    - CSV from bytes (decodes UTF-8)
+    - UTF-8 content (Portuguese characters)
+    - Unicode content (Japanese, Chinese, Korean)
+    - Metadata creation with type_name="list"
+    - Metadata preview
+    - Variable recording in variables_changed
+    - stdout contains loading info
+    - Overwrites existing variable
+    - Variable usable in execute()
+    - Large CSV file (1000 rows)
+    - Spaces in header names
+    - Numeric header names (as strings)
+    - Row order preservation
+    - Timestamps in metadata
+    - Tab delimiter not supported (comma only)
+    - Single data row
+    - Trailing newline handling
+    - Empty string creates empty list
+    - Special characters in values (<, >, &)
+
+- Files changed:
+  - tests/test_repl.py (added TestLoadDataCsv class with 30 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - load_data with data_type="csv" uses csv.DictReader with StringIO
+  - Bytes are decoded to string before passing to DictReader
+  - All CSV values are strings (DictReader does not convert types)
+  - Header row is used as dict keys (first row)
+  - Empty CSV string creates empty list (DictReader with no rows)
+  - DictReader only supports comma delimiter by default
+  - Quoted fields handle commas, escaped quotes (""), and newlines
+  - Trailing newline is handled correctly (no extra empty row)
+  - type_name in metadata is "list" for CSV data
+
+---
+

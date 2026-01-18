@@ -62,7 +62,7 @@ src/rlm_mcp/
 - [x] Testar execute permite imports seguros (re, json, math, collections)
 - [x] Testar load_data com data_type="text"
 - [x] Testar load_data com data_type="json"
-- [ ] Testar load_data com data_type="csv"
+- [x] Testar load_data com data_type="csv"
 - [ ] Testar load_data com data_type="lines"
 - [ ] Testar get_memory_usage retorna valores razoáveis
 - [ ] Testar clear_namespace limpa variáveis
