@@ -28,6 +28,7 @@ from pydantic import BaseModel
 
 from .repl import SafeREPL, ExecutionResult, VariableInfo
 from .s3_client import get_s3_client
+from .pdf_parser import extract_pdf
 
 # Configuração de logging
 logging.basicConfig(level=logging.INFO)
@@ -116,9 +117,17 @@ Exemplo: Carregar um log de 100MB em 'logs' e depois usar rlm_execute para anali
                 name="rlm_load_file",
                 description="""Carrega arquivo do servidor em uma variável.
 
-O arquivo deve estar no diretório /data do container (montado como volume).
+O arquivo deve estar no diretório /data do container.
 
-Exemplo: rlm_load_file(name="logs", path="/data/app.log", data_type="lines")""",
+Tipos suportados:
+- "text": String simples
+- "json": Parse JSON para dict/list
+- "lines": Split por \\n para lista
+- "csv": Parse CSV para lista de dicts
+- "pdf": Extrai texto de PDF (auto-detecta se precisa OCR)
+- "pdf_ocr": Força OCR via Mistral API (para PDFs escaneados)
+
+Exemplo: rlm_load_file(name="doc", path="/data/relatorio.pdf", data_type="pdf")""",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -132,7 +141,7 @@ Exemplo: rlm_load_file(name="logs", path="/data/app.log", data_type="lines")""",
                         },
                         "data_type": {
                             "type": "string",
-                            "enum": ["text", "json", "lines", "csv"],
+                            "enum": ["text", "json", "lines", "csv", "pdf", "pdf_ocr"],
                             "default": "text",
                             "description": "Tipo de parsing"
                         }
@@ -206,7 +215,15 @@ Se 'all' for True, limpa todas as variáveis.""",
 O arquivo é baixado direto do Minio para o servidor RLM,
 sem passar pelo contexto do Claude Code. Ideal para arquivos grandes.
 
-Exemplo: rlm_load_s3(bucket="logs", key="app/2025-01.log", name="logs")""",
+Tipos suportados:
+- "text": String simples
+- "json": Parse JSON para dict/list
+- "lines": Split por \\n para lista
+- "csv": Parse CSV para lista de dicts
+- "pdf": Extrai texto de PDF (auto-detecta se precisa OCR)
+- "pdf_ocr": Força OCR via Mistral API (para PDFs escaneados)
+
+Exemplo: rlm_load_s3(bucket="docs", key="relatorio.pdf", name="doc", data_type="pdf")""",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -224,7 +241,7 @@ Exemplo: rlm_load_s3(bucket="logs", key="app/2025-01.log", name="logs")""",
                         },
                         "data_type": {
                             "type": "string",
-                            "enum": ["text", "json", "lines", "csv"],
+                            "enum": ["text", "json", "lines", "csv", "pdf", "pdf_ocr"],
                             "default": "text",
                             "description": "Tipo de parsing dos dados"
                         }
@@ -265,6 +282,34 @@ Exemplo: rlm_list_s3(bucket="logs", prefix="app/") para listar só arquivos em a
                     "required": ["bucket"]
                 }
             ),
+            Tool(
+                name="rlm_upload_url",
+                description="""Gera URL assinada para upload de arquivo para o Minio.
+
+Use esta URL para fazer upload via HTTP PUT de arquivos grandes
+diretamente para o Minio, sem passar pelo servidor RLM.
+
+Exemplo: rlm_upload_url(bucket="data", key="docs/report.pdf")""",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "bucket": {
+                            "type": "string",
+                            "description": "Nome do bucket"
+                        },
+                        "key": {
+                            "type": "string",
+                            "description": "Caminho/chave do objeto no bucket"
+                        },
+                        "expires": {
+                            "type": "integer",
+                            "default": 3600,
+                            "description": "Tempo de expiração em segundos (padrão: 1 hora)"
+                        }
+                    },
+                    "required": ["bucket", "key"]
+                }
+            ),
         ]
 
     @server.call_tool()
@@ -285,6 +330,7 @@ Exemplo: rlm_list_s3(bucket="logs", prefix="app/") para listar só arquivos em a
 
             elif name == "rlm_load_file":
                 path = arguments["path"]
+                data_type = arguments.get("data_type", "text")
 
                 # Validação de segurança: só permite /data/
                 if not path.startswith("/data/"):
@@ -309,15 +355,45 @@ Exemplo: rlm_list_s3(bucket="logs", prefix="app/") para listar só arquivos em a
                     )
 
                 try:
-                    with open(path, 'r', encoding='utf-8', errors='replace') as f:
-                        data = f.read()
+                    # Tratamento especial para PDF
+                    if data_type in ("pdf", "pdf_ocr"):
+                        method = "ocr" if data_type == "pdf_ocr" else "auto"
+                        pdf_result = extract_pdf(path, method=method)
 
-                    result = repl.load_data(
-                        name=arguments["name"],
-                        data=data,
-                        data_type=arguments.get("data_type", "text")
-                    )
-                    output = _format_execution_result(result)
+                        if not pdf_result.success:
+                            return CallToolResult(
+                                content=[TextContent(
+                                    type="text",
+                                    text=f"Erro ao extrair PDF: {pdf_result.error}"
+                                )],
+                                isError=True
+                            )
+
+                        result = repl.load_data(
+                            name=arguments["name"],
+                            data=pdf_result.text,
+                            data_type="text"
+                        )
+
+                        output = f"""✅ PDF carregado:
+Arquivo: {path}
+Páginas: {pdf_result.pages}
+Método: {pdf_result.method}
+Caracteres: {len(pdf_result.text)}
+
+{_format_execution_result(result)}"""
+                    else:
+                        # Arquivos de texto normais
+                        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+                            data = f.read()
+
+                        result = repl.load_data(
+                            name=arguments["name"],
+                            data=data,
+                            data_type=data_type
+                        )
+                        output = _format_execution_result(result)
+
                 except FileNotFoundError:
                     return CallToolResult(
                         content=[TextContent(
@@ -382,6 +458,8 @@ Limite: {mem['max_allowed_mb']} MB
 Uso: {mem['usage_percent']:.1f}%"""
 
             elif name == "rlm_load_s3":
+                import tempfile
+
                 s3 = get_s3_client()
                 if not s3.is_configured():
                     return CallToolResult(
@@ -409,17 +487,58 @@ Uso: {mem['usage_percent']:.1f}%"""
                             isError=True
                         )
 
-                    # Baixar conteúdo
-                    data = s3.get_object_text(bucket, key)
+                    # Tratamento especial para PDF
+                    if data_type in ("pdf", "pdf_ocr"):
+                        # Baixar PDF para arquivo temporário
+                        pdf_bytes = s3.get_object(bucket, key)
 
-                    # Carregar no REPL
-                    result = repl.load_data(
-                        name=var_name,
-                        data=data,
-                        data_type=data_type
-                    )
+                        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                            tmp.write(pdf_bytes)
+                            tmp_path = tmp.name
 
-                    output = f"""✅ Carregado do Minio:
+                        # Extrair texto do PDF
+                        method = "ocr" if data_type == "pdf_ocr" else "auto"
+                        pdf_result = extract_pdf(tmp_path, method=method)
+
+                        # Limpar arquivo temporário
+                        import os as _os
+                        _os.unlink(tmp_path)
+
+                        if not pdf_result.success:
+                            return CallToolResult(
+                                content=[TextContent(
+                                    type="text",
+                                    text=f"Erro ao extrair PDF: {pdf_result.error}"
+                                )],
+                                isError=True
+                            )
+
+                        result = repl.load_data(
+                            name=var_name,
+                            data=pdf_result.text,
+                            data_type="text"
+                        )
+
+                        output = f"""✅ PDF carregado do Minio:
+Bucket: {bucket}
+Objeto: {key}
+Tamanho: {info['size_human']}
+Páginas: {pdf_result.pages}
+Método: {pdf_result.method}
+Caracteres: {len(pdf_result.text)}
+
+{_format_execution_result(result)}"""
+                    else:
+                        # Arquivos de texto normais
+                        data = s3.get_object_text(bucket, key)
+
+                        result = repl.load_data(
+                            name=var_name,
+                            data=data,
+                            data_type=data_type
+                        )
+
+                        output = f"""✅ Carregado do Minio:
 Bucket: {bucket}
 Objeto: {key}
 Tamanho: {info['size_human']}
@@ -492,6 +611,40 @@ Variável: {var_name} (tipo: {data_type})
                         content=[TextContent(
                             type="text",
                             text=f"Erro ao listar objetos: {e}"
+                        )],
+                        isError=True
+                    )
+
+            elif name == "rlm_upload_url":
+                s3 = get_s3_client()
+                if not s3.is_configured():
+                    return CallToolResult(
+                        content=[TextContent(
+                            type="text",
+                            text="Erro: Minio não configurado."
+                        )],
+                        isError=True
+                    )
+
+                bucket = arguments["bucket"]
+                key = arguments["key"]
+                expires = arguments.get("expires", 3600)
+
+                try:
+                    url = s3.get_presigned_put_url(bucket, key, expires)
+                    output = f"""URL para upload gerada:
+
+URL: {url}
+
+Use HTTP PUT para enviar o arquivo:
+curl -X PUT -T seu_arquivo.pdf "{url}"
+
+Expira em: {expires} segundos"""
+                except Exception as e:
+                    return CallToolResult(
+                        content=[TextContent(
+                            type="text",
+                            text=f"Erro ao gerar URL: {e}"
                         )],
                         isError=True
                     )

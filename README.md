@@ -139,12 +139,16 @@ claude --mcp-restart
 | Tool | Descrição |
 |------|-----------|
 | `rlm_load_data` | Carrega dados diretamente em variável |
-| `rlm_load_file` | Carrega arquivo do servidor |
+| `rlm_load_file` | Carrega arquivo do servidor (text, json, csv, lines, **pdf**, **pdf_ocr**) |
 | `rlm_execute` | Executa código Python |
 | `rlm_list_vars` | Lista variáveis disponíveis |
 | `rlm_var_info` | Info detalhada de uma variável |
 | `rlm_clear` | Limpa variáveis |
 | `rlm_memory` | Estatísticas de memória |
+| `rlm_load_s3` | Carrega arquivo do Minio/S3 (text, json, csv, lines, **pdf**, **pdf_ocr**) |
+| `rlm_list_buckets` | Lista buckets do Minio |
+| `rlm_list_s3` | Lista objetos em um bucket |
+| `rlm_upload_url` | Gera URL assinada para upload
 
 ### Funções Disponíveis Dentro do Código (RLM)
 
@@ -223,6 +227,33 @@ Claude: [usa rlm_execute com llm_query]:
 
 Este padrão implementa o paper ["Recursive Language Models"](https://arxiv.org/abs/2512.24601) do MIT CSAIL, permitindo processar dados que excedem a janela de contexto do LLM.
 
+### Processamento de PDFs
+
+Use `data_type="pdf"` ou `data_type="pdf_ocr"` em `rlm_load_file` ou `rlm_load_s3`:
+
+| data_type | Uso | Requer |
+|-----------|-----|--------|
+| `pdf` | Auto-detecta: tenta pdfplumber, fallback para OCR | `MISTRAL_API_KEY` para fallback |
+| `pdf_ocr` | Força OCR (para escaneados/imagens) | `MISTRAL_API_KEY` |
+
+**Exemplo com Minio (recomendado):**
+
+```bash
+# Upload via mc CLI
+mc cp relatorio.pdf minio/docs/
+```
+
+```
+# No Claude Code
+rlm_load_s3(bucket="docs", key="relatorio.pdf", name="doc", data_type="pdf")
+```
+
+**Forçando OCR para documentos escaneados:**
+
+```
+rlm_load_s3(bucket="docs", key="escaneado.pdf", name="doc", data_type="pdf_ocr")
+```
+
 ## Segurança
 
 ### Sandbox Python
@@ -255,6 +286,11 @@ O REPL executa em sandbox com:
 | `OPENAI_API_KEY` | (obrigatório para llm_query) | API key do OpenAI |
 | `RLM_SUB_MODEL` | gpt-4o-mini | Modelo para sub-chamadas LLM |
 | `RLM_MAX_SUB_CALLS` | 100 | Limite de sub-chamadas por execução |
+| `MISTRAL_API_KEY` | (opcional) | API key do Mistral para OCR de PDFs |
+| `MINIO_ENDPOINT` | (opcional) | Endpoint do Minio/S3 |
+| `MINIO_ACCESS_KEY` | (opcional) | Access key do Minio |
+| `MINIO_SECRET_KEY` | (opcional) | Secret key do Minio |
+| `MINIO_SECURE` | true | Usar HTTPS para Minio |
 
 ### Limites de Recursos (Docker)
 

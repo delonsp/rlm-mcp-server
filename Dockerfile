@@ -47,6 +47,7 @@ RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels
 # Variáveis de ambiente padrão
 ENV RLM_MAX_MEMORY_MB=1024
 ENV RLM_API_KEY=""
+ENV MISTRAL_API_KEY=""
 ENV PYTHONUNBUFFERED=1
 
 # Expõe porta (não necessária para MCP stdio, mas útil para health checks)

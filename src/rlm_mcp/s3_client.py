@@ -190,6 +190,58 @@ class S3Client:
             logger.error(f"Erro ao obter info de {bucket}/{key}: {e}")
             return None
 
+    def get_presigned_put_url(self, bucket: str, key: str, expires: int = 3600) -> str:
+        """
+        Gera URL assinada para upload (PUT) de arquivo.
+
+        Args:
+            bucket: Nome do bucket
+            key: Caminho/chave do objeto
+            expires: Tempo de expiração em segundos (padrão: 1 hora)
+
+        Returns:
+            URL assinada para upload via HTTP PUT
+        """
+        from datetime import timedelta
+
+        try:
+            url = self.client.presigned_put_object(
+                bucket,
+                key,
+                expires=timedelta(seconds=expires)
+            )
+            logger.info(f"URL de upload gerada para {bucket}/{key}")
+            return url
+        except Exception as e:
+            logger.error(f"Erro ao gerar URL de upload: {e}")
+            raise RuntimeError(f"Erro ao gerar URL de upload: {e}")
+
+    def get_presigned_get_url(self, bucket: str, key: str, expires: int = 3600) -> str:
+        """
+        Gera URL assinada para download (GET) de arquivo.
+
+        Args:
+            bucket: Nome do bucket
+            key: Caminho/chave do objeto
+            expires: Tempo de expiração em segundos (padrão: 1 hora)
+
+        Returns:
+            URL assinada para download via HTTP GET
+        """
+        from datetime import timedelta
+
+        try:
+            url = self.client.presigned_get_object(
+                bucket,
+                key,
+                expires=timedelta(seconds=expires)
+            )
+            logger.info(f"URL de download gerada para {bucket}/{key}")
+            return url
+        except Exception as e:
+            logger.error(f"Erro ao gerar URL de download: {e}")
+            raise RuntimeError(f"Erro ao gerar URL de download: {e}")
+
     @staticmethod
     def _human_size(size_bytes: int) -> str:
         """Converte bytes para formato humano."""

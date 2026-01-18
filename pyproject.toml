@@ -12,6 +12,8 @@ dependencies = [
     "fastapi>=0.115.0",
     "openai>=2.0.0",  # v2.x requerido para GPT-5 family
     "minio>=7.2.0",   # Cliente S3/Minio para rlm_load_s3
+    "pdfplumber>=0.11.0",  # Extração de texto de PDFs machine readable
+    "mistralai>=1.0.0",    # Mistral OCR para PDFs escaneados
 ]
 
 [project.scripts]

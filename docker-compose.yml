@@ -25,6 +25,8 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - RLM_SUB_MODEL=${RLM_SUB_MODEL:-gpt-4o-mini}
       - RLM_MAX_SUB_CALLS=${RLM_MAX_SUB_CALLS:-100}
+      # Mistral OCR para PDFs escaneados
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
       # Minio/S3 para carregar arquivos grandes
       - MINIO_ENDPOINT=${MINIO_ENDPOINT:-}
       - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-}
