@@ -104,12 +104,22 @@ class LLMClient:
         )
 
         try:
-            response = self.client.chat.completions.create(
-                model=model,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                messages=[{"role": "user", "content": content}]
-            )
+            # Modelos mais novos (gpt-5, o1, etc) usam max_completion_tokens
+            # Modelos antigos (gpt-4o, gpt-4o-mini) usam max_tokens
+            is_new_model = any(x in model for x in ['gpt-5', 'o1', 'o3'])
+
+            params = {
+                "model": model,
+                "temperature": temperature,
+                "messages": [{"role": "user", "content": content}]
+            }
+
+            if is_new_model:
+                params["max_completion_tokens"] = max_tokens
+            else:
+                params["max_tokens"] = max_tokens
+
+            response = self.client.chat.completions.create(**params)
 
             result = response.choices[0].message.content
             logger.info(f"Sub-chamada LLM #{self.call_count} concluída: {len(result)} chars")
