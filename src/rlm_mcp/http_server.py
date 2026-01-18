@@ -389,6 +389,9 @@ Tipos suportados:
 - pdf: Extrai texto de PDF (auto-detecta método)
 - pdf_ocr: Força OCR para PDFs escaneados (requer MISTRAL_API_KEY)
 
+Opções:
+- skip_if_exists: Se True (padrão), pula download se variável já existe no REPL
+
 Exemplo: rlm_load_s3(key="pdfs/doc.pdf", name="doc", data_type="pdf")""",
             "inputSchema": {
                 "type": "object",
@@ -411,6 +414,11 @@ Exemplo: rlm_load_s3(key="pdfs/doc.pdf", name="doc", data_type="pdf")""",
                         "enum": ["text", "json", "lines", "csv", "pdf", "pdf_ocr"],
                         "default": "text",
                         "description": "Tipo de parsing dos dados"
+                    },
+                    "skip_if_exists": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": "Se True, pula download se variável já existe (padrão: True)"
                     }
                 },
                 "required": ["key", "name"]
@@ -856,6 +864,17 @@ Uso: {mem['usage_percent']:.1f}%"""
             key = arguments["key"]
             var_name = arguments["name"]
             data_type = arguments.get("data_type", "text")
+            skip_if_exists = arguments.get("skip_if_exists", True)
+
+            # Verificar se variável já existe e skip_if_exists=True
+            if skip_if_exists and var_name in repl.namespace:
+                existing = repl.namespace[var_name]
+                size_info = f"{len(existing):,} chars" if isinstance(existing, str) else f"{type(existing).__name__}"
+                return {
+                    "content": [
+                        {"type": "text", "text": f"Variável '{var_name}' já existe ({size_info}). Use skip_if_exists=False para forçar reload."}
+                    ]
+                }
 
             try:
                 info = s3.get_object_info(bucket, key)
