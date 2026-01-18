@@ -38,7 +38,7 @@ src/rlm_mcp/
 - [x] Testar list_variables retorna metadados corretos
 - [x] Testar save_index e load_index (roundtrip de índice semântico)
 - [x] Testar clear_all remove todas as variáveis
-- [ ] Testar get_stats retorna contagens corretas
+- [x] Testar get_stats retorna contagens corretas
 - [ ] Testar create_collection e list_collections
 - [ ] Testar add_to_collection e get_collection_vars
 - [ ] Testar delete_collection remove associações mas não variáveis

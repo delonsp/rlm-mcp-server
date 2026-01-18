@@ -160,3 +160,59 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 8 - Test clear_all removes all variables
+
+- What was implemented:
+  - Added TestClearAll class to tests/test_persistence.py
+  - 7 test cases covering:
+    - clear_all returns count of removed variables
+    - clear_all removes all variables from database
+    - clear_all removes all indices from database
+    - clear_all on empty database returns 0
+    - list_variables returns empty list after clear_all
+    - Variables can be added after clear_all (database still functional)
+    - clear_all preserves collections (only removes variables and indices)
+
+- Files changed:
+  - tests/test_persistence.py (added TestClearAll class)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - clear_all returns int (count of removed variables), not boolean
+  - clear_all only removes from variables and indices tables, not collections
+  - collection_vars entries become orphaned but don't cause errors
+  - After clear_all, database is fully functional for new operations
+
+---
+
+## Iteration 9 - Test get_stats returns correct counts
+
+- What was implemented:
+  - Added TestGetStats class to tests/test_persistence.py
+  - 10 test cases covering:
+    - get_stats on empty database returns zeros for counts
+    - get_stats returns all expected keys (variables_count, variables_total_size, indices_count, total_indexed_terms, db_file_size, db_path)
+    - Correct variables_count
+    - Correct variables_total_size (sum of size_bytes)
+    - Correct indices_count
+    - Correct total_indexed_terms (sum of terms_count from all indices)
+    - db_file_size matches actual file size on disk
+    - db_path matches configured path
+    - Stats return zeros after clear_all
+    - Mixed data scenario with variables of different types and indices
+
+- Files changed:
+  - tests/test_persistence.py (added TestGetStats class)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - get_stats returns dict with 6 keys
+  - variables_total_size is sum of size_bytes (pickled size, not compressed)
+  - total_indexed_terms is sum of terms_count (number of keys in index dict, not positions)
+  - db_file_size reflects actual file size using os.path.getsize()
+  - SQLite file size doesn't always change immediately after small writes (page caching)
+
+---
+

@@ -531,3 +531,178 @@ class TestClearAll:
         collections = pm.list_collections()
         assert len(collections) == 1
         assert collections[0]["name"] == "test_collection"
+
+
+class TestGetStats:
+    """Tests for get_stats method."""
+
+    def test_get_stats_empty_database(self, temp_db):
+        """Test get_stats on an empty database returns zeros."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        stats = pm.get_stats()
+
+        assert stats["variables_count"] == 0
+        assert stats["variables_total_size"] == 0
+        assert stats["indices_count"] == 0
+        assert stats["total_indexed_terms"] == 0
+        assert stats["db_file_size"] > 0  # SQLite file exists with schema
+        assert stats["db_path"] == temp_db
+
+    def test_get_stats_returns_all_expected_keys(self, temp_db):
+        """Test get_stats returns all expected dictionary keys."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        stats = pm.get_stats()
+
+        expected_keys = {
+            "variables_count",
+            "variables_total_size",
+            "indices_count",
+            "total_indexed_terms",
+            "db_file_size",
+            "db_path",
+        }
+        assert set(stats.keys()) == expected_keys
+
+    def test_get_stats_variables_count(self, temp_db):
+        """Test get_stats returns correct variables_count."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Add variables
+        pm.save_variable("var1", "value1")
+        pm.save_variable("var2", "value2")
+        pm.save_variable("var3", "value3")
+
+        stats = pm.get_stats()
+        assert stats["variables_count"] == 3
+
+    def test_get_stats_variables_total_size(self, temp_db):
+        """Test get_stats returns correct variables_total_size (sum of size_bytes)."""
+        import pickle
+
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Add variables with known sizes
+        val1 = "hello"
+        val2 = {"key": "value"}
+        val3 = [1, 2, 3, 4, 5]
+
+        pm.save_variable("var1", val1)
+        pm.save_variable("var2", val2)
+        pm.save_variable("var3", val3)
+
+        expected_total = (
+            len(pickle.dumps(val1))
+            + len(pickle.dumps(val2))
+            + len(pickle.dumps(val3))
+        )
+
+        stats = pm.get_stats()
+        assert stats["variables_total_size"] == expected_total
+
+    def test_get_stats_indices_count(self, temp_db):
+        """Test get_stats returns correct indices_count."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Add indices
+        pm.save_index("var1", {"term1": [0, 10]})
+        pm.save_index("var2", {"term2": [20, 30]})
+
+        stats = pm.get_stats()
+        assert stats["indices_count"] == 2
+
+    def test_get_stats_total_indexed_terms(self, temp_db):
+        """Test get_stats returns correct total_indexed_terms (sum of terms_count)."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Add indices with known term counts
+        pm.save_index("var1", {"term1": [0], "term2": [10], "term3": [20]})  # 3 terms
+        pm.save_index("var2", {"termA": [0], "termB": [10]})  # 2 terms
+        pm.save_index("var3", {"only_term": [0]})  # 1 term
+
+        stats = pm.get_stats()
+        assert stats["total_indexed_terms"] == 6  # 3 + 2 + 1
+
+    def test_get_stats_db_file_size_is_positive(self, temp_db):
+        """Test that db_file_size is a positive integer representing actual file size."""
+        import os
+
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Add some data
+        pm.save_variable("var1", "value1")
+        pm.save_index("var1", {"term": [0, 10]})
+
+        stats = pm.get_stats()
+
+        # File size should match actual file size on disk
+        actual_size = os.path.getsize(temp_db)
+        assert stats["db_file_size"] == actual_size
+        assert stats["db_file_size"] > 0
+
+    def test_get_stats_db_path_correct(self, temp_db):
+        """Test that db_path in stats matches the configured path."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        stats = pm.get_stats()
+        assert stats["db_path"] == temp_db
+
+    def test_get_stats_after_clear_all(self, temp_db):
+        """Test get_stats returns zeros after clear_all."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Add data
+        pm.save_variable("var1", "value1")
+        pm.save_variable("var2", "value2")
+        pm.save_index("var1", {"term": [0, 10, 20]})
+
+        # Verify data exists
+        stats_before = pm.get_stats()
+        assert stats_before["variables_count"] == 2
+        assert stats_before["indices_count"] == 1
+
+        # Clear all
+        pm.clear_all()
+
+        # Stats should show zeros
+        stats_after = pm.get_stats()
+        assert stats_after["variables_count"] == 0
+        assert stats_after["variables_total_size"] == 0
+        assert stats_after["indices_count"] == 0
+        assert stats_after["total_indexed_terms"] == 0
+
+    def test_get_stats_with_mixed_data(self, temp_db):
+        """Test get_stats with variables of different types and indices."""
+        import pickle
+
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Add variables of different types
+        string_val = "hello world"
+        dict_val = {"nested": {"key": [1, 2, 3]}}
+        list_val = list(range(100))
+        int_val = 42
+
+        pm.save_variable("str_var", string_val)
+        pm.save_variable("dict_var", dict_val)
+        pm.save_variable("list_var", list_val)
+        pm.save_variable("int_var", int_val)
+
+        # Add indices for some variables
+        pm.save_index("str_var", {"hello": [0], "world": [6]})
+        pm.save_index("dict_var", {"nested": [0, 100, 200]})
+
+        expected_size = (
+            len(pickle.dumps(string_val))
+            + len(pickle.dumps(dict_val))
+            + len(pickle.dumps(list_val))
+            + len(pickle.dumps(int_val))
+        )
+
+        stats = pm.get_stats()
+
+        assert stats["variables_count"] == 4
+        assert stats["variables_total_size"] == expected_size
+        assert stats["indices_count"] == 2
+        assert stats["total_indexed_terms"] == 3  # 2 terms + 1 term (number of keys in each index)
