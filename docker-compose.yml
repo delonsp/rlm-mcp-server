@@ -21,6 +21,10 @@ services:
       - RLM_PORT=8765
       # API Key (opcional, mas recomendado em produção)
       - RLM_API_KEY=${RLM_API_KEY:-}
+      # Sub-chamadas LLM (RLM - Recursive Language Model)
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - RLM_SUB_MODEL=${RLM_SUB_MODEL:-gpt-4o-mini}
+      - RLM_MAX_SUB_CALLS=${RLM_MAX_SUB_CALLS:-100}
 
     volumes:
       # Monte seus dados aqui - serão acessíveis via /data no container
