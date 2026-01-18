@@ -216,3 +216,36 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 10 - Test create_collection and list_collections
+
+- What was implemented:
+  - Added TestCreateCollectionAndListCollections class to tests/test_persistence.py
+  - 13 test cases covering:
+    - create_collection returns True on success
+    - create_collection with description stores it correctly
+    - create_collection without description stores None
+    - create_collection sets created_at timestamp
+    - create_collection overwrites existing but preserves created_at
+    - list_collections on empty database returns empty list
+    - list_collections returns correct fields (name, description, created_at, var_count)
+    - list_collections with multiple collections
+    - list_collections ordered alphabetically by name
+    - var_count is 0 for empty collection
+    - var_count reflects actual number of variables in collection
+    - Collection with special characters in name and description
+    - Multiple collections are independent
+
+- Files changed:
+  - tests/test_persistence.py (added TestCreateCollectionAndListCollections class)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - create_collection uses INSERT OR REPLACE with COALESCE to preserve created_at on update
+  - list_collections joins with collection_vars to get var_count using LEFT JOIN
+  - list_collections orders by name ASC (alphabetical)
+  - var_count uses COUNT(cv.var_name) which correctly counts 0 for empty collections
+  - Collections support special characters in names (underscores, hyphens, numbers)
+
+---
+

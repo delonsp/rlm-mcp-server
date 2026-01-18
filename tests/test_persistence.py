@@ -706,3 +706,175 @@ class TestGetStats:
         assert stats["variables_total_size"] == expected_size
         assert stats["indices_count"] == 2
         assert stats["total_indexed_terms"] == 3  # 2 terms + 1 term (number of keys in each index)
+
+
+class TestCreateCollectionAndListCollections:
+    """Tests for create_collection and list_collections methods."""
+
+    def test_create_collection_returns_true(self, temp_db):
+        """Test that create_collection returns True on success."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        result = pm.create_collection("test_collection")
+        assert result is True
+
+    def test_create_collection_with_description(self, temp_db):
+        """Test creating a collection with a description."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        result = pm.create_collection("my_collection", description="A test collection")
+        assert result is True
+
+        # Verify by listing
+        collections = pm.list_collections()
+        assert len(collections) == 1
+        assert collections[0]["name"] == "my_collection"
+        assert collections[0]["description"] == "A test collection"
+
+    def test_create_collection_without_description(self, temp_db):
+        """Test creating a collection without a description stores None."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        pm.create_collection("no_desc_collection")
+
+        collections = pm.list_collections()
+        assert len(collections) == 1
+        assert collections[0]["name"] == "no_desc_collection"
+        assert collections[0]["description"] is None
+
+    def test_create_collection_sets_created_at(self, temp_db):
+        """Test that create_collection sets created_at timestamp."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        pm.create_collection("timestamped_collection")
+
+        collections = pm.list_collections()
+        assert len(collections) == 1
+        assert collections[0]["created_at"] is not None
+        # ISO format timestamp should have T separator
+        assert "T" in collections[0]["created_at"]
+
+    def test_create_collection_overwrite_preserves_created_at(self, temp_db):
+        """Test that creating a collection with same name preserves original created_at."""
+        import time
+
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Create initial collection
+        pm.create_collection("overwrite_test", description="first")
+        collections1 = pm.list_collections()
+        original_created_at = collections1[0]["created_at"]
+
+        # Wait and overwrite
+        time.sleep(0.01)
+        pm.create_collection("overwrite_test", description="second")
+
+        collections2 = pm.list_collections()
+        assert collections2[0]["created_at"] == original_created_at
+        assert collections2[0]["description"] == "second"
+
+    def test_list_collections_empty_database(self, temp_db):
+        """Test list_collections returns empty list on empty database."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        result = pm.list_collections()
+        assert result == []
+
+    def test_list_collections_returns_correct_fields(self, temp_db):
+        """Test that list_collections returns all expected fields."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        pm.create_collection("test_collection", description="Test")
+
+        collections = pm.list_collections()
+        assert len(collections) == 1
+
+        collection = collections[0]
+        assert "name" in collection
+        assert "description" in collection
+        assert "created_at" in collection
+        assert "var_count" in collection
+
+    def test_list_collections_multiple(self, temp_db):
+        """Test listing multiple collections."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        pm.create_collection("collection_a", description="First")
+        pm.create_collection("collection_b", description="Second")
+        pm.create_collection("collection_c", description="Third")
+
+        collections = pm.list_collections()
+        assert len(collections) == 3
+
+        names = {c["name"] for c in collections}
+        assert names == {"collection_a", "collection_b", "collection_c"}
+
+    def test_list_collections_ordered_by_name(self, temp_db):
+        """Test that collections are ordered alphabetically by name."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Create in non-alphabetical order
+        pm.create_collection("zebra")
+        pm.create_collection("apple")
+        pm.create_collection("mango")
+
+        collections = pm.list_collections()
+
+        assert collections[0]["name"] == "apple"
+        assert collections[1]["name"] == "mango"
+        assert collections[2]["name"] == "zebra"
+
+    def test_list_collections_var_count_empty(self, temp_db):
+        """Test that var_count is 0 for empty collection."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        pm.create_collection("empty_collection")
+
+        collections = pm.list_collections()
+        assert collections[0]["var_count"] == 0
+
+    def test_list_collections_var_count_with_variables(self, temp_db):
+        """Test that var_count reflects number of variables in collection."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Create collection and add variables
+        pm.create_collection("filled_collection")
+        pm.save_variable("var1", "value1")
+        pm.save_variable("var2", "value2")
+        pm.save_variable("var3", "value3")
+        pm.add_to_collection("filled_collection", ["var1", "var2", "var3"])
+
+        collections = pm.list_collections()
+        assert collections[0]["var_count"] == 3
+
+    def test_create_collection_with_special_characters(self, temp_db):
+        """Test creating a collection with special characters in name and description."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        result = pm.create_collection(
+            "homeopatia-unicista_2024",
+            description="Materiais de homeopatia (unicista) - Scholten & Kent"
+        )
+        assert result is True
+
+        collections = pm.list_collections()
+        assert len(collections) == 1
+        assert collections[0]["name"] == "homeopatia-unicista_2024"
+        assert "Scholten & Kent" in collections[0]["description"]
+
+    def test_create_multiple_collections_independent(self, temp_db):
+        """Test that multiple collections are independent."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        pm.create_collection("collection_1", description="First collection")
+        pm.create_collection("collection_2", description="Second collection")
+
+        # Add variables to first collection only
+        pm.save_variable("var_a", "value_a")
+        pm.add_to_collection("collection_1", ["var_a"])
+
+        collections = pm.list_collections()
+        coll_by_name = {c["name"]: c for c in collections}
+
+        assert coll_by_name["collection_1"]["var_count"] == 1
+        assert coll_by_name["collection_2"]["var_count"] == 0
