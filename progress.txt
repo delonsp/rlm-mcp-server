@@ -936,3 +936,45 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 29 - Test get_memory_usage retorna valores razoáveis
+
+- What was implemented:
+  - Added TestGetMemoryUsage class to tests/test_repl.py
+  - 25 test cases covering:
+    - Returns dict with all expected keys (total_bytes, total_human, variable_count, max_allowed_mb, usage_percent)
+    - Empty REPL has zero total_bytes, zero variable_count, zero usage_percent
+    - Human-readable size format (0.0 B for empty)
+    - Default max_allowed_mb is 1024
+    - Custom max_memory_mb in constructor is respected
+    - Positive total_bytes after loading data
+    - Correct variable_count after load_data
+    - Correct variable_count after execute (including llm_* functions)
+    - total_bytes reflects sum of variable sizes
+    - total_bytes increases with more data
+    - usage_percent increases with data
+    - total_human formats as B, KB, MB
+    - Resets after clear_all
+    - Decreases after clear_variable
+    - Correct types for all return values (int, str, float)
+    - Correctly updates when variable is overwritten
+    - Counts all variable types (str, dict, list)
+    - Large data calculates reasonable usage_percent
+    - Read-only (doesn't modify state)
+    - Includes variables created via execute
+
+- Files changed:
+  - tests/test_repl.py (added TestGetMemoryUsage class with 25 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - get_memory_usage returns dict with 5 keys: total_bytes, total_human, variable_count, max_allowed_mb, usage_percent
+  - total_bytes is sum of size_bytes from all variable_metadata values
+  - variable_count is len(self.variables), which includes llm_* functions after execute()
+  - usage_percent = (total_bytes / (max_memory_mb * 1024 * 1024)) * 100
+  - _human_size formats bytes as B, KB, MB, GB, TB
+  - After clear_all, all values reset to 0 (total_bytes, variable_count, usage_percent)
+  - clear_variable decreases both total_bytes and variable_count
+
+---
+

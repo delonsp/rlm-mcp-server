@@ -2337,3 +2337,331 @@ class TestGetMemoryUsage:
 
         assert result["variable_count"] >= 1
         assert result["total_bytes"] > 0
+
+
+class TestClearNamespace:
+    """Test that clear_all and clear_variable methods work correctly.
+
+    Note: The PRD calls this 'clear_namespace' but the actual methods in
+    SafeREPL are clear_all() (clears all variables) and clear_variable()
+    (clears a single variable).
+    """
+
+    # ===================
+    # Tests for clear_all
+    # ===================
+
+    def test_clear_all_returns_count(self):
+        """clear_all returns the count of removed variables."""
+        repl = SafeREPL()
+        repl.load_data("var1", "data1", data_type="text")
+        repl.load_data("var2", "data2", data_type="text")
+        repl.load_data("var3", "data3", data_type="text")
+
+        result = repl.clear_all()
+
+        assert result == 3
+
+    def test_clear_all_removes_all_variables(self):
+        """clear_all removes all variables from the namespace."""
+        repl = SafeREPL()
+        repl.load_data("var1", "data1", data_type="text")
+        repl.load_data("var2", "data2", data_type="text")
+        repl.load_data("var3", "data3", data_type="text")
+
+        repl.clear_all()
+
+        assert len(repl.variables) == 0
+        assert "var1" not in repl.variables
+        assert "var2" not in repl.variables
+        assert "var3" not in repl.variables
+
+    def test_clear_all_removes_all_variable_metadata(self):
+        """clear_all removes all variable metadata."""
+        repl = SafeREPL()
+        repl.load_data("var1", "data1", data_type="text")
+        repl.load_data("var2", "data2", data_type="text")
+
+        repl.clear_all()
+
+        assert len(repl.variable_metadata) == 0
+
+    def test_clear_all_on_empty_returns_zero(self):
+        """clear_all on empty namespace returns 0."""
+        repl = SafeREPL()
+
+        result = repl.clear_all()
+
+        assert result == 0
+
+    def test_clear_all_resets_memory_usage(self):
+        """clear_all resets memory usage to zero."""
+        repl = SafeREPL()
+        repl.load_data("test", "x" * 10000, data_type="text")
+
+        # Verify data was loaded
+        usage_before = repl.get_memory_usage()
+        assert usage_before["total_bytes"] > 0
+        assert usage_before["variable_count"] > 0
+
+        repl.clear_all()
+        usage_after = repl.get_memory_usage()
+
+        assert usage_after["total_bytes"] == 0
+        assert usage_after["variable_count"] == 0
+        assert usage_after["usage_percent"] == 0
+
+    def test_clear_all_variables_from_execute(self):
+        """clear_all clears variables created via execute."""
+        repl = SafeREPL()
+        repl.execute("x = 1")
+        repl.execute("y = 2")
+        repl.execute("z = 3")
+
+        # Filter out llm_* functions to count user variables
+        user_vars = [v for v in repl.variables if not v.startswith("llm_")]
+        assert len(user_vars) == 3
+
+        repl.clear_all()
+
+        assert len(repl.variables) == 0
+
+    def test_clear_all_allows_new_variables_after(self):
+        """After clear_all, new variables can be added."""
+        repl = SafeREPL()
+        repl.load_data("old_var", "old_data", data_type="text")
+        repl.clear_all()
+
+        # Add new variable
+        repl.load_data("new_var", "new_data", data_type="text")
+
+        assert "new_var" in repl.variables
+        assert repl.variables["new_var"] == "new_data"
+
+    def test_clear_all_does_not_reset_execution_count(self):
+        """clear_all does not reset the execution_count."""
+        repl = SafeREPL()
+        repl.execute("x = 1")
+        repl.execute("y = 2")
+        count_before = repl.execution_count
+
+        repl.clear_all()
+
+        assert repl.execution_count == count_before
+
+    def test_clear_all_clears_mixed_variable_types(self):
+        """clear_all clears variables of all types (str, dict, list)."""
+        repl = SafeREPL()
+        repl.load_data("text_var", "hello", data_type="text")
+        repl.load_data("json_dict", '{"key": "value"}', data_type="json")
+        repl.load_data("json_list", '[1, 2, 3]', data_type="json")
+        repl.load_data("csv_var", "a,b\n1,2", data_type="csv")
+        repl.load_data("lines_var", "line1\nline2", data_type="lines")
+
+        result = repl.clear_all()
+
+        assert result == 5
+        assert len(repl.variables) == 0
+
+    def test_clear_all_clears_large_data(self):
+        """clear_all clears large data (1MB+)."""
+        repl = SafeREPL()
+        large_data = "x" * (1024 * 1024)  # 1 MB
+        repl.load_data("large", large_data, data_type="text")
+
+        # Verify data was loaded
+        assert len(repl.variables["large"]) == 1024 * 1024
+
+        result = repl.clear_all()
+
+        assert result == 1
+        assert "large" not in repl.variables
+
+    # ========================
+    # Tests for clear_variable
+    # ========================
+
+    def test_clear_variable_returns_true_on_success(self):
+        """clear_variable returns True when variable exists."""
+        repl = SafeREPL()
+        repl.load_data("test", "data", data_type="text")
+
+        result = repl.clear_variable("test")
+
+        assert result is True
+
+    def test_clear_variable_returns_false_on_not_found(self):
+        """clear_variable returns False when variable doesn't exist."""
+        repl = SafeREPL()
+
+        result = repl.clear_variable("nonexistent")
+
+        assert result is False
+
+    def test_clear_variable_removes_variable(self):
+        """clear_variable removes the specified variable."""
+        repl = SafeREPL()
+        repl.load_data("test", "data", data_type="text")
+
+        repl.clear_variable("test")
+
+        assert "test" not in repl.variables
+
+    def test_clear_variable_removes_metadata(self):
+        """clear_variable removes the variable metadata."""
+        repl = SafeREPL()
+        repl.load_data("test", "data", data_type="text")
+        assert "test" in repl.variable_metadata
+
+        repl.clear_variable("test")
+
+        assert "test" not in repl.variable_metadata
+
+    def test_clear_variable_does_not_affect_others(self):
+        """clear_variable does not affect other variables."""
+        repl = SafeREPL()
+        repl.load_data("var1", "data1", data_type="text")
+        repl.load_data("var2", "data2", data_type="text")
+        repl.load_data("var3", "data3", data_type="text")
+
+        repl.clear_variable("var2")
+
+        assert "var1" in repl.variables
+        assert "var2" not in repl.variables
+        assert "var3" in repl.variables
+        assert repl.variables["var1"] == "data1"
+        assert repl.variables["var3"] == "data3"
+
+    def test_clear_variable_updates_memory_usage(self):
+        """clear_variable updates memory usage correctly."""
+        repl = SafeREPL()
+        repl.load_data("keep", "keep data", data_type="text")
+        repl.load_data("remove", "x" * 10000, data_type="text")
+
+        usage_before = repl.get_memory_usage()
+        repl.clear_variable("remove")
+        usage_after = repl.get_memory_usage()
+
+        assert usage_after["variable_count"] == usage_before["variable_count"] - 1
+        assert usage_after["total_bytes"] < usage_before["total_bytes"]
+
+    def test_clear_variable_created_via_execute(self):
+        """clear_variable can remove variables created via execute."""
+        repl = SafeREPL()
+        repl.execute("my_var = [1, 2, 3]")
+        assert "my_var" in repl.variables
+
+        result = repl.clear_variable("my_var")
+
+        assert result is True
+        assert "my_var" not in repl.variables
+
+    def test_clear_variable_allows_recreation(self):
+        """After clear_variable, the same name can be reused."""
+        repl = SafeREPL()
+        repl.load_data("test", "original", data_type="text")
+        repl.clear_variable("test")
+
+        repl.load_data("test", "new value", data_type="text")
+
+        assert repl.variables["test"] == "new value"
+
+    def test_clear_variable_with_special_characters(self):
+        """clear_variable works with special characters in name."""
+        repl = SafeREPL()
+        # Variable names with underscores and numbers
+        repl.load_data("var_1", "data1", data_type="text")
+        repl.load_data("_private", "data2", data_type="text")
+        repl.load_data("var123", "data3", data_type="text")
+
+        assert repl.clear_variable("var_1") is True
+        assert repl.clear_variable("_private") is True
+        assert repl.clear_variable("var123") is True
+
+        assert "var_1" not in repl.variables
+        assert "_private" not in repl.variables
+        assert "var123" not in repl.variables
+
+    def test_clear_variable_with_large_data(self):
+        """clear_variable removes large data correctly."""
+        repl = SafeREPL()
+        large_data = "x" * (5 * 1024 * 1024)  # 5 MB
+        repl.load_data("large", large_data, data_type="text")
+
+        usage_before = repl.get_memory_usage()
+        result = repl.clear_variable("large")
+        usage_after = repl.get_memory_usage()
+
+        assert result is True
+        assert "large" not in repl.variables
+        # Memory should be significantly reduced
+        assert usage_after["total_bytes"] < usage_before["total_bytes"] - 1000000
+
+    def test_clear_nonexistent_does_not_affect_existing(self):
+        """Clearing nonexistent variable does not affect existing variables."""
+        repl = SafeREPL()
+        repl.load_data("existing", "data", data_type="text")
+
+        result = repl.clear_variable("nonexistent")
+
+        assert result is False
+        assert "existing" in repl.variables
+        assert repl.variables["existing"] == "data"
+
+    def test_multiple_clear_variable_calls(self):
+        """Multiple clear_variable calls work correctly."""
+        repl = SafeREPL()
+        repl.load_data("a", "1", data_type="text")
+        repl.load_data("b", "2", data_type="text")
+        repl.load_data("c", "3", data_type="text")
+        repl.load_data("d", "4", data_type="text")
+
+        assert repl.clear_variable("a") is True
+        assert repl.clear_variable("c") is True
+        assert repl.clear_variable("a") is False  # Already cleared
+        assert repl.clear_variable("c") is False  # Already cleared
+
+        assert "a" not in repl.variables
+        assert "b" in repl.variables
+        assert "c" not in repl.variables
+        assert "d" in repl.variables
+
+    # =================
+    # Combined tests
+    # =================
+
+    def test_clear_variable_then_clear_all(self):
+        """clear_variable followed by clear_all works correctly."""
+        repl = SafeREPL()
+        repl.load_data("a", "1", data_type="text")
+        repl.load_data("b", "2", data_type="text")
+        repl.load_data("c", "3", data_type="text")
+
+        repl.clear_variable("a")
+        result = repl.clear_all()
+
+        # clear_all should return count of remaining variables (2)
+        assert result == 2
+        assert len(repl.variables) == 0
+
+    def test_clear_all_then_clear_variable(self):
+        """clear_all followed by clear_variable returns False."""
+        repl = SafeREPL()
+        repl.load_data("test", "data", data_type="text")
+
+        repl.clear_all()
+        result = repl.clear_variable("test")
+
+        assert result is False
+
+    def test_namespace_isolation_after_clear(self):
+        """After clear, new operations work in isolated namespace."""
+        repl = SafeREPL()
+        repl.execute("x = 100")
+        repl.clear_all()
+
+        # x should not exist anymore
+        result = repl.execute("print(x)")
+
+        assert result.success is False
+        assert "NameError" in result.stderr or "name 'x'" in result.stderr.lower()
