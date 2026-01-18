@@ -150,6 +150,29 @@ class S3Client:
         data = text.encode(encoding)
         return self.put_object(bucket, key, data, content_type="text/plain; charset=utf-8")
 
+    def upload_from_url(self, url: str, bucket: str, key: str) -> dict:
+        """Baixa arquivo de uma URL e faz upload para o Minio."""
+        import urllib.request
+        import mimetypes
+
+        try:
+            logger.info(f"Baixando de {url}...")
+
+            # Baixar o arquivo
+            req = urllib.request.Request(url, headers={'User-Agent': 'RLM-MCP-Server/1.0'})
+            with urllib.request.urlopen(req, timeout=300) as response:
+                data = response.read()
+                content_type = response.headers.get('Content-Type', 'application/octet-stream')
+
+            logger.info(f"Baixado {self._human_size(len(data))} de {url}")
+
+            # Fazer upload para o Minio
+            return self.put_object(bucket, key, data, content_type=content_type.split(';')[0])
+
+        except Exception as e:
+            logger.error(f"Erro ao baixar de {url}: {e}")
+            raise RuntimeError(f"Erro ao baixar de {url}: {e}")
+
     def get_object_info(self, bucket: str, key: str) -> Optional[dict]:
         """Retorna informações do objeto sem baixar."""
         try:

@@ -377,23 +377,23 @@ Exemplo: rlm_list_s3() para listar bucket padrão, ou rlm_list_s3(prefix="logs/"
             }
         },
         {
-            "name": "rlm_upload_s3",
-            "description": """Faz upload de dados para o Minio/S3.
+            "name": "rlm_upload_url",
+            "description": """Faz upload de arquivo de uma URL para o Minio/S3.
 
-Permite enviar texto/dados diretamente para um arquivo no Minio.
-Útil para salvar resultados de análises ou criar arquivos de teste.
+O servidor RLM baixa o arquivo diretamente da URL e envia para o Minio,
+sem passar pelo contexto do Claude Code. Ideal para arquivos grandes.
 
-Exemplo: rlm_upload_s3(key="logs/test.log", data="conteudo do arquivo")""",
+Exemplo: rlm_upload_url(url="https://example.com/data.csv", key="data/file.csv")""",
             "inputSchema": {
                 "type": "object",
                 "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "URL do arquivo para baixar"
+                    },
                     "key": {
                         "type": "string",
                         "description": "Caminho/chave do objeto no bucket"
-                    },
-                    "data": {
-                        "type": "string",
-                        "description": "Conteúdo do arquivo (texto)"
                     },
                     "bucket": {
                         "type": "string",
@@ -401,7 +401,7 @@ Exemplo: rlm_upload_s3(key="logs/test.log", data="conteudo do arquivo")""",
                         "description": "Nome do bucket (padrão: claude-code)"
                     }
                 },
-                "required": ["key", "data"]
+                "required": ["url", "key"]
             }
         }
     ]
@@ -627,7 +627,7 @@ Variável: {var_name} (tipo: {data_type})
                     "isError": True
                 }
 
-        elif name == "rlm_upload_s3":
+        elif name == "rlm_upload_url":
             s3 = get_s3_client()
             if not s3.is_configured():
                 return {
@@ -637,13 +637,14 @@ Variável: {var_name} (tipo: {data_type})
                     "isError": True
                 }
 
+            url = arguments["url"]
             bucket = arguments.get("bucket", "claude-code")
             key = arguments["key"]
-            data = arguments["data"]
 
             try:
-                result = s3.put_object_text(bucket, key, data)
+                result = s3.upload_from_url(url, bucket, key)
                 text = f"""✅ Upload concluído:
+URL: {url}
 Bucket: {result['bucket']}
 Objeto: {result['key']}
 Tamanho: {result['size_human']}"""
@@ -651,7 +652,7 @@ Tamanho: {result['size_human']}"""
             except Exception as e:
                 return {
                     "content": [
-                        {"type": "text", "text": f"Erro ao fazer upload: {e}"}
+                        {"type": "text", "text": f"Erro ao fazer upload de URL: {e}"}
                     ],
                     "isError": True
                 }
