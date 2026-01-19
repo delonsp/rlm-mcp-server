@@ -104,7 +104,7 @@ src/rlm_mcp/
 ## Fase 8: Testes de Edge Cases e Segurança
 
 - [x] Testar persistence.py com caracteres especiais em nomes de variáveis
-- [ ] Testar indexer.py com texto vazio
+- [x] Testar indexer.py com texto vazio
 - [ ] Testar indexer.py com texto None (deve tratar gracefully)
 - [ ] Testar repl.py com código malicioso (eval, exec em string)
 - [ ] Testar repl.py com loop infinito (timeout)

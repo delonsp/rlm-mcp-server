@@ -1401,3 +1401,188 @@ class TestTextIndexSerialization:
         assert stats["total_chars"] == len(text)
         assert stats["total_lines"] == 3
         assert stats["indexed_terms"] > 0
+
+
+class TestIndexerEmptyTextEdgeCases:
+    """Test edge cases for indexer.py with empty text input."""
+
+    # create_index with empty text
+    def test_create_index_empty_text_returns_valid_index(self):
+        """create_index with empty string returns a valid TextIndex object."""
+        index = create_index("", "empty_var")
+
+        assert isinstance(index, TextIndex)
+        assert index.var_name == "empty_var"
+
+    def test_create_index_empty_text_has_zero_chars(self):
+        """create_index with empty text sets total_chars to 0."""
+        index = create_index("", "empty_var")
+
+        assert index.total_chars == 0
+
+    def test_create_index_empty_text_has_zero_lines(self):
+        """create_index with empty text sets total_lines to 0."""
+        index = create_index("", "empty_var")
+
+        # splitlines() on "" returns [], so len is 0
+        assert index.total_lines == 0
+
+    def test_create_index_empty_text_has_empty_terms(self):
+        """create_index with empty text has no indexed terms."""
+        index = create_index("", "empty_var")
+
+        assert index.terms == {}
+        assert len(index.terms) == 0
+
+    def test_create_index_empty_text_has_empty_structure(self):
+        """create_index with empty text has empty structure."""
+        index = create_index("", "empty_var")
+
+        assert index.structure["headers"] == []
+        assert index.structure["capitulos"] == []
+        assert index.structure["remedios"] == []
+
+    def test_create_index_empty_text_with_additional_terms(self):
+        """create_index with empty text ignores additional_terms (none found)."""
+        index = create_index("", "empty_var", additional_terms=["termo1", "termo2"])
+
+        assert index.custom_terms == ["termo1", "termo2"]
+        assert "termo1" not in index.terms  # not found in empty text
+        assert "termo2" not in index.terms
+
+    # _detect_structure with empty text
+    def test_detect_structure_empty_text_returns_empty_lists(self):
+        """_detect_structure with empty text returns dict with empty lists."""
+        structure = _detect_structure("")
+
+        assert structure["headers"] == []
+        assert structure["capitulos"] == []
+        assert structure["remedios"] == []
+
+    def test_detect_structure_empty_text_has_required_keys(self):
+        """_detect_structure with empty text returns dict with all required keys."""
+        structure = _detect_structure("")
+
+        assert "headers" in structure
+        assert "capitulos" in structure
+        assert "remedios" in structure
+
+    # auto_index_if_large with empty text
+    def test_auto_index_if_large_empty_text_returns_none(self):
+        """auto_index_if_large with empty text returns None (below default threshold)."""
+        result = auto_index_if_large("", "empty_var")
+
+        assert result is None
+
+    def test_auto_index_if_large_empty_text_with_zero_threshold(self):
+        """auto_index_if_large with empty text and min_chars=0 returns valid index."""
+        result = auto_index_if_large("", "empty_var", min_chars=0)
+
+        assert result is not None
+        assert isinstance(result, TextIndex)
+        assert result.total_chars == 0
+
+    # TextIndex.search on empty index
+    def test_search_on_empty_index_returns_empty_list(self):
+        """TextIndex.search on index from empty text returns empty list."""
+        index = create_index("", "empty_var")
+
+        results = index.search("medo")
+
+        assert results == []
+
+    def test_search_empty_term_on_empty_index(self):
+        """TextIndex.search with empty term on empty index returns empty list."""
+        index = create_index("", "empty_var")
+
+        results = index.search("")
+
+        assert results == []
+
+    # TextIndex.search_multiple on empty index
+    def test_search_multiple_or_mode_on_empty_index(self):
+        """TextIndex.search_multiple OR mode on empty index returns empty dict."""
+        index = create_index("", "empty_var")
+
+        results = index.search_multiple(["medo", "trabalho"], require_all=False)
+
+        assert results == {}
+
+    def test_search_multiple_and_mode_on_empty_index(self):
+        """TextIndex.search_multiple AND mode on empty index returns empty dict."""
+        index = create_index("", "empty_var")
+
+        results = index.search_multiple(["medo", "trabalho"], require_all=True)
+
+        assert results == {}
+
+    def test_search_multiple_empty_terms_on_empty_index(self):
+        """TextIndex.search_multiple with empty term list on empty index returns empty dict."""
+        index = create_index("", "empty_var")
+
+        results_or = index.search_multiple([], require_all=False)
+        results_and = index.search_multiple([], require_all=True)
+
+        assert results_or == {}
+        assert results_and == {}
+
+    # TextIndex.get_stats on empty index
+    def test_get_stats_on_empty_index(self):
+        """TextIndex.get_stats on index from empty text returns valid stats."""
+        index = create_index("", "empty_var")
+
+        stats = index.get_stats()
+
+        assert stats["var_name"] == "empty_var"
+        assert stats["total_chars"] == 0
+        assert stats["total_lines"] == 0
+        assert stats["indexed_terms"] == 0
+        assert stats["total_occurrences"] == 0
+        assert stats["top_terms"] == []
+
+    # TextIndex.to_dict and from_dict with empty index
+    def test_to_dict_on_empty_index(self):
+        """TextIndex.to_dict on empty index returns valid dict."""
+        index = create_index("", "empty_var")
+
+        data = index.to_dict()
+
+        assert data["var_name"] == "empty_var"
+        assert data["total_chars"] == 0
+        assert data["total_lines"] == 0
+        assert data["terms"] == {}
+        assert data["custom_terms"] == []
+
+    def test_from_dict_roundtrip_empty_index(self):
+        """Empty index survives to_dict/from_dict roundtrip."""
+        original = create_index("", "empty_var")
+
+        data = original.to_dict()
+        restored = TextIndex.from_dict(data)
+
+        assert restored.var_name == original.var_name
+        assert restored.total_chars == original.total_chars
+        assert restored.total_lines == original.total_lines
+        assert restored.terms == original.terms
+        assert restored.custom_terms == original.custom_terms
+
+    def test_restored_empty_index_search_works(self):
+        """Restored empty index from from_dict can perform searches."""
+        original = create_index("", "empty_var")
+
+        data = original.to_dict()
+        restored = TextIndex.from_dict(data)
+
+        results = restored.search("medo")
+        assert results == []
+
+    def test_restored_empty_index_get_stats_works(self):
+        """Restored empty index from from_dict can return stats."""
+        original = create_index("", "empty_var")
+
+        data = original.to_dict()
+        restored = TextIndex.from_dict(data)
+
+        stats = restored.get_stats()
+        assert stats["indexed_terms"] == 0
+        assert stats["total_occurrences"] == 0
