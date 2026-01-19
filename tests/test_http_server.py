@@ -1806,3 +1806,355 @@ class TestMcpToolRlmVarInfo:
         response = self.call_tool(client, "rlm_var_info", {"name": "test_var"})
         data = response.json()
         assert isinstance(data, dict)
+
+
+class TestMcpToolRlmClear:
+    """Tests for rlm_clear tool via MCP tools/call method."""
+
+    def make_mcp_request(self, client, method: str, params: dict = None, request_id: int = 1):
+        """Helper to make MCP JSON-RPC requests."""
+        payload = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+        }
+        if params is not None:
+            payload["params"] = params
+        return client.post("/mcp", json=payload)
+
+    def call_tool(self, client, tool_name: str, arguments: dict, request_id: int = 1):
+        """Helper to call a tool via MCP tools/call."""
+        return self.make_mcp_request(
+            client,
+            "tools/call",
+            params={"name": tool_name, "arguments": arguments},
+            request_id=request_id
+        )
+
+    @pytest.fixture(autouse=True)
+    def reset_repl(self):
+        """Reset REPL state before each test to avoid cross-test pollution."""
+        from rlm_mcp.http_server import repl
+        repl.clear_all()
+        yield
+        repl.clear_all()
+
+    def test_returns_200_status_code(self, client):
+        """rlm_clear should return 200 OK."""
+        response = self.call_tool(client, "rlm_clear", {"all": True})
+        assert response.status_code == 200
+
+    def test_returns_json(self, client):
+        """rlm_clear should return JSON content."""
+        response = self.call_tool(client, "rlm_clear", {"all": True})
+        assert response.headers["content-type"].startswith("application/json")
+
+    def test_returns_jsonrpc_version(self, client):
+        """rlm_clear should return jsonrpc 2.0."""
+        response = self.call_tool(client, "rlm_clear", {"all": True})
+        data = response.json()
+        assert data["jsonrpc"] == "2.0"
+
+    def test_returns_same_id(self, client):
+        """rlm_clear should return the same request id."""
+        response = self.call_tool(client, "rlm_clear", {"all": True}, request_id=42)
+        data = response.json()
+        assert data["id"] == 42
+
+    def test_returns_result_dict(self, client):
+        """rlm_clear should return a result dict."""
+        response = self.call_tool(client, "rlm_clear", {"all": True})
+        data = response.json()
+        assert "result" in data
+        assert isinstance(data["result"], dict)
+
+    def test_result_has_content(self, client):
+        """rlm_clear result should have 'content' key."""
+        response = self.call_tool(client, "rlm_clear", {"all": True})
+        data = response.json()
+        assert "content" in data["result"]
+
+    def test_content_is_list(self, client):
+        """rlm_clear content should be a list."""
+        response = self.call_tool(client, "rlm_clear", {"all": True})
+        data = response.json()
+        assert isinstance(data["result"]["content"], list)
+
+    def test_content_has_text_item(self, client):
+        """rlm_clear content should have text type item."""
+        response = self.call_tool(client, "rlm_clear", {"all": True})
+        data = response.json()
+        content = data["result"]["content"]
+        assert len(content) > 0
+        assert content[0]["type"] == "text"
+        assert "text" in content[0]
+
+    def test_clear_all_removes_all_variables(self, client):
+        """rlm_clear with all=True should remove all variables."""
+        # Create several variables first
+        self.call_tool(client, "rlm_load_data", {"name": "var1", "data": "test1"})
+        self.call_tool(client, "rlm_load_data", {"name": "var2", "data": "test2"})
+        self.call_tool(client, "rlm_load_data", {"name": "var3", "data": "test3"})
+
+        # Clear all
+        response = self.call_tool(client, "rlm_clear", {"all": True})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        # Should mention count of removed variables
+        assert "3" in text
+        assert "removidas" in text.lower() or "variáveis" in text.lower()
+
+    def test_clear_all_returns_count_in_message(self, client):
+        """rlm_clear with all=True should return count of removed variables."""
+        # Create variables
+        self.call_tool(client, "rlm_load_data", {"name": "a", "data": "1"})
+        self.call_tool(client, "rlm_load_data", {"name": "b", "data": "2"})
+
+        response = self.call_tool(client, "rlm_clear", {"all": True})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        # Message format: "Todas as N variáveis foram removidas."
+        assert "2" in text
+
+    def test_clear_all_on_empty_namespace(self, client):
+        """rlm_clear with all=True on empty namespace should return 0 count."""
+        response = self.call_tool(client, "rlm_clear", {"all": True})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        # Should say 0 variables removed
+        assert "0" in text
+
+    def test_clear_single_variable(self, client):
+        """rlm_clear with name should remove only that variable."""
+        # Create several variables
+        self.call_tool(client, "rlm_load_data", {"name": "keep1", "data": "a"})
+        self.call_tool(client, "rlm_load_data", {"name": "remove_me", "data": "b"})
+        self.call_tool(client, "rlm_load_data", {"name": "keep2", "data": "c"})
+
+        # Clear only one
+        response = self.call_tool(client, "rlm_clear", {"name": "remove_me"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        # Should confirm removal
+        assert "remove_me" in text
+        assert "removida" in text.lower()
+
+    def test_clear_single_variable_leaves_others(self, client):
+        """rlm_clear with name should not affect other variables."""
+        # Create variables
+        self.call_tool(client, "rlm_load_data", {"name": "keep1", "data": "a"})
+        self.call_tool(client, "rlm_load_data", {"name": "remove_me", "data": "b"})
+        self.call_tool(client, "rlm_load_data", {"name": "keep2", "data": "c"})
+
+        # Clear one
+        self.call_tool(client, "rlm_clear", {"name": "remove_me"})
+
+        # Verify other variables still exist via rlm_list_vars
+        response = self.call_tool(client, "rlm_list_vars", {})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        assert "keep1" in text
+        assert "keep2" in text
+        assert "remove_me" not in text
+
+    def test_clear_nonexistent_variable(self, client):
+        """rlm_clear with name for nonexistent variable should return error message."""
+        response = self.call_tool(client, "rlm_clear", {"name": "does_not_exist"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        # Should indicate not found
+        assert "does_not_exist" in text
+        assert "não encontrada" in text.lower() or "not found" in text.lower()
+
+    def test_clear_no_parameters_returns_error(self, client):
+        """rlm_clear without name or all should return helpful message."""
+        response = self.call_tool(client, "rlm_clear", {})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        # Should ask for name or all
+        assert "name" in text.lower() or "all" in text.lower()
+
+    def test_clear_variable_accessible_after_recreation(self, client):
+        """After clearing a variable, it can be recreated with same name."""
+        # Create, clear, recreate
+        self.call_tool(client, "rlm_load_data", {"name": "reusable", "data": "original"})
+        self.call_tool(client, "rlm_clear", {"name": "reusable"})
+        self.call_tool(client, "rlm_load_data", {"name": "reusable", "data": "new value"})
+
+        # Verify new value
+        response = self.call_tool(client, "rlm_execute", {"code": "print(reusable)"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        assert "new value" in text
+
+    def test_clear_all_then_create_new_variables(self, client):
+        """After clear all, new variables can be created."""
+        # Create, clear all, create again
+        self.call_tool(client, "rlm_load_data", {"name": "old_var", "data": "old"})
+        self.call_tool(client, "rlm_clear", {"all": True})
+        self.call_tool(client, "rlm_load_data", {"name": "new_var", "data": "new"})
+
+        # Verify new variable exists
+        response = self.call_tool(client, "rlm_list_vars", {})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        assert "new_var" in text
+        assert "old_var" not in text
+
+    def test_clear_variable_via_execute_created_variable(self, client):
+        """rlm_clear should work with variables created via rlm_execute."""
+        # Create variable via execute
+        self.call_tool(client, "rlm_execute", {"code": "x = 42"})
+
+        # Clear it
+        response = self.call_tool(client, "rlm_clear", {"name": "x"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        assert "x" in text
+        assert "removida" in text.lower()
+
+    def test_cleared_variable_raises_error_on_access(self, client):
+        """After clearing a variable, accessing it should raise NameError."""
+        # Create and clear
+        self.call_tool(client, "rlm_load_data", {"name": "temp_var", "data": "test"})
+        self.call_tool(client, "rlm_clear", {"name": "temp_var"})
+
+        # Try to access - should get error
+        response = self.call_tool(client, "rlm_execute", {"code": "print(temp_var)"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        # Should have error (NameError)
+        assert "NameError" in text or "ERRO" in text or "não" in text.lower()
+
+    def test_clear_with_string_id(self, client):
+        """rlm_clear should work with string request id."""
+        payload = {
+            "jsonrpc": "2.0",
+            "id": "clear-request-abc",
+            "method": "tools/call",
+            "params": {
+                "name": "rlm_clear",
+                "arguments": {"all": True}
+            }
+        }
+        response = client.post("/mcp", json=payload)
+        data = response.json()
+        assert data["id"] == "clear-request-abc"
+        assert "result" in data
+
+    def test_clear_all_with_mixed_types(self, client):
+        """rlm_clear with all=True should work with different variable types."""
+        # Create different types
+        self.call_tool(client, "rlm_load_data", {"name": "text_var", "data": "hello"})
+        self.call_tool(client, "rlm_load_data", {"name": "json_var", "data": '{"key": "value"}', "data_type": "json"})
+        self.call_tool(client, "rlm_load_data", {"name": "list_var", "data": "a,b\n1,2", "data_type": "csv"})
+        self.call_tool(client, "rlm_execute", {"code": "num_var = 123"})
+
+        # Clear all
+        response = self.call_tool(client, "rlm_clear", {"all": True})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        # Should have cleared at least 4 variables (may include llm_* functions from execute)
+        # Message format: "Todas as N variáveis foram removidas."
+        import re
+        match = re.search(r"(\d+)", text)
+        assert match is not None
+        count = int(match.group(1))
+        assert count >= 4  # At least our 4 variables (plus llm_* functions from execute)
+
+    def test_clear_variable_special_characters_in_name(self, client):
+        """rlm_clear should handle variable names with underscores."""
+        self.call_tool(client, "rlm_load_data", {"name": "my_special_var_123", "data": "test"})
+
+        response = self.call_tool(client, "rlm_clear", {"name": "my_special_var_123"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        assert "my_special_var_123" in text
+        assert "removida" in text.lower()
+
+    def test_clear_all_resets_memory_usage(self, client):
+        """rlm_clear with all=True should reset memory usage to zero."""
+        # Create some data
+        self.call_tool(client, "rlm_load_data", {"name": "large_var", "data": "x" * 10000})
+
+        # Clear all
+        self.call_tool(client, "rlm_clear", {"all": True})
+
+        # Check memory - should be back to 0 (or minimal)
+        from rlm_mcp.http_server import repl
+        mem = repl.get_memory_usage()
+        assert mem["variable_count"] == 0
+        assert mem["total_bytes"] == 0
+
+    def test_clear_single_reduces_memory(self, client):
+        """rlm_clear with name should reduce memory usage."""
+        # Create variables
+        self.call_tool(client, "rlm_load_data", {"name": "small_var", "data": "small"})
+        self.call_tool(client, "rlm_load_data", {"name": "to_remove", "data": "x" * 1000})
+
+        # Get memory before
+        from rlm_mcp.http_server import repl
+        mem_before = repl.get_memory_usage()
+
+        # Clear one
+        self.call_tool(client, "rlm_clear", {"name": "to_remove"})
+
+        # Memory should decrease
+        mem_after = repl.get_memory_usage()
+        assert mem_after["total_bytes"] < mem_before["total_bytes"]
+        assert mem_after["variable_count"] == mem_before["variable_count"] - 1
+
+    def test_no_error_field_in_response(self, client):
+        """rlm_clear should not return error field for valid operations."""
+        response = self.call_tool(client, "rlm_clear", {"all": True})
+        data = response.json()
+        assert data.get("error") is None
+
+    def test_response_is_dict(self, client):
+        """rlm_clear should return a dictionary response."""
+        response = self.call_tool(client, "rlm_clear", {"all": True})
+        data = response.json()
+        assert isinstance(data, dict)
+
+    def test_multiple_clear_operations(self, client):
+        """Multiple clear operations should work consecutively."""
+        # Create 3 vars
+        self.call_tool(client, "rlm_load_data", {"name": "v1", "data": "1"})
+        self.call_tool(client, "rlm_load_data", {"name": "v2", "data": "2"})
+        self.call_tool(client, "rlm_load_data", {"name": "v3", "data": "3"})
+
+        # Clear one by one
+        r1 = self.call_tool(client, "rlm_clear", {"name": "v1"})
+        assert "removida" in r1.json()["result"]["content"][0]["text"].lower()
+
+        r2 = self.call_tool(client, "rlm_clear", {"name": "v2"})
+        assert "removida" in r2.json()["result"]["content"][0]["text"].lower()
+
+        r3 = self.call_tool(client, "rlm_clear", {"name": "v3"})
+        assert "removida" in r3.json()["result"]["content"][0]["text"].lower()
+
+        # All should be gone
+        from rlm_mcp.http_server import repl
+        assert repl.get_memory_usage()["variable_count"] == 0
+
+    def test_clear_all_false_same_as_no_param(self, client):
+        """rlm_clear with all=False should require name parameter."""
+        response = self.call_tool(client, "rlm_clear", {"all": False})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        # Should ask for name or all
+        assert "name" in text.lower() or "all" in text.lower()

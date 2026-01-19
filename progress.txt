@@ -1699,3 +1699,38 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 50 - Test tool rlm_var_info retorna info da variável
+
+- What was implemented:
+  - Added TestMcpToolRlmVarInfo class to tests/test_http_server.py
+  - 29 test cases covering:
+    - Returns 200 status code, JSON content-type, jsonrpc 2.0
+    - Returns same request id (int and string)
+    - Returns result dict with 'content' key containing list of text items
+    - Shows variable name, type, size in bytes, human-readable size
+    - Shows created_at and last_accessed timestamps
+    - Shows variable preview with truncation for long values
+    - Nonexistent variable shows "não encontrada" error message
+    - No error field for existing variable
+    - Different variable types (str, dict, list, CSV as list)
+    - Large variable shows size in KB
+    - Variable created via rlm_execute
+    - Timestamps are in ISO format (validated with regex and datetime.fromisoformat)
+    - Missing name parameter returns error
+    - Unicode content in preview
+    - Multiple requests for same variable return consistent info
+
+- Files changed:
+  - tests/test_http_server.py (added TestMcpToolRlmVarInfo class with 29 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - rlm_var_info tool calls repl.get_variable_info(name) which returns VariableInfo or None
+  - Output format includes: Variável, Tipo, Tamanho, Criada em, Último acesso, Preview
+  - Timestamps use .isoformat() for ISO format
+  - Nonexistent variable returns friendly message instead of error field
+  - Preview is truncated with "..." for long values (uses info.preview which is already truncated)
+
+---
+
