@@ -2065,3 +2065,49 @@ Este arquivo registra o progresso do Ralph em cada iteração.
   - AST analysis walks the entire tree, so nested/chained/try-except blocks don't help bypass
 
 ---
+
+## Iteration 38 - Test repl.py with infinite loop (timeout)
+
+- What was implemented:
+  - Updated src/rlm_mcp/repl.py to implement timeout functionality:
+    - Added `import signal` at the top
+    - Added ExecutionTimeoutError exception class
+    - Added _timeout_handler function for SIGALRM
+    - Modified execute() to use signal.alarm for timeout
+    - Added thread safety check (signal.signal only works in main thread)
+  - Added TestInfiniteLoopTimeout class to tests/test_repl.py
+  - 16 test cases covering:
+    - test_simple_infinite_while_loop_times_out
+    - test_infinite_for_loop_times_out
+    - test_infinite_recursion_times_out_or_stack_overflow
+    - test_timeout_error_message_includes_seconds
+    - test_fast_code_completes_within_timeout
+    - test_loop_that_finishes_completes_successfully
+    - test_timeout_does_not_affect_subsequent_executions
+    - test_variables_from_before_timeout_are_preserved
+    - test_timeout_zero_means_no_timeout
+    - test_nested_loops_timeout
+    - test_infinite_loop_with_sleep_times_out
+    - test_long_computation_times_out
+    - test_multiple_timeouts_in_sequence
+    - test_execution_time_reflects_timeout
+    - test_generator_infinite_loop_times_out
+    - test_list_comprehension_infinite_times_out
+
+- Files changed:
+  - src/rlm_mcp/repl.py (added signal import, ExecutionTimeoutError class, _timeout_handler, timeout logic in execute)
+  - tests/test_repl.py (added TestInfiniteLoopTimeout class with 16 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - signal.signal(SIGALRM) only works in the main thread - raises ValueError in other threads
+  - Check threading.current_thread() is threading.main_thread() before using signals
+  - signal.alarm() only accepts integers, so use int(timeout_seconds) or 1
+  - Always cancel alarm (signal.alarm(0)) in finally block to avoid leaking
+  - Always restore old handler to avoid side effects on other code
+  - Test both timeout behavior AND normal execution after timeout to verify REPL recovery
+  - RecursionError may be raised before timeout for infinite recursion (both are acceptable)
+  - HTTP server tests run in non-main threads, so timeout won't work there (graceful degradation)
+
+---

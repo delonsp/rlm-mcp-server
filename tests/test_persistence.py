@@ -1480,3 +1480,360 @@ class TestSpecialCharactersInVariableNames:
         result = pm.load_index(special_name)
 
         assert result == index_data
+
+
+class TestSQLInjectionProtection:
+    """Tests to verify SQLite is not vulnerable to SQL injection attacks.
+
+    These tests ensure that all database operations use parameterized queries
+    and that malicious input is treated as literal data, not SQL commands.
+    """
+
+    # Common SQL injection payloads
+    INJECTION_PAYLOADS = [
+        # Classic SQL injection
+        "'; DROP TABLE variables; --",
+        "' OR '1'='1",
+        "' OR 1=1 --",
+        "' OR ''='",
+        # Double-quote variations
+        '"; DROP TABLE variables; --',
+        '" OR "1"="1',
+        # Comment-based injection
+        "test/**/OR/**/1=1",
+        "test' /*comment*/ --",
+        # Union-based injection
+        "' UNION SELECT * FROM variables --",
+        "' UNION SELECT name, data, type_name, size_bytes, created_at, updated_at, metadata FROM variables --",
+        # Stacked queries
+        "test'; INSERT INTO variables VALUES ('hacked', 'x', 'str', 1, '2024-01-01', '2024-01-01', NULL); --",
+        "test'; DELETE FROM variables; --",
+        "test'; UPDATE variables SET data='hacked'; --",
+        # SQLite-specific
+        "'; ATTACH DATABASE ':memory:' AS hacked; --",
+        "'; CREATE TABLE IF NOT EXISTS hack(x); --",
+        # Hex/encoded variations
+        "0x27204f5220273127",  # ' OR '1'
+        # Null byte injection
+        "test\x00'; DROP TABLE variables; --",
+        # Unicode variations
+        "ʼ OR 1=1 --",  # Unicode apostrophe
+        # Nested quotes
+        "test''test",
+        "test''''test",
+        "test\\'; DROP TABLE variables; --",
+        # LIKE wildcards (shouldn't affect parameterized queries)
+        "%",
+        "_",
+        "test%",
+        "%test%",
+    ]
+
+    def test_save_variable_with_injection_payloads(self, temp_db):
+        """Test that save_variable safely handles SQL injection payloads as variable names."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        for i, payload in enumerate(self.INJECTION_PAYLOADS):
+            result = pm.save_variable(payload, f"value_{i}")
+            assert result is True, f"Failed to save variable with name: {payload!r}"
+
+        # Verify all variables were saved (injection didn't execute)
+        vars_list = pm.list_variables()
+        assert len(vars_list) == len(self.INJECTION_PAYLOADS)
+
+    def test_load_variable_with_injection_payloads(self, temp_db):
+        """Test that load_variable safely handles SQL injection payloads."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # First save variables with injection payloads as names
+        for i, payload in enumerate(self.INJECTION_PAYLOADS):
+            pm.save_variable(payload, f"value_{i}")
+
+        # Now load them back
+        for i, payload in enumerate(self.INJECTION_PAYLOADS):
+            result = pm.load_variable(payload)
+            assert result == f"value_{i}", f"Failed to load variable with name: {payload!r}"
+
+    def test_delete_variable_with_injection_payloads(self, temp_db):
+        """Test that delete_variable safely handles SQL injection payloads."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Save a regular variable that should NOT be deleted
+        pm.save_variable("safe_variable", "this should survive")
+
+        # Try to delete with injection payloads
+        for payload in self.INJECTION_PAYLOADS:
+            result = pm.delete_variable(payload)
+            assert result is True  # SQLite DELETE succeeds even if no rows match
+
+        # The safe variable should still exist (no SQL injection worked)
+        assert pm.load_variable("safe_variable") == "this should survive"
+
+    def test_save_index_with_injection_payloads(self, temp_db):
+        """Test that save_index safely handles SQL injection payloads as var_name."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        test_index = {"term": [0, 10, 20]}
+
+        for payload in self.INJECTION_PAYLOADS:
+            result = pm.save_index(payload, test_index)
+            assert result is True, f"Failed to save index with var_name: {payload!r}"
+
+    def test_load_index_with_injection_payloads(self, temp_db):
+        """Test that load_index safely handles SQL injection payloads."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        test_index = {"term": [0, 10, 20]}
+
+        # Save indices with injection payloads as var_names
+        for payload in self.INJECTION_PAYLOADS:
+            pm.save_index(payload, test_index)
+
+        # Load them back
+        for payload in self.INJECTION_PAYLOADS:
+            result = pm.load_index(payload)
+            assert result == test_index, f"Failed to load index with var_name: {payload!r}"
+
+    def test_create_collection_with_injection_payloads(self, temp_db):
+        """Test that create_collection safely handles SQL injection payloads."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        for payload in self.INJECTION_PAYLOADS:
+            result = pm.create_collection(payload, description=payload)
+            assert result is True, f"Failed to create collection with name: {payload!r}"
+
+        # Verify all collections exist
+        collections = pm.list_collections()
+        assert len(collections) == len(self.INJECTION_PAYLOADS)
+
+    def test_delete_collection_with_injection_payloads(self, temp_db):
+        """Test that delete_collection safely handles SQL injection payloads."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Create a safe collection that should survive
+        pm.create_collection("safe_collection", "should survive")
+
+        # Try to delete with injection payloads (these collections don't exist)
+        for payload in self.INJECTION_PAYLOADS:
+            result = pm.delete_collection(payload)
+            assert result is True  # SQLite DELETE succeeds even if no rows match
+
+        # Safe collection should still exist
+        collections = pm.list_collections()
+        assert len(collections) == 1
+        assert collections[0]["name"] == "safe_collection"
+
+    def test_add_to_collection_with_injection_payloads(self, temp_db):
+        """Test that add_to_collection safely handles SQL injection payloads."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Test injection in collection name
+        for payload in self.INJECTION_PAYLOADS[:5]:  # Use subset for collection names
+            result = pm.add_to_collection(payload, ["var1", "var2"])
+            assert result == 2, f"Failed for collection name: {payload!r}"
+
+        # Test injection in variable names
+        pm.create_collection("normal_collection")
+        result = pm.add_to_collection("normal_collection", self.INJECTION_PAYLOADS)
+        assert result == len(self.INJECTION_PAYLOADS)
+
+    def test_get_collection_vars_with_injection_payloads(self, temp_db):
+        """Test that get_collection_vars safely handles SQL injection payloads."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Create collection with injection payload name
+        for payload in self.INJECTION_PAYLOADS[:5]:
+            pm.create_collection(payload)
+            pm.add_to_collection(payload, ["var1"])
+            result = pm.get_collection_vars(payload)
+            assert result == ["var1"], f"Failed for collection: {payload!r}"
+
+    def test_get_collection_info_with_injection_payloads(self, temp_db):
+        """Test that get_collection_info safely handles SQL injection payloads."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Create and query collections with injection payload names
+        for payload in self.INJECTION_PAYLOADS[:5]:
+            pm.create_collection(payload, description="test")
+            result = pm.get_collection_info(payload)
+            assert result is not None, f"Failed for collection: {payload!r}"
+            assert result["name"] == payload
+
+    def test_remove_from_collection_with_injection_payloads(self, temp_db):
+        """Test that remove_from_collection safely handles SQL injection payloads."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Create a collection with variables
+        pm.create_collection("test_collection")
+        pm.save_variable("var1", "value1")
+        pm.save_variable("var2", "value2")
+        pm.add_to_collection("test_collection", ["var1", "var2"])
+
+        # Try removing with injection payloads (shouldn't affect real data)
+        for payload in self.INJECTION_PAYLOADS:
+            pm.remove_from_collection("test_collection", [payload])
+
+        # Original variables should still be in collection
+        vars = pm.get_collection_vars("test_collection")
+        assert set(vars) == {"var1", "var2"}
+
+    def test_injection_in_metadata_json(self, temp_db):
+        """Test that SQL injection in metadata JSON is safely handled."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Metadata with injection payloads
+        malicious_metadata = {
+            "key": "'; DROP TABLE variables; --",
+            "nested": {
+                "attack": "' OR '1'='1"
+            },
+            "list": ["'; DELETE FROM variables; --", "normal"]
+        }
+
+        result = pm.save_variable("test_var", "test_value", metadata=malicious_metadata)
+        assert result is True
+
+        # Variable should be saved correctly
+        assert pm.load_variable("test_var") == "test_value"
+
+    def test_database_integrity_after_injection_attempts(self, temp_db):
+        """Test that database structure remains intact after injection attempts."""
+        import sqlite3
+
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Save normal data first
+        pm.save_variable("normal_var", "normal_value")
+        pm.save_index("normal_var", {"term": [0]})
+        pm.create_collection("normal_collection")
+        pm.add_to_collection("normal_collection", ["normal_var"])
+
+        # Attempt many injection attacks
+        for payload in self.INJECTION_PAYLOADS:
+            try:
+                pm.save_variable(payload, payload)
+                pm.load_variable(payload)
+                pm.delete_variable(payload)
+                pm.save_index(payload, {"x": [1]})
+                pm.load_index(payload)
+                pm.create_collection(payload)
+                pm.add_to_collection(payload, [payload])
+                pm.get_collection_vars(payload)
+                pm.delete_collection(payload)
+            except Exception:
+                pass  # Some payloads might cause other errors, that's OK
+
+        # Verify database tables still exist and have correct structure
+        with sqlite3.connect(temp_db) as conn:
+            cursor = conn.cursor()
+
+            # Check all tables exist
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = {row[0] for row in cursor.fetchall()}
+            assert "variables" in tables
+            assert "indices" in tables
+            assert "collections" in tables
+            assert "collection_vars" in tables
+
+            # Verify normal data is intact
+            cursor.execute("SELECT COUNT(*) FROM variables WHERE name = 'normal_var'")
+            assert cursor.fetchone()[0] == 1
+
+            cursor.execute("SELECT COUNT(*) FROM indices WHERE var_name = 'normal_var'")
+            assert cursor.fetchone()[0] == 1
+
+            cursor.execute("SELECT COUNT(*) FROM collections WHERE name = 'normal_collection'")
+            assert cursor.fetchone()[0] == 1
+
+    def test_second_order_injection(self, temp_db):
+        """Test protection against second-order SQL injection.
+
+        Second-order injection occurs when data is stored and later used
+        unsafely in another query. Parameterized queries prevent this.
+        """
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Save a variable with a name that could be dangerous if used unsafely
+        dangerous_name = "test'; DELETE FROM variables WHERE '1'='1"
+        pm.save_variable(dangerous_name, "stored value")
+
+        # Save another variable that should survive
+        pm.save_variable("survivor", "should exist")
+
+        # Operations that use the stored name internally
+        vars_list = pm.list_variables()
+        for var in vars_list:
+            # If list_variables returned unsafe data and it was used unsafely,
+            # this could trigger injection
+            pm.load_variable(var["name"])
+
+        # Verify both variables still exist (no second-order injection)
+        assert pm.load_variable(dangerous_name) == "stored value"
+        assert pm.load_variable("survivor") == "should exist"
+
+    def test_tautology_based_injection(self, temp_db):
+        """Test protection against tautology-based SQL injection."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Save some data
+        pm.save_variable("secret1", "secret_value_1")
+        pm.save_variable("secret2", "secret_value_2")
+
+        # Try tautology attacks that would return all rows if vulnerable
+        tautology_payloads = [
+            "' OR '1'='1",
+            "' OR 1=1 --",
+            "' OR 'a'='a",
+            "test' OR 1=1 --",
+        ]
+
+        for payload in tautology_payloads:
+            result = pm.load_variable(payload)
+            # Should return None (not found), not all variables
+            assert result is None, f"Tautology injection may have worked: {payload!r}"
+
+    def test_parameterized_query_verification(self, temp_db):
+        """Verify that the code uses parameterized queries by testing edge cases."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Test that ? placeholder syntax works correctly
+        # If raw string formatting was used, these would fail or cause injection
+
+        # Name that looks like a placeholder
+        pm.save_variable("?", "question mark")
+        assert pm.load_variable("?") == "question mark"
+
+        # Multiple placeholders
+        pm.save_variable("?, ?, ?", "three question marks")
+        assert pm.load_variable("?, ?, ?") == "three question marks"
+
+        # Named placeholders (SQLite supports :name syntax)
+        pm.save_variable(":name", "colon name")
+        assert pm.load_variable(":name") == "colon name"
+
+        # Numbered placeholders
+        pm.save_variable("?1 ?2 ?3", "numbered")
+        assert pm.load_variable("?1 ?2 ?3") == "numbered"
+
+    def test_batch_injection_attempt(self, temp_db):
+        """Test that batch/stacked query injection doesn't work."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Save a variable that should survive
+        pm.save_variable("survivor", "should exist")
+
+        # Batch injection attempts
+        batch_payloads = [
+            "test; DROP TABLE variables",
+            "test; DELETE FROM variables; SELECT",
+            "test'; INSERT INTO variables VALUES('injected','x','str',1,'a','b',NULL);--",
+        ]
+
+        for payload in batch_payloads:
+            pm.save_variable(payload, "batch test")
+
+        # Survivor should still exist (batch queries didn't execute)
+        assert pm.load_variable("survivor") == "should exist"
+
+        # Verify no 'injected' variable was created
+        assert pm.load_variable("injected") is None
