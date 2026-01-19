@@ -846,3 +846,354 @@ print(result)"""
         data = response.json()
         # Should return an error
         assert "error" in data or "isError" in data.get("result", {})
+
+
+class TestMcpToolRlmLoadData:
+    """Tests for rlm_load_data tool via MCP tools/call method."""
+
+    def make_mcp_request(self, client, method: str, params: dict = None, request_id: int = 1):
+        """Helper to make MCP JSON-RPC requests."""
+        payload = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+        }
+        if params is not None:
+            payload["params"] = params
+        return client.post("/mcp", json=payload)
+
+    def call_tool(self, client, tool_name: str, arguments: dict, request_id: int = 1):
+        """Helper to call a tool via MCP tools/call."""
+        return self.make_mcp_request(
+            client,
+            "tools/call",
+            params={"name": tool_name, "arguments": arguments},
+            request_id=request_id
+        )
+
+    @pytest.fixture(autouse=True)
+    def reset_repl(self):
+        """Reset REPL state before each test to avoid cross-test pollution."""
+        from rlm_mcp.http_server import repl
+        repl.clear_all()
+        yield
+        repl.clear_all()
+
+    def test_returns_200_status_code(self, client):
+        """rlm_load_data should return 200 OK."""
+        response = self.call_tool(client, "rlm_load_data", {"name": "test", "data": "hello"})
+        assert response.status_code == 200
+
+    def test_returns_json(self, client):
+        """rlm_load_data should return JSON content."""
+        response = self.call_tool(client, "rlm_load_data", {"name": "test", "data": "hello"})
+        assert response.headers["content-type"].startswith("application/json")
+
+    def test_returns_jsonrpc_version(self, client):
+        """rlm_load_data should return jsonrpc 2.0."""
+        response = self.call_tool(client, "rlm_load_data", {"name": "test", "data": "hello"})
+        data = response.json()
+        assert data["jsonrpc"] == "2.0"
+
+    def test_returns_same_id(self, client):
+        """rlm_load_data should return the same request id."""
+        response = self.call_tool(client, "rlm_load_data", {"name": "test", "data": "hello"}, request_id=77)
+        data = response.json()
+        assert data["id"] == 77
+
+    def test_returns_result_dict(self, client):
+        """rlm_load_data should return a result dict."""
+        response = self.call_tool(client, "rlm_load_data", {"name": "test", "data": "hello"})
+        data = response.json()
+        assert "result" in data
+        assert isinstance(data["result"], dict)
+
+    def test_result_has_content(self, client):
+        """rlm_load_data result should have 'content' key."""
+        response = self.call_tool(client, "rlm_load_data", {"name": "test", "data": "hello"})
+        data = response.json()
+        assert "content" in data["result"]
+
+    def test_content_is_list(self, client):
+        """rlm_load_data content should be a list."""
+        response = self.call_tool(client, "rlm_load_data", {"name": "test", "data": "hello"})
+        data = response.json()
+        assert isinstance(data["result"]["content"], list)
+
+    def test_content_has_text_item(self, client):
+        """rlm_load_data content should have text type item."""
+        response = self.call_tool(client, "rlm_load_data", {"name": "test", "data": "hello"})
+        data = response.json()
+        content = data["result"]["content"]
+        assert len(content) > 0
+        assert content[0]["type"] == "text"
+        assert "text" in content[0]
+
+    def test_loads_text_data(self, client):
+        """rlm_load_data should load text data into variable."""
+        response = self.call_tool(client, "rlm_load_data", {"name": "myvar", "data": "hello world"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "myvar" in text
+        assert "carregada" in text.lower()
+
+    def test_variable_accessible_via_execute(self, client):
+        """Variable loaded via rlm_load_data should be accessible via rlm_execute."""
+        # Load data
+        self.call_tool(client, "rlm_load_data", {"name": "mytext", "data": "test_value_123"})
+
+        # Access it via execute
+        response = self.call_tool(client, "rlm_execute", {"code": "print(mytext)"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "test_value_123" in text
+
+    def test_loads_json_data(self, client):
+        """rlm_load_data should load JSON data correctly."""
+        json_data = '{"key": "value", "num": 42}'
+        response = self.call_tool(client, "rlm_load_data", {
+            "name": "myjson",
+            "data": json_data,
+            "data_type": "json"
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "myjson" in text
+        assert "carregada" in text.lower()
+
+    def test_json_variable_accessible_via_execute(self, client):
+        """JSON variable loaded should be accessible as dict."""
+        json_data = '{"name": "test", "count": 5}'
+        self.call_tool(client, "rlm_load_data", {
+            "name": "config",
+            "data": json_data,
+            "data_type": "json"
+        })
+
+        response = self.call_tool(client, "rlm_execute", {"code": "print(config['name'])"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "test" in text
+
+    def test_loads_csv_data(self, client):
+        """rlm_load_data should load CSV data correctly."""
+        csv_data = "name,age\nAlice,30\nBob,25"
+        response = self.call_tool(client, "rlm_load_data", {
+            "name": "people",
+            "data": csv_data,
+            "data_type": "csv"
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "people" in text
+        assert "carregada" in text.lower()
+
+    def test_csv_variable_accessible_as_list(self, client):
+        """CSV variable loaded should be accessible as list of dicts."""
+        csv_data = "name,age\nAlice,30\nBob,25"
+        self.call_tool(client, "rlm_load_data", {
+            "name": "users",
+            "data": csv_data,
+            "data_type": "csv"
+        })
+
+        response = self.call_tool(client, "rlm_execute", {"code": "print(len(users))"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "2" in text
+
+    def test_loads_lines_data(self, client):
+        """rlm_load_data should load lines data correctly."""
+        lines_data = "line1\nline2\nline3"
+        response = self.call_tool(client, "rlm_load_data", {
+            "name": "mylines",
+            "data": lines_data,
+            "data_type": "lines"
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "mylines" in text
+
+    def test_lines_variable_is_list(self, client):
+        """Lines variable loaded should be a list."""
+        lines_data = "first\nsecond\nthird"
+        self.call_tool(client, "rlm_load_data", {
+            "name": "lines_list",
+            "data": lines_data,
+            "data_type": "lines"
+        })
+
+        response = self.call_tool(client, "rlm_execute", {"code": "print(lines_list[1])"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "second" in text
+
+    def test_default_data_type_is_text(self, client):
+        """rlm_load_data should default to data_type='text'."""
+        # Load without data_type
+        self.call_tool(client, "rlm_load_data", {"name": "default_type", "data": "some text"})
+
+        # Variable should be string - test using isinstance which is allowed
+        response = self.call_tool(client, "rlm_execute", {"code": "print(isinstance(default_type, str))"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "True" in text
+
+    def test_overwrites_existing_variable(self, client):
+        """rlm_load_data should overwrite existing variable with same name."""
+        # First load
+        self.call_tool(client, "rlm_load_data", {"name": "myvar", "data": "first"})
+
+        # Second load with same name
+        self.call_tool(client, "rlm_load_data", {"name": "myvar", "data": "second"})
+
+        # Check value
+        response = self.call_tool(client, "rlm_execute", {"code": "print(myvar)"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "second" in text
+        assert "first" not in text
+
+    def test_no_error_in_response_for_valid_data(self, client):
+        """rlm_load_data should not return error field for valid data."""
+        response = self.call_tool(client, "rlm_load_data", {"name": "test", "data": "hello"})
+        data = response.json()
+        assert data.get("error") is None
+
+    def test_shows_variable_type_in_output(self, client):
+        """rlm_load_data should show variable type in output."""
+        response = self.call_tool(client, "rlm_load_data", {"name": "typed", "data": "text data"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "str" in text.lower() or "text" in text.lower()
+
+    def test_shows_variable_size_in_output(self, client):
+        """rlm_load_data should show variable size in output."""
+        response = self.call_tool(client, "rlm_load_data", {"name": "sized", "data": "some data here"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        # Should contain size info like "14 B" or similar
+        assert "B" in text or "bytes" in text.lower()
+
+    def test_handles_unicode_data(self, client):
+        """rlm_load_data should handle Unicode data."""
+        unicode_data = "Olá, mundo! 日本語 中文 한국어"
+        self.call_tool(client, "rlm_load_data", {"name": "unicode_var", "data": unicode_data})
+
+        response = self.call_tool(client, "rlm_execute", {"code": "print(unicode_var)"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "Olá" in text
+        assert "日本語" in text
+
+    def test_handles_empty_string(self, client):
+        """rlm_load_data should handle empty string."""
+        response = self.call_tool(client, "rlm_load_data", {"name": "empty", "data": ""})
+        data = response.json()
+        assert "result" in data
+        # Should succeed
+        assert data.get("error") is None
+
+    def test_handles_multiline_text(self, client):
+        """rlm_load_data should handle multiline text."""
+        multiline = "line 1\nline 2\nline 3"
+        self.call_tool(client, "rlm_load_data", {"name": "multiline", "data": multiline})
+
+        response = self.call_tool(client, "rlm_execute", {"code": "print(multiline.count('\\n'))"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "2" in text
+
+    def test_handles_large_data(self, client):
+        """rlm_load_data should handle large data."""
+        # 100KB of data
+        large_data = "x" * 100000
+        response = self.call_tool(client, "rlm_load_data", {"name": "large_var", "data": large_data})
+        data = response.json()
+        assert "result" in data
+
+        # Verify it's loaded
+        exec_response = self.call_tool(client, "rlm_execute", {"code": "print(len(large_var))"})
+        exec_data = exec_response.json()
+        text = exec_data["result"]["content"][0]["text"]
+        assert "100000" in text
+
+    def test_handles_special_characters(self, client):
+        """rlm_load_data should handle special characters."""
+        special_data = "tab:\there quote:\"test\" backslash:\\ newline:\nend"
+        self.call_tool(client, "rlm_load_data", {"name": "special", "data": special_data})
+
+        response = self.call_tool(client, "rlm_execute", {"code": "print('quote' in special)"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "True" in text
+
+    def test_missing_name_parameter(self, client):
+        """rlm_load_data should handle missing name parameter."""
+        response = self.call_tool(client, "rlm_load_data", {"data": "hello"})
+        data = response.json()
+        # Should return an error
+        assert "error" in data or "isError" in data.get("result", {}) or "Error" in str(data)
+
+    def test_missing_data_parameter(self, client):
+        """rlm_load_data should handle missing data parameter."""
+        response = self.call_tool(client, "rlm_load_data", {"name": "test"})
+        data = response.json()
+        # Should return an error
+        assert "error" in data or "isError" in data.get("result", {}) or "Error" in str(data)
+
+    def test_invalid_json_returns_error(self, client):
+        """rlm_load_data should return error for invalid JSON."""
+        response = self.call_tool(client, "rlm_load_data", {
+            "name": "bad_json",
+            "data": "{invalid json}",
+            "data_type": "json"
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        # Should indicate error
+        assert "ERRO" in text or "Error" in text or "error" in text.lower()
+
+    def test_multiple_loads_preserve_all_variables(self, client):
+        """Multiple rlm_load_data calls should preserve all variables."""
+        self.call_tool(client, "rlm_load_data", {"name": "var1", "data": "value1"})
+        self.call_tool(client, "rlm_load_data", {"name": "var2", "data": "value2"})
+        self.call_tool(client, "rlm_load_data", {"name": "var3", "data": "value3"})
+
+        # All should be accessible
+        response = self.call_tool(client, "rlm_execute", {"code": "print(var1, var2, var3)"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "value1" in text
+        assert "value2" in text
+        assert "value3" in text
+
+    def test_variable_usable_in_computations(self, client):
+        """Variable loaded should be usable in Python computations."""
+        json_data = '{"numbers": [1, 2, 3, 4, 5]}'
+        self.call_tool(client, "rlm_load_data", {
+            "name": "nums_data",
+            "data": json_data,
+            "data_type": "json"
+        })
+
+        response = self.call_tool(client, "rlm_execute", {"code": "print(sum(nums_data['numbers']))"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "15" in text
+
+    def test_with_string_request_id(self, client):
+        """rlm_load_data should work with string request id."""
+        payload = {
+            "jsonrpc": "2.0",
+            "id": "load-data-123",
+            "method": "tools/call",
+            "params": {
+                "name": "rlm_load_data",
+                "arguments": {"name": "str_id_var", "data": "test"}
+            }
+        }
+        response = client.post("/mcp", json=payload)
+        data = response.json()
+        assert data["id"] == "load-data-123"
+        assert "result" in data
