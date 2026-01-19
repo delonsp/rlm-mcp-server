@@ -15,6 +15,7 @@ import pytest
 from rlm_mcp.pdf_parser import (
     PDFExtractionResult,
     extract_with_pdfplumber,
+    extract_with_mistral_ocr,
     extract_pdf,
     split_pdf_into_chunks,
 )
@@ -1444,3 +1445,506 @@ class TestSplitPdfIntoChunks:
         assert result[1] == (4, 6)
         assert result[2] == (7, 9)
         assert result[3] == (10, 10)
+
+
+# ============================================================================
+# Tests for extract_with_mistral_ocr (with mocked Mistral API)
+# ============================================================================
+
+
+class MockOCRPage:
+    """Mock object for a page returned by Mistral OCR API."""
+
+    def __init__(self, markdown: str):
+        self.markdown = markdown
+
+
+class MockOCRResponse:
+    """Mock object for the response from Mistral OCR API."""
+
+    def __init__(self, pages: list[MockOCRPage]):
+        self.pages = pages
+
+
+class MockOCRClient:
+    """Mock object for the Mistral OCR client (client.ocr)."""
+
+    def __init__(self, response: MockOCRResponse = None, error: Exception = None):
+        self._response = response
+        self._error = error
+
+    def process(self, model: str, document: dict, table_format: str = "markdown"):
+        if self._error:
+            raise self._error
+        return self._response
+
+
+class MockMistralClient:
+    """Mock object for the Mistral client."""
+
+    def __init__(self, ocr_response: MockOCRResponse = None, ocr_error: Exception = None):
+        self.ocr = MockOCRClient(response=ocr_response, error=ocr_error)
+
+
+class TestExtractWithMistralOcr:
+    """Tests for extract_with_mistral_ocr function with mocked Mistral API."""
+
+    @pytest.fixture(autouse=True)
+    def mock_mistralai_module(self, monkeypatch):
+        """Auto-mock the mistralai module for all tests in this class."""
+        import sys
+        # Create a mock mistralai module
+        mock_mistralai = type(sys)("mistralai")
+        # Store response to be set per test
+        self._mock_response = None
+        self._mock_error = None
+        self._received_api_key = []
+        self._received_params = {}
+
+        def create_mock_mistral_class():
+            """Create a Mistral class that captures the test's mock settings."""
+            test_instance = self
+
+            class MockMistralClass:
+                def __init__(self, api_key):
+                    test_instance._received_api_key.append(api_key)
+                    self.ocr = MockOCRClient(
+                        response=test_instance._mock_response,
+                        error=test_instance._mock_error
+                    )
+                    # Optionally capture params
+                    self.ocr._received_params = test_instance._received_params
+
+            return MockMistralClass
+
+        mock_mistralai.Mistral = create_mock_mistral_class()
+        monkeypatch.setitem(sys.modules, "mistralai", mock_mistralai)
+
+    def _set_mock_response(self, response):
+        """Helper to set mock response for the test."""
+        self._mock_response = response
+
+    def _set_mock_error(self, error):
+        """Helper to set mock error for the test."""
+        self._mock_error = error
+
+    def test_returns_pdf_extraction_result(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr returns PDFExtractionResult object."""
+        monkeypatch.setenv("MISTRAL_API_KEY", "test-api-key")
+        self._set_mock_response(MockOCRResponse(pages=[
+            MockOCRPage(markdown="Page 1 content")
+        ]))
+
+        result = extract_with_mistral_ocr(sample_pdf)
+        assert isinstance(result, PDFExtractionResult)
+
+    def test_returns_success_true_on_successful_extraction(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr returns success=True when OCR succeeds."""
+        monkeypatch.setenv("MISTRAL_API_KEY", "test-api-key")
+        self._set_mock_response(MockOCRResponse(pages=[
+            MockOCRPage(markdown="Extracted text from OCR")
+        ]))
+
+        result = extract_with_mistral_ocr(sample_pdf)
+        assert result.success is True
+
+    def test_returns_method_mistral_ocr(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr returns method='mistral_ocr'."""
+        monkeypatch.setenv("MISTRAL_API_KEY", "test-api-key")
+        self._set_mock_response(MockOCRResponse(pages=[
+            MockOCRPage(markdown="Text")
+        ]))
+
+        result = extract_with_mistral_ocr(sample_pdf)
+        assert result.method == "mistral_ocr"
+
+    def test_extracts_text_from_single_page(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr extracts text from single page."""
+        monkeypatch.setenv("MISTRAL_API_KEY", "test-api-key")
+        expected_text = "This is the OCR extracted text from a scanned document."
+        self._set_mock_response(MockOCRResponse(pages=[
+            MockOCRPage(markdown=expected_text)
+        ]))
+
+        result = extract_with_mistral_ocr(sample_pdf)
+        assert expected_text in result.text
+
+    def test_extracts_text_from_multiple_pages(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr extracts text from multiple pages."""
+        monkeypatch.setenv("MISTRAL_API_KEY", "test-api-key")
+        self._set_mock_response(MockOCRResponse(pages=[
+            MockOCRPage(markdown="Page 1 content"),
+            MockOCRPage(markdown="Page 2 content"),
+            MockOCRPage(markdown="Page 3 content")
+        ]))
+
+        result = extract_with_mistral_ocr(sample_pdf)
+        assert "Page 1 content" in result.text
+        assert "Page 2 content" in result.text
+        assert "Page 3 content" in result.text
+
+    def test_returns_correct_page_count(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr returns correct page count."""
+        monkeypatch.setenv("MISTRAL_API_KEY", "test-api-key")
+        self._set_mock_response(MockOCRResponse(pages=[
+            MockOCRPage(markdown="Page 1"),
+            MockOCRPage(markdown="Page 2"),
+            MockOCRPage(markdown="Page 3"),
+            MockOCRPage(markdown="Page 4"),
+            MockOCRPage(markdown="Page 5")
+        ]))
+
+        result = extract_with_mistral_ocr(sample_pdf)
+        assert result.pages == 5
+
+    def test_includes_page_markers(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr includes page markers in output."""
+        monkeypatch.setenv("MISTRAL_API_KEY", "test-api-key")
+        self._set_mock_response(MockOCRResponse(pages=[
+            MockOCRPage(markdown="First page text"),
+            MockOCRPage(markdown="Second page text")
+        ]))
+
+        result = extract_with_mistral_ocr(sample_pdf)
+        assert "--- Página 1 ---" in result.text
+        assert "--- Página 2 ---" in result.text
+
+    def test_skips_empty_pages(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr skips pages with no text."""
+        monkeypatch.setenv("MISTRAL_API_KEY", "test-api-key")
+        self._set_mock_response(MockOCRResponse(pages=[
+            MockOCRPage(markdown="Page 1 text"),
+            MockOCRPage(markdown=""),  # Empty page
+            MockOCRPage(markdown="   "),  # Whitespace only page
+            MockOCRPage(markdown="Page 4 text")
+        ]))
+
+        result = extract_with_mistral_ocr(sample_pdf)
+        # Pages 2 and 3 should be skipped (no marker in text)
+        assert "--- Página 1 ---" in result.text
+        assert "--- Página 2 ---" not in result.text
+        assert "--- Página 3 ---" not in result.text
+        assert "--- Página 4 ---" in result.text
+
+    def test_page_count_includes_empty_pages(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr page count includes empty pages."""
+        monkeypatch.setenv("MISTRAL_API_KEY", "test-api-key")
+        self._set_mock_response(MockOCRResponse(pages=[
+            MockOCRPage(markdown="Text"),
+            MockOCRPage(markdown=""),  # Empty
+            MockOCRPage(markdown="More text")
+        ]))
+
+        result = extract_with_mistral_ocr(sample_pdf)
+        # page_count is len(ocr_response.pages), including empty ones
+        assert result.pages == 3
+
+    def test_returns_error_none_on_success(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr returns error=None on success."""
+        monkeypatch.setenv("MISTRAL_API_KEY", "test-api-key")
+        self._set_mock_response(MockOCRResponse(pages=[
+            MockOCRPage(markdown="Text")
+        ]))
+
+        result = extract_with_mistral_ocr(sample_pdf)
+        assert result.error is None
+
+    def test_returns_error_when_api_key_not_set(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr returns error when MISTRAL_API_KEY is not set."""
+        # Ensure API key is not set
+        monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+
+        result = extract_with_mistral_ocr(sample_pdf)
+
+        assert result.success is False
+        assert result.error is not None
+        assert "MISTRAL_API_KEY" in result.error
+
+    def test_returns_method_mistral_ocr_when_api_key_not_set(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr returns method='mistral_ocr' even when API key missing."""
+        monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+
+        result = extract_with_mistral_ocr(sample_pdf)
+        assert result.method == "mistral_ocr"
+
+    def test_returns_empty_text_when_api_key_not_set(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr returns empty text when API key is not set."""
+        monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+
+        result = extract_with_mistral_ocr(sample_pdf)
+        assert result.text == ""
+
+    def test_returns_zero_pages_when_api_key_not_set(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr returns pages=0 when API key is not set."""
+        monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+
+        result = extract_with_mistral_ocr(sample_pdf)
+        assert result.pages == 0
+
+    def test_handles_api_error(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr handles API errors gracefully."""
+        monkeypatch.setenv("MISTRAL_API_KEY", "test-api-key")
+        self._set_mock_error(Exception("API rate limit exceeded"))
+
+        result = extract_with_mistral_ocr(sample_pdf)
+
+        assert result.success is False
+        assert result.error is not None
+        assert "API rate limit exceeded" in result.error
+
+    def test_handles_connection_error(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr handles connection errors."""
+        monkeypatch.setenv("MISTRAL_API_KEY", "test-api-key")
+        self._set_mock_error(ConnectionError("Unable to connect to API"))
+
+        result = extract_with_mistral_ocr(sample_pdf)
+
+        assert result.success is False
+        assert result.error is not None
+
+    def test_returns_success_false_on_file_not_found(self, monkeypatch):
+        """extract_with_mistral_ocr returns success=False for nonexistent file."""
+        monkeypatch.setenv("MISTRAL_API_KEY", "test-api-key")
+
+        result = extract_with_mistral_ocr("/nonexistent/path/to/file.pdf")
+
+        assert result.success is False
+        assert result.error is not None
+
+    def test_returns_method_mistral_ocr_on_file_not_found(self, monkeypatch):
+        """extract_with_mistral_ocr returns method='mistral_ocr' even for nonexistent file."""
+        monkeypatch.setenv("MISTRAL_API_KEY", "test-api-key")
+
+        result = extract_with_mistral_ocr("/nonexistent/path/to/file.pdf")
+        assert result.method == "mistral_ocr"
+
+    def test_passes_correct_model_to_api(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr passes correct model name to API."""
+        monkeypatch.setenv("MISTRAL_API_KEY", "test-api-key")
+
+        # Use tracking OCR client that stores received params
+        class TrackingOCRClient:
+            received_params = {}
+
+            def process(self, model: str, document: dict, table_format: str = "markdown"):
+                TrackingOCRClient.received_params["model"] = model
+                TrackingOCRClient.received_params["document"] = document
+                TrackingOCRClient.received_params["table_format"] = table_format
+                return MockOCRResponse(pages=[MockOCRPage(markdown="Text")])
+
+        # Override the OCR client after mock is set up
+        import sys
+        mock_mistralai = sys.modules.get("mistralai")
+        if mock_mistralai:
+            class TrackingMistralClient:
+                def __init__(self, api_key):
+                    self.ocr = TrackingOCRClient()
+            mock_mistralai.Mistral = TrackingMistralClient
+
+        extract_with_mistral_ocr(sample_pdf)
+
+        assert TrackingOCRClient.received_params["model"] == "mistral-ocr-latest"
+
+    def test_passes_document_as_base64(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr passes document as base64 encoded data."""
+        monkeypatch.setenv("MISTRAL_API_KEY", "test-api-key")
+
+        class TrackingOCRClient:
+            received_params = {}
+
+            def process(self, model: str, document: dict, table_format: str = "markdown"):
+                TrackingOCRClient.received_params["document"] = document
+                return MockOCRResponse(pages=[MockOCRPage(markdown="Text")])
+
+        import sys
+        mock_mistralai = sys.modules.get("mistralai")
+        if mock_mistralai:
+            class TrackingMistralClient:
+                def __init__(self, api_key):
+                    self.ocr = TrackingOCRClient()
+            mock_mistralai.Mistral = TrackingMistralClient
+
+        extract_with_mistral_ocr(sample_pdf)
+
+        assert TrackingOCRClient.received_params["document"]["type"] == "document_url"
+        assert TrackingOCRClient.received_params["document"]["document_url"].startswith("data:application/pdf;base64,")
+
+    def test_passes_correct_table_format(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr passes table_format='markdown' to API."""
+        monkeypatch.setenv("MISTRAL_API_KEY", "test-api-key")
+
+        class TrackingOCRClient:
+            received_params = {}
+
+            def process(self, model: str, document: dict, table_format: str = "markdown"):
+                TrackingOCRClient.received_params["table_format"] = table_format
+                return MockOCRResponse(pages=[MockOCRPage(markdown="Text")])
+
+        import sys
+        mock_mistralai = sys.modules.get("mistralai")
+        if mock_mistralai:
+            class TrackingMistralClient:
+                def __init__(self, api_key):
+                    self.ocr = TrackingOCRClient()
+            mock_mistralai.Mistral = TrackingMistralClient
+
+        extract_with_mistral_ocr(sample_pdf)
+
+        assert TrackingOCRClient.received_params["table_format"] == "markdown"
+
+    def test_uses_api_key_from_env(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr uses API key from environment variable."""
+        test_api_key = "my-secret-api-key-12345"
+        monkeypatch.setenv("MISTRAL_API_KEY", test_api_key)
+        self._set_mock_response(MockOCRResponse(pages=[MockOCRPage(markdown="Text")]))
+
+        extract_with_mistral_ocr(sample_pdf)
+
+        assert len(self._received_api_key) == 1
+        assert self._received_api_key[0] == test_api_key
+
+    def test_handles_page_with_none_markdown(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr handles pages where markdown is None."""
+        monkeypatch.setenv("MISTRAL_API_KEY", "test-api-key")
+
+        # Create page with None markdown
+        class NoneMarkdownPage:
+            markdown = None
+
+        self._mock_response = MockOCRResponse(pages=[
+            MockOCRPage(markdown="Page 1 text"),
+            NoneMarkdownPage(),  # None markdown
+            MockOCRPage(markdown="Page 3 text")
+        ])
+
+        result = extract_with_mistral_ocr(sample_pdf)
+
+        assert result.success is True
+        assert "Page 1 text" in result.text
+        assert "Page 3 text" in result.text
+        # Page 2 with None markdown should be skipped (no page marker)
+        assert "--- Página 2 ---" not in result.text
+
+    def test_handles_unicode_content(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr handles Unicode content from OCR."""
+        monkeypatch.setenv("MISTRAL_API_KEY", "test-api-key")
+
+        unicode_text = "Olá mundo! Español: Señor. 日本語テスト. 中文测试. العربية"
+        self._set_mock_response(MockOCRResponse(pages=[
+            MockOCRPage(markdown=unicode_text)
+        ]))
+
+        result = extract_with_mistral_ocr(sample_pdf)
+
+        assert result.success is True
+        assert unicode_text in result.text
+
+    def test_handles_markdown_tables(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr handles markdown tables in OCR output."""
+        monkeypatch.setenv("MISTRAL_API_KEY", "test-api-key")
+
+        table_markdown = """
+| Header 1 | Header 2 | Header 3 |
+|----------|----------|----------|
+| Cell 1   | Cell 2   | Cell 3   |
+| Cell 4   | Cell 5   | Cell 6   |
+"""
+        self._set_mock_response(MockOCRResponse(pages=[
+            MockOCRPage(markdown=table_markdown)
+        ]))
+
+        result = extract_with_mistral_ocr(sample_pdf)
+
+        assert result.success is True
+        assert "Header 1" in result.text
+        assert "Cell 1" in result.text
+
+    def test_handles_long_text(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr handles long text content."""
+        monkeypatch.setenv("MISTRAL_API_KEY", "test-api-key")
+
+        long_text = "Lorem ipsum dolor sit amet. " * 1000  # ~28k chars
+        self._set_mock_response(MockOCRResponse(pages=[
+            MockOCRPage(markdown=long_text)
+        ]))
+
+        result = extract_with_mistral_ocr(sample_pdf)
+
+        assert result.success is True
+        assert len(result.text) > 25000  # ~28k chars after page marker
+
+    def test_returns_string_text(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr returns text as string type."""
+        monkeypatch.setenv("MISTRAL_API_KEY", "test-api-key")
+        self._set_mock_response(MockOCRResponse(pages=[
+            MockOCRPage(markdown="Text")
+        ]))
+
+        result = extract_with_mistral_ocr(sample_pdf)
+        assert isinstance(result.text, str)
+
+    def test_returns_int_pages(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr returns pages as int type."""
+        monkeypatch.setenv("MISTRAL_API_KEY", "test-api-key")
+        self._set_mock_response(MockOCRResponse(pages=[
+            MockOCRPage(markdown="Text")
+        ]))
+
+        result = extract_with_mistral_ocr(sample_pdf)
+        assert isinstance(result.pages, int)
+
+    def test_does_not_raise_exception(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr does not raise exceptions (returns error in result)."""
+        monkeypatch.setenv("MISTRAL_API_KEY", "test-api-key")
+        self._set_mock_error(Exception("Unexpected error"))
+
+        try:
+            result = extract_with_mistral_ocr(sample_pdf)
+            assert result is not None  # Got result without exception
+        except Exception as e:
+            pytest.fail(f"extract_with_mistral_ocr raised exception: {e}")
+
+    def test_pages_separated_by_double_newline(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr separates pages with double newline."""
+        monkeypatch.setenv("MISTRAL_API_KEY", "test-api-key")
+        self._set_mock_response(MockOCRResponse(pages=[
+            MockOCRPage(markdown="Page 1 text"),
+            MockOCRPage(markdown="Page 2 text")
+        ]))
+
+        result = extract_with_mistral_ocr(sample_pdf)
+        assert "\n\n" in result.text
+
+    def test_single_page_no_double_newline(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr with single page doesn't have double newline separator."""
+        monkeypatch.setenv("MISTRAL_API_KEY", "test-api-key")
+        self._set_mock_response(MockOCRResponse(pages=[
+            MockOCRPage(markdown="Single page text")
+        ]))
+
+        result = extract_with_mistral_ocr(sample_pdf)
+        # Single page joined with \n\n but only one element, so no \n\n separator
+        # The text should be "--- Página 1 ---\nSingle page text"
+        assert result.text == "--- Página 1 ---\nSingle page text"
+
+    def test_empty_api_key_is_treated_as_not_set(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr treats empty API key as not set."""
+        monkeypatch.setenv("MISTRAL_API_KEY", "")
+
+        result = extract_with_mistral_ocr(sample_pdf)
+
+        assert result.success is False
+        assert "MISTRAL_API_KEY" in result.error
+
+    def test_whitespace_only_api_key_is_valid(self, sample_pdf, monkeypatch):
+        """extract_with_mistral_ocr treats whitespace-only API key as valid (passes to client)."""
+        # This documents current behavior - API key is only checked with os.getenv()
+        # which returns empty string for "" but " " would be truthy
+        monkeypatch.setenv("MISTRAL_API_KEY", "   ")
+        self._set_mock_response(MockOCRResponse(pages=[
+            MockOCRPage(markdown="Text")
+        ]))
+
+        result = extract_with_mistral_ocr(sample_pdf)
+        # Whitespace is truthy, so it passes the API key check
+        assert result.success is True

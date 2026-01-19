@@ -84,7 +84,7 @@ src/rlm_mcp/
 - [x] Testar extract_pdf com method="auto" usa pdfplumber primeiro
 - [x] Testar extract_pdf faz fallback para OCR se pdfplumber extrai pouco
 - [x] Testar split_pdf_into_chunks divide corretamente
-- [ ] Mockar Mistral API para testar extract_with_mistral_ocr
+- [x] Mockar Mistral API para testar extract_with_mistral_ocr
 
 ## Fase 7: Testes de Integração HTTP (FastAPI TestClient)
 

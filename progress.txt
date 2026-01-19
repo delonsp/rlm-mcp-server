@@ -1449,3 +1449,39 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 43 - Mock Mistral API for extract_with_mistral_ocr tests
+
+- What was implemented:
+  - Added 33 tests for extract_with_mistral_ocr function in tests/test_pdf_parser.py
+  - Created mock classes: MockOCRPage, MockOCRResponse, MockOCRClient, MockMistralClient
+  - Used pytest's autouse fixture to mock the mistralai module at sys.modules level
+  - Tests cover:
+    - Returns PDFExtractionResult with correct fields (text, pages, method, success, error)
+    - Extracts text from single and multiple pages
+    - Includes page markers "--- Página N ---"
+    - Skips empty pages in text but includes them in page count
+    - Error handling when MISTRAL_API_KEY not set (returns descriptive error)
+    - Error handling for API errors and connection errors
+    - File not found handling
+    - Verifies correct model ("mistral-ocr-latest"), document format (base64), and table_format ("markdown")
+    - Verifies API key is passed from environment variable
+    - Handles pages with None markdown, Unicode content, markdown tables, long text
+    - Verifies text/pages types, no exceptions raised, page separation
+
+- Files changed:
+  - tests/test_pdf_parser.py (added TestExtractWithMistralOcr class with 33 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - When mocking modules that are imported inside functions (like `from mistralai import Mistral`),
+    you need to mock at sys.modules level, not at the target module attribute level
+  - Use `monkeypatch.setitem(sys.modules, "mistralai", mock_module)` to inject mock module
+  - autouse fixtures in test classes are good for shared setup (mocking modules)
+  - Instance attributes in autouse fixtures can be used to pass mock configurations per test
+  - extract_with_mistral_ocr uses `page.markdown or ""` pattern - handles None gracefully
+  - Empty API key ("") is falsy in Python, but whitespace-only ("   ") is truthy
+  - Mistral OCR uses base64 encoded document URL format: "data:application/pdf;base64,{base64_pdf}"
+
+---
+
