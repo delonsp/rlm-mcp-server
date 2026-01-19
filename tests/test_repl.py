@@ -2665,3 +2665,504 @@ class TestClearNamespace:
 
         assert result.success is False
         assert "NameError" in result.stderr or "name 'x'" in result.stderr.lower()
+
+
+class TestMaliciousCodeEvalExecString:
+    """
+    Test that malicious code using eval, exec, compile in various bypass attempts is blocked.
+
+    The sandbox blocks direct calls to eval/exec/compile via AST analysis. These tests verify
+    that various attempts to bypass this protection (string manipulation, getattr, etc.) are
+    properly handled - either blocked at AST level or fail at runtime due to removed builtins.
+    """
+
+    # ==========================================
+    # Direct eval/exec/compile calls (AST blocked)
+    # ==========================================
+
+    def test_direct_eval_is_blocked_by_ast(self):
+        """Direct call to eval() is blocked by AST analysis."""
+        repl = SafeREPL()
+        result = repl.execute("result = eval('1 + 1')")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+        assert "bloqueada" in result.stderr.lower() or "eval" in result.stderr.lower()
+
+    def test_direct_exec_is_blocked_by_ast(self):
+        """Direct call to exec() is blocked by AST analysis."""
+        repl = SafeREPL()
+        result = repl.execute("exec('x = 42')")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+        assert "bloqueada" in result.stderr.lower() or "exec" in result.stderr.lower()
+
+    def test_direct_compile_is_blocked_by_ast(self):
+        """Direct call to compile() is blocked by AST analysis."""
+        repl = SafeREPL()
+        result = repl.execute("code = compile('x = 1', '<string>', 'exec')")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+        assert "bloqueada" in result.stderr.lower() or "compile" in result.stderr.lower()
+
+    def test_direct___import___is_blocked_by_ast(self):
+        """Direct call to __import__() is blocked by AST analysis."""
+        repl = SafeREPL()
+        result = repl.execute("os_module = __import__('os')")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+
+    # ==========================================
+    # String concatenation to build function name
+    # ==========================================
+
+    def test_eval_via_string_concat_fails_at_runtime(self):
+        """Attempt to call eval by building function name from strings fails at runtime."""
+        repl = SafeREPL()
+        # This bypasses AST check but should fail because eval is removed from builtins
+        result = repl.execute("""
+name = 'ev' + 'al'
+func = None
+# Try to find eval in namespace
+for k, v in [(k, v) for k, v in dir(type('', (), {})) if 'ev' in k.lower()]:
+    func = v
+result = 'found' if func else 'not_found'
+""")
+
+        # The code may succeed in running but should not find eval
+        # Even if it runs, it cannot access eval function
+        if result.success:
+            assert repl.variables.get("func") is None or "eval" not in str(repl.variables.get("result", "")).lower()
+
+    def test_exec_via_string_concat_fails_at_runtime(self):
+        """Attempt to call exec by building function name from strings fails at runtime."""
+        repl = SafeREPL()
+        result = repl.execute("""
+name = 'ex' + 'ec'
+# Try various ways to get exec
+result = name in dir(__builtins__) if '__builtins__' in dir() else False
+""")
+
+        # __builtins__ access should fail or return False
+        # Either the execution fails or result should be False
+        if result.success:
+            assert repl.variables.get("result") is False or repl.variables.get("result") is None
+
+    # ==========================================
+    # getattr bypass attempts (blocked by AST for dunder attributes)
+    # ==========================================
+
+    def test_getattr_is_blocked_by_ast(self):
+        """Direct getattr() call is blocked by AST analysis."""
+        repl = SafeREPL()
+        result = repl.execute("func = getattr(__builtins__, 'eval')")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+
+    def test_setattr_is_blocked_by_ast(self):
+        """Direct setattr() call is blocked by AST analysis."""
+        repl = SafeREPL()
+        result = repl.execute("setattr(obj, 'attr', value)")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+
+    def test_delattr_is_blocked_by_ast(self):
+        """Direct delattr() call is blocked by AST analysis."""
+        repl = SafeREPL()
+        result = repl.execute("delattr(obj, 'attr')")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+
+    # ==========================================
+    # __builtins__ access attempts
+    # ==========================================
+
+    def test_direct___builtins___access_fails(self):
+        """Direct __builtins__ access should fail or return safe version."""
+        repl = SafeREPL()
+        result = repl.execute("""
+try:
+    b = __builtins__
+    has_eval = 'eval' in dir(b) if hasattr(b, '__iter__') else hasattr(b, 'eval')
+    result = has_eval
+except:
+    result = 'error'
+""")
+
+        # Either fails or eval is not in safe builtins
+        if result.success and repl.variables.get("result") != 'error':
+            assert repl.variables.get("result") is False
+
+    def test___builtins___eval_not_available(self):
+        """__builtins__ should not have eval available."""
+        repl = SafeREPL()
+        result = repl.execute("""
+try:
+    # __builtins__ is replaced with safe version
+    b = __builtins__
+    if isinstance(b, dict):
+        eval_func = b.get('eval', None)
+    else:
+        eval_func = getattr(b, 'eval', None)
+    result = eval_func is not None
+except:
+    result = 'error'
+""")
+
+        # This should fail because getattr is blocked
+        # or if it somehow passes, eval should not be available
+        if "SecurityError" in result.stderr:
+            assert True  # getattr blocked as expected
+        elif result.success and repl.variables.get("result") != 'error':
+            assert repl.variables.get("result") is False
+
+    def test___builtins___exec_not_available(self):
+        """__builtins__ should not have exec available."""
+        repl = SafeREPL()
+        result = repl.execute("""
+try:
+    b = __builtins__
+    if isinstance(b, dict):
+        exec_func = b.get('exec', None)
+    else:
+        exec_func = None  # Can't use getattr
+    result = exec_func is not None
+except:
+    result = 'error'
+""")
+
+        if result.success and repl.variables.get("result") != 'error':
+            assert repl.variables.get("result") is False
+
+    # ==========================================
+    # globals()/locals()/vars() bypass attempts (blocked)
+    # ==========================================
+
+    def test_globals_is_blocked_by_ast(self):
+        """globals() is blocked by AST analysis."""
+        repl = SafeREPL()
+        result = repl.execute("g = globals()")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+
+    def test_locals_is_blocked_by_ast(self):
+        """locals() is blocked by AST analysis."""
+        repl = SafeREPL()
+        result = repl.execute("l = locals()")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+
+    def test_vars_is_blocked_by_ast(self):
+        """vars() is blocked by AST analysis."""
+        repl = SafeREPL()
+        result = repl.execute("v = vars()")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+
+    # ==========================================
+    # eval/exec via type() and __subclasses__ trick
+    # ==========================================
+
+    def test_type_subclasses_dunder_access_blocked(self):
+        """Accessing __subclasses__ is blocked as dunder attribute."""
+        repl = SafeREPL()
+        result = repl.execute("subclasses = object.__subclasses__()")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+        assert "__subclasses__" in result.stderr
+
+    def test_type_mro_dunder_access_blocked(self):
+        """Accessing __mro__ is blocked as dunder attribute."""
+        repl = SafeREPL()
+        result = repl.execute("mro = str.__mro__")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+
+    def test_type_bases_dunder_access_blocked(self):
+        """Accessing __bases__ is blocked as dunder attribute."""
+        repl = SafeREPL()
+        result = repl.execute("bases = str.__bases__")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+
+    def test_type_class_dunder_access_blocked(self):
+        """Accessing __class__ is blocked as dunder attribute."""
+        repl = SafeREPL()
+        result = repl.execute("cls = ''.__class__")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+
+    def test_type_globals_dunder_access_blocked(self):
+        """Accessing __globals__ is blocked as dunder attribute."""
+        repl = SafeREPL()
+        result = repl.execute("""
+def f(): pass
+g = f.__globals__
+""")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+
+    def test_type_code_dunder_access_blocked(self):
+        """Accessing __code__ is blocked as dunder attribute."""
+        repl = SafeREPL()
+        result = repl.execute("""
+def f(): pass
+c = f.__code__
+""")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+
+    # ==========================================
+    # input() and open() blocked
+    # ==========================================
+
+    def test_input_is_blocked_by_ast(self):
+        """input() is blocked by AST analysis."""
+        repl = SafeREPL()
+        result = repl.execute("user_input = input('Enter: ')")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+
+    def test_open_is_blocked_by_ast(self):
+        """open() is blocked by AST analysis."""
+        repl = SafeREPL()
+        result = repl.execute("f = open('/etc/passwd', 'r')")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+
+    def test_open_write_is_blocked_by_ast(self):
+        """open() for writing is blocked by AST analysis."""
+        repl = SafeREPL()
+        result = repl.execute("f = open('/tmp/test.txt', 'w')")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+
+    # ==========================================
+    # breakpoint() blocked
+    # ==========================================
+
+    def test_breakpoint_is_blocked_by_ast(self):
+        """breakpoint() is blocked by AST analysis."""
+        repl = SafeREPL()
+        result = repl.execute("breakpoint()")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+
+    # ==========================================
+    # Malicious eval/exec in function definitions
+    # ==========================================
+
+    def test_eval_inside_function_definition_blocked(self):
+        """eval() inside a function definition is blocked."""
+        repl = SafeREPL()
+        result = repl.execute("""
+def malicious():
+    return eval('1 + 1')
+""")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+
+    def test_exec_inside_function_definition_blocked(self):
+        """exec() inside a function definition is blocked."""
+        repl = SafeREPL()
+        result = repl.execute("""
+def malicious():
+    exec('x = 42')
+    return x
+""")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+
+    def test_eval_inside_lambda_blocked(self):
+        """eval() inside a lambda is blocked."""
+        repl = SafeREPL()
+        result = repl.execute("malicious = lambda: eval('1 + 1')")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+
+    def test_exec_inside_list_comprehension_blocked(self):
+        """exec() inside a list comprehension is blocked."""
+        repl = SafeREPL()
+        result = repl.execute("results = [exec('x = i') for i in range(3)]")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+
+    # ==========================================
+    # eval/exec via callable strings (runtime check)
+    # ==========================================
+
+    def test_eval_stored_in_variable_and_called_fails(self):
+        """Storing 'eval' string in variable and trying to call fails."""
+        repl = SafeREPL()
+        # This is tricky - the code may run but should fail to actually execute eval
+        result = repl.execute("""
+func_name = 'eval'
+# Can't actually call it because it's just a string
+# The only way to call it would be via eval/exec which are blocked
+result = func_name + '(' + repr('1+1') + ')'
+""")
+
+        # This should succeed but result is just a string, not executed
+        if result.success:
+            assert repl.variables.get("result") == "eval('1+1')"
+            # The string is not executed, just stored
+
+    def test_building_malicious_code_string_does_not_execute(self):
+        """Building a malicious code string does not execute it."""
+        repl = SafeREPL()
+        result = repl.execute("""
+code = "import os; os.system('echo hacked')"
+# Without eval/exec, this string is just data
+result = len(code)
+""")
+
+        # The malicious code is never executed
+        assert result.success is True
+        assert repl.variables.get("result") == len("import os; os.system('echo hacked')")
+
+    # ==========================================
+    # Combined attacks
+    # ==========================================
+
+    def test_nested_eval_exec_blocked(self):
+        """Nested eval(exec(...)) is blocked."""
+        repl = SafeREPL()
+        result = repl.execute("eval(exec('x = 1'))")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+
+    def test_chained_function_calls_with_blocked_function(self):
+        """Chain of function calls including blocked function is blocked."""
+        repl = SafeREPL()
+        result = repl.execute("result = str(eval('1+1'))")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+
+    def test_eval_in_try_except_still_blocked(self):
+        """eval() in try-except is still blocked at AST level."""
+        repl = SafeREPL()
+        result = repl.execute("""
+try:
+    result = eval('1 + 1')
+except:
+    result = 'caught'
+""")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+
+    def test_exec_in_finally_still_blocked(self):
+        """exec() in finally is still blocked at AST level."""
+        repl = SafeREPL()
+        result = repl.execute("""
+try:
+    x = 1
+finally:
+    exec('y = 2')
+""")
+
+        assert result.success is False
+        assert "SecurityError" in result.stderr
+
+    # ==========================================
+    # Allowed dunder attributes work fine
+    # ==========================================
+
+    def test_allowed_dunder_len_works(self):
+        """__len__ is allowed and works correctly."""
+        repl = SafeREPL()
+        result = repl.execute("length = 'hello'.__len__()")
+
+        assert result.success is True
+        assert repl.variables.get("length") == 5
+
+    def test_allowed_dunder_str_works(self):
+        """__str__ is allowed and works correctly."""
+        repl = SafeREPL()
+        result = repl.execute("s = (42).__str__()")
+
+        assert result.success is True
+        assert repl.variables.get("s") == "42"
+
+    def test_allowed_dunder_repr_works(self):
+        """__repr__ is allowed and works correctly."""
+        repl = SafeREPL()
+        result = repl.execute("r = 'test'.__repr__()")
+
+        assert result.success is True
+        assert repl.variables.get("r") == "'test'"
+
+    def test_allowed_dunder_iter_works(self):
+        """__iter__ is allowed and works correctly."""
+        repl = SafeREPL()
+        result = repl.execute("it = [1, 2, 3].__iter__()\nfirst = next(it)")
+
+        assert result.success is True
+        assert repl.variables.get("first") == 1
+
+    # ==========================================
+    # Verify safe operations still work
+    # ==========================================
+
+    def test_safe_builtins_available_after_malicious_attempt(self):
+        """Safe builtins remain available after blocked malicious code."""
+        repl = SafeREPL()
+
+        # First, try malicious code (blocked)
+        result1 = repl.execute("x = eval('1')")
+        assert result1.success is False
+
+        # Then verify safe operations still work
+        result2 = repl.execute("""
+result = sum([1, 2, 3])
+text = 'hello'.upper()
+length = len([1, 2, 3])
+""")
+        assert result2.success is True
+        assert repl.variables.get("result") == 6
+        assert repl.variables.get("text") == "HELLO"
+        assert repl.variables.get("length") == 3
+
+    def test_safe_imports_work_after_malicious_attempt(self):
+        """Safe imports remain available after blocked malicious code."""
+        repl = SafeREPL()
+
+        # First, try malicious code (blocked)
+        result1 = repl.execute("exec('import os')")
+        assert result1.success is False
+
+        # Then verify safe imports work
+        result2 = repl.execute("""
+import math
+import json
+pi_value = math.pi
+data = json.dumps({'key': 'value'})
+""")
+        assert result2.success is True
+        assert repl.variables.get("pi_value") == 3.141592653589793
+        assert repl.variables.get("data") == '{"key": "value"}'

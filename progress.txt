@@ -2030,3 +2030,38 @@ Este arquivo registra o progresso do Ralph em cada iteração.
   - Test both the error case (before fix) and the graceful behavior (after fix)
 
 ---
+
+## Iteration 37 - Test repl.py with malicious code (eval, exec in string)
+
+- What was implemented:
+  - Added TestMaliciousCodeEvalExecString class to tests/test_repl.py
+  - 41 test cases covering various malicious code bypass attempts:
+    - Direct eval/exec/compile/__import__ calls (blocked by AST)
+    - String concatenation to build function names (fails at runtime)
+    - getattr/setattr/delattr bypass attempts (blocked by AST)
+    - __builtins__ access attempts (safe version returned)
+    - globals()/locals()/vars() bypass attempts (blocked by AST)
+    - Type introspection tricks (__subclasses__, __mro__, __bases__, __class__, __globals__, __code__)
+    - input()/open()/breakpoint() blocking
+    - eval/exec inside function definitions, lambdas, list comprehensions
+    - Building malicious code strings (not executed without eval/exec)
+    - Combined attacks (nested, chained, try-except, finally)
+    - Allowed dunder attributes (__len__, __str__, __repr__, __iter__)
+    - Safe operations working after malicious attempts
+
+- Files changed:
+  - tests/test_repl.py (added TestMaliciousCodeEvalExecString class with 41 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - The sandbox has two layers: AST analysis (pre-execution) and runtime (safe builtins)
+  - Direct calls to blocked functions (eval, exec, compile, etc.) are caught by AST analysis
+  - BLOCKED_BUILTINS list: exec, eval, compile, __import__, open, input, breakpoint, globals, locals, vars, getattr, setattr, delattr, exit, quit
+  - Dunder attributes are blocked except: __len__, __str__, __repr__, __iter__
+  - Safe builtins dict replaces __builtins__ so eval/exec are not accessible even via dict.get()
+  - Type introspection attacks (__subclasses__, __mro__, etc.) are blocked as dunder attributes
+  - Building malicious code strings is harmless without eval/exec to execute them
+  - AST analysis walks the entire tree, so nested/chained/try-except blocks don't help bypass
+
+---
