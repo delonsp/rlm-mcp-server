@@ -1292,3 +1292,191 @@ class TestDeleteCollection:
         # All variables should still exist
         for name in var_names:
             assert pm.load_variable(name) is not None
+
+
+class TestSpecialCharactersInVariableNames:
+    """Tests for handling special characters in variable names."""
+
+    def test_variable_name_with_spaces(self, temp_db):
+        """Test that variable names with spaces work correctly."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        pm.save_variable("my variable name", "value with spaces")
+        result = pm.load_variable("my variable name")
+        assert result == "value with spaces"
+
+    def test_variable_name_with_unicode(self, temp_db):
+        """Test that variable names with Unicode characters work correctly."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Portuguese/Spanish characters
+        pm.save_variable("variável_coração", "valor com acentos")
+        result = pm.load_variable("variável_coração")
+        assert result == "valor com acentos"
+
+    def test_variable_name_with_emoji(self, temp_db):
+        """Test that variable names with emojis work correctly."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        pm.save_variable("test_🎉_emoji", "emoji value")
+        result = pm.load_variable("test_🎉_emoji")
+        assert result == "emoji value"
+
+    def test_variable_name_with_special_symbols(self, temp_db):
+        """Test that variable names with special symbols work correctly."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Various special symbols
+        pm.save_variable("var@home#123$test%done", "special symbols value")
+        result = pm.load_variable("var@home#123$test%done")
+        assert result == "special symbols value"
+
+    def test_variable_name_with_quotes(self, temp_db):
+        """Test that variable names with quotes work correctly."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Single and double quotes
+        pm.save_variable("var'with'quotes", "single quotes")
+        pm.save_variable('var"with"double', "double quotes")
+
+        assert pm.load_variable("var'with'quotes") == "single quotes"
+        assert pm.load_variable('var"with"double') == "double quotes"
+
+    def test_variable_name_with_backslash(self, temp_db):
+        """Test that variable names with backslashes work correctly."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        pm.save_variable("path\\to\\file", "backslash value")
+        result = pm.load_variable("path\\to\\file")
+        assert result == "backslash value"
+
+    def test_variable_name_with_newline(self, temp_db):
+        """Test that variable names with newlines work correctly."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        pm.save_variable("line1\nline2", "newline value")
+        result = pm.load_variable("line1\nline2")
+        assert result == "newline value"
+
+    def test_variable_name_with_null_char(self, temp_db):
+        """Test that variable names with null character work correctly."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # SQLite handles null characters in text
+        pm.save_variable("before\x00after", "null char value")
+        result = pm.load_variable("before\x00after")
+        assert result == "null char value"
+
+    def test_variable_name_with_sql_injection_attempt(self, temp_db):
+        """Test that SQL injection attempts in variable names are safely handled."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # Classic SQL injection attempts should be treated as plain strings
+        injection_names = [
+            "'; DROP TABLE variables; --",
+            "' OR '1'='1",
+            "var\"; DELETE FROM variables; --",
+            "test' UNION SELECT * FROM variables --",
+        ]
+
+        for i, name in enumerate(injection_names):
+            pm.save_variable(name, f"value_{i}")
+
+        # All should be saved and retrievable (injection should not work)
+        for i, name in enumerate(injection_names):
+            result = pm.load_variable(name)
+            assert result == f"value_{i}", f"Failed for injection name: {name}"
+
+        # Verify the database is still intact (no tables dropped)
+        vars_list = pm.list_variables()
+        assert len(vars_list) == len(injection_names)
+
+    def test_variable_name_very_long(self, temp_db):
+        """Test that very long variable names work correctly."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        # 1000 character name
+        long_name = "x" * 1000
+        pm.save_variable(long_name, "long name value")
+        result = pm.load_variable(long_name)
+        assert result == "long name value"
+
+    def test_variable_name_empty_string(self, temp_db):
+        """Test that empty string variable name works correctly."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        pm.save_variable("", "empty name value")
+        result = pm.load_variable("")
+        assert result == "empty name value"
+
+    def test_variable_name_only_whitespace(self, temp_db):
+        """Test that whitespace-only variable names work correctly."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        pm.save_variable("   ", "whitespace name value")
+        result = pm.load_variable("   ")
+        assert result == "whitespace name value"
+
+    def test_list_variables_with_special_names(self, temp_db):
+        """Test that list_variables correctly returns variables with special names."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        special_names = [
+            "normal_name",
+            "name with spaces",
+            "nome_português",
+            "var'quoted",
+            "emoji_🚀",
+        ]
+
+        for name in special_names:
+            pm.save_variable(name, f"value for {name}")
+
+        vars_list = pm.list_variables()
+        returned_names = {v["name"] for v in vars_list}
+
+        assert returned_names == set(special_names)
+
+    def test_delete_variable_with_special_name(self, temp_db):
+        """Test that deleting variables with special names works correctly."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        special_name = "var'with\"special;chars--"
+        pm.save_variable(special_name, "to be deleted")
+        assert pm.load_variable(special_name) is not None
+
+        result = pm.delete_variable(special_name)
+        assert result is True
+        assert pm.load_variable(special_name) is None
+
+    def test_add_to_collection_with_special_variable_names(self, temp_db):
+        """Test adding variables with special names to collections."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        special_names = [
+            "var@special",
+            "nome_açúcar",
+            "path/to/var",
+        ]
+
+        pm.create_collection("special_collection")
+        for name in special_names:
+            pm.save_variable(name, f"value for {name}")
+
+        result = pm.add_to_collection("special_collection", special_names)
+        assert result == 3
+
+        vars_in_collection = pm.get_collection_vars("special_collection")
+        assert set(vars_in_collection) == set(special_names)
+
+    def test_index_with_special_variable_name(self, temp_db):
+        """Test that indices work correctly with special variable names."""
+        pm = PersistenceManager(db_path=temp_db)
+
+        special_name = "índice'especial\"test"
+        index_data = {"termo1": [0, 10], "termo2": [20]}
+
+        pm.save_index(special_name, index_data)
+        result = pm.load_index(special_name)
+
+        assert result == index_data

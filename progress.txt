@@ -1894,3 +1894,66 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+
+## Iteration 33 - Test rlm_persistence_stats tool via MCP tools/call
+
+- What was implemented:
+  - Created TestMcpToolRlmPersistenceStats class with 22 comprehensive tests
+  - Tests cover HTTP response format, statistics display, variable listing
+  - Tests verify correct handling of empty persistence, multiple requests
+  - Tests check request ID handling (integer and string)
+  - Fixed conftest.py to properly set RLM_PERSIST_DIR before module imports
+
+- Files changed:
+  - tests/test_http_server.py (added TestMcpToolRlmPersistenceStats class with 22 tests)
+  - tests/conftest.py (added pytest_configure() hook for RLM_PERSIST_DIR)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - rlm_persistence_stats takes no parameters (empty arguments dict)
+  - Returns statistics including: variables_count, variables_total_size, indices_count, total_indexed_terms, db_path, db_file_size
+  - Lists persisted variables with name, type, size_bytes, and updated_at timestamp
+  - Output is in Portuguese with emoji headers (📦 Estatísticas de Persistência)
+  - persistence.py uses a global singleton _persistence that defaults to /persist directory
+  - CRITICAL: Module-level imports run BEFORE pytest fixtures, so env vars must be set in pytest_configure() hook
+  - reset_persistence_singleton fixture resets _persistence = None so each test gets fresh instance
+  - The persistence singleton uses RLM_PERSIST_DIR env var which must be set before any module imports
+
+---
+
+## Iteration 54 - Test persistence.py with special characters in variable names
+
+- What was implemented:
+  - Added TestSpecialCharactersInVariableNames class to tests/test_persistence.py
+  - 16 test cases covering:
+    - Variable names with spaces
+    - Variable names with Unicode characters (Portuguese: variável_coração)
+    - Variable names with emojis (🎉, 🚀)
+    - Variable names with special symbols (@, #, $, %)
+    - Variable names with single and double quotes
+    - Variable names with backslashes (path\\to\\file)
+    - Variable names with newlines (\n)
+    - Variable names with null characters (\x00)
+    - SQL injection attempts in variable names ('; DROP TABLE..., UNION SELECT, etc.)
+    - Very long variable names (1000 characters)
+    - Empty string variable names
+    - Whitespace-only variable names
+    - list_variables with special names
+    - delete_variable with special names
+    - add_to_collection with special variable names
+    - save_index with special variable names
+
+- Files changed:
+  - tests/test_persistence.py (added TestSpecialCharactersInVariableNames class with 16 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - SQLite parameterized queries properly handle all special characters including SQL injection attempts
+  - SQLite TEXT type handles Unicode, emojis, null characters, newlines, and backslashes correctly
+  - Empty string is a valid variable name (TEXT PRIMARY KEY allows it)
+  - Very long strings (1000+ chars) work fine as variable names
+  - The persistence module is robust against SQL injection because it uses parameterized queries (?-style)
+
+---
