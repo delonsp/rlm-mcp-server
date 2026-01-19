@@ -1030,3 +1030,226 @@ class TestGetObjectInfo:
             result = client.get_object_info("dots", "file.backup.2024.01.txt")
             assert result is not None
             assert result["key"] == "file.backup.2024.01.txt"
+
+
+class TestObjectExists:
+    """Tests for S3Client.object_exists() method."""
+
+    def test_returns_true_for_existing_object(self, s3_client_with_mock):
+        """object_exists returns True for an object that exists."""
+        result = s3_client_with_mock.object_exists("test-bucket", "test.txt")
+        assert result is True
+
+    def test_returns_false_for_nonexistent_object(self, s3_client_with_mock):
+        """object_exists returns False for an object that does not exist."""
+        result = s3_client_with_mock.object_exists("test-bucket", "nonexistent.txt")
+        assert result is False
+
+    def test_returns_false_for_nonexistent_bucket(self, s3_client_with_mock):
+        """object_exists returns False for a nonexistent bucket."""
+        result = s3_client_with_mock.object_exists("nonexistent-bucket", "file.txt")
+        assert result is False
+
+    def test_returns_false_when_unconfigured(self, s3_client_unconfigured):
+        """object_exists returns False when client is not configured.
+
+        Note: Unlike get_object/list_buckets which raise RuntimeError, object_exists
+        catches all exceptions and returns False instead.
+        """
+        result = s3_client_unconfigured.object_exists("any-bucket", "any-file.txt")
+        assert result is False
+
+    def test_returns_bool_type_true(self, s3_client_with_mock):
+        """object_exists returns bool type when object exists."""
+        result = s3_client_with_mock.object_exists("test-bucket", "test.txt")
+        assert isinstance(result, bool)
+        assert result is True
+
+    def test_returns_bool_type_false(self, s3_client_with_mock):
+        """object_exists returns bool type when object does not exist."""
+        result = s3_client_with_mock.object_exists("test-bucket", "nonexistent.txt")
+        assert isinstance(result, bool)
+        assert result is False
+
+    def test_existing_object_in_nested_path(self, s3_client_with_mock):
+        """object_exists returns True for object in nested path."""
+        result = s3_client_with_mock.object_exists("test-bucket", "data/file.json")
+        assert result is True
+
+    def test_existing_image_object(self, s3_client_with_mock):
+        """object_exists returns True for image object."""
+        result = s3_client_with_mock.object_exists("test-bucket", "images/photo.png")
+        assert result is True
+
+    def test_nonexistent_object_in_existing_folder(self, s3_client_with_mock):
+        """object_exists returns False for nonexistent object in existing folder."""
+        result = s3_client_with_mock.object_exists("test-bucket", "data/missing.json")
+        assert result is False
+
+    def test_empty_bucket(self, s3_client_with_mock):
+        """object_exists returns False for any key in empty bucket."""
+        result = s3_client_with_mock.object_exists("empty-bucket", "any-file.txt")
+        assert result is False
+
+    def test_empty_file(self, mock_minio_client):
+        """object_exists returns True for empty file (0 bytes)."""
+        mock_minio_client.add_bucket("empty-files")
+        mock_minio_client.add_object("empty-files", "empty.txt", b"")
+        with patch.dict(
+            os.environ,
+            {
+                "MINIO_ENDPOINT": "mock-minio:9000",
+                "MINIO_ACCESS_KEY": "mock-access-key",
+                "MINIO_SECRET_KEY": "mock-secret-key",
+            },
+            clear=True,
+        ):
+            client = S3Client()
+            client._client = mock_minio_client
+            result = client.object_exists("empty-files", "empty.txt")
+            assert result is True
+
+    def test_special_characters_in_key(self, mock_minio_client):
+        """object_exists handles special characters in object key."""
+        mock_minio_client.add_bucket("special")
+        mock_minio_client.add_object(
+            "special", "file with spaces.txt", b"content"
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "MINIO_ENDPOINT": "mock-minio:9000",
+                "MINIO_ACCESS_KEY": "mock-access-key",
+                "MINIO_SECRET_KEY": "mock-secret-key",
+            },
+            clear=True,
+        ):
+            client = S3Client()
+            client._client = mock_minio_client
+            result = client.object_exists("special", "file with spaces.txt")
+            assert result is True
+            result_nonexistent = client.object_exists("special", "other file.txt")
+            assert result_nonexistent is False
+
+    def test_object_key_with_multiple_dots(self, mock_minio_client):
+        """object_exists handles object keys with multiple dots."""
+        mock_minio_client.add_bucket("dots")
+        mock_minio_client.add_object("dots", "file.backup.2024.01.txt", b"content")
+        with patch.dict(
+            os.environ,
+            {
+                "MINIO_ENDPOINT": "mock-minio:9000",
+                "MINIO_ACCESS_KEY": "mock-access-key",
+                "MINIO_SECRET_KEY": "mock-secret-key",
+            },
+            clear=True,
+        ):
+            client = S3Client()
+            client._client = mock_minio_client
+            result = client.object_exists("dots", "file.backup.2024.01.txt")
+            assert result is True
+
+    def test_deeply_nested_path(self, mock_minio_client):
+        """object_exists handles deeply nested object paths."""
+        mock_minio_client.add_bucket("nested")
+        mock_minio_client.add_object("nested", "a/b/c/d/e/deep.txt", b"deep content")
+        with patch.dict(
+            os.environ,
+            {
+                "MINIO_ENDPOINT": "mock-minio:9000",
+                "MINIO_ACCESS_KEY": "mock-access-key",
+                "MINIO_SECRET_KEY": "mock-secret-key",
+            },
+            clear=True,
+        ):
+            client = S3Client()
+            client._client = mock_minio_client
+            result = client.object_exists("nested", "a/b/c/d/e/deep.txt")
+            assert result is True
+            # Parent path without file should return False
+            result_parent = client.object_exists("nested", "a/b/c/d/e/")
+            assert result_parent is False
+
+    def test_is_read_only(self, s3_client_with_mock, mock_minio_client_with_data):
+        """object_exists does not modify stored data."""
+        result1 = s3_client_with_mock.object_exists("test-bucket", "test.txt")
+        result2 = s3_client_with_mock.object_exists("test-bucket", "test.txt")
+        assert result1 == result2
+        # Check underlying mock data unchanged
+        assert mock_minio_client_with_data.buckets["test-bucket"]["test.txt"] == b"Hello, World!"
+
+    def test_uses_stat_object_not_get_object(self, mock_minio_client):
+        """object_exists uses stat_object (doesn't download data)."""
+        mock_minio_client.add_bucket("stat-test")
+        mock_minio_client.add_object("stat-test", "test.txt", b"content")
+
+        # Track if get_object was called
+        get_object_calls = []
+        original_get_object = mock_minio_client.get_object
+
+        def tracked_get_object(*args, **kwargs):
+            get_object_calls.append(args)
+            return original_get_object(*args, **kwargs)
+
+        mock_minio_client.get_object = tracked_get_object
+
+        with patch.dict(
+            os.environ,
+            {
+                "MINIO_ENDPOINT": "mock-minio:9000",
+                "MINIO_ACCESS_KEY": "mock-access-key",
+                "MINIO_SECRET_KEY": "mock-secret-key",
+            },
+            clear=True,
+        ):
+            client = S3Client()
+            client._client = mock_minio_client
+            result = client.object_exists("stat-test", "test.txt")
+            assert result is True
+            # get_object should NOT have been called
+            assert len(get_object_calls) == 0
+
+    def test_case_sensitive_key(self, mock_minio_client):
+        """object_exists is case-sensitive for object keys."""
+        mock_minio_client.add_bucket("case-test")
+        mock_minio_client.add_object("case-test", "Test.txt", b"content")
+        with patch.dict(
+            os.environ,
+            {
+                "MINIO_ENDPOINT": "mock-minio:9000",
+                "MINIO_ACCESS_KEY": "mock-access-key",
+                "MINIO_SECRET_KEY": "mock-secret-key",
+            },
+            clear=True,
+        ):
+            client = S3Client()
+            client._client = mock_minio_client
+            assert client.object_exists("case-test", "Test.txt") is True
+            assert client.object_exists("case-test", "test.txt") is False
+            assert client.object_exists("case-test", "TEST.TXT") is False
+
+    def test_many_objects_check(self, mock_minio_client):
+        """object_exists works correctly with many objects in bucket."""
+        mock_minio_client.add_bucket("many-objects")
+        for i in range(50):
+            mock_minio_client.add_object(
+                "many-objects", f"file-{i:03d}.txt", f"content-{i}".encode()
+            )
+        with patch.dict(
+            os.environ,
+            {
+                "MINIO_ENDPOINT": "mock-minio:9000",
+                "MINIO_ACCESS_KEY": "mock-access-key",
+                "MINIO_SECRET_KEY": "mock-secret-key",
+            },
+            clear=True,
+        ):
+            client = S3Client()
+            client._client = mock_minio_client
+            # Check existing objects
+            assert client.object_exists("many-objects", "file-000.txt") is True
+            assert client.object_exists("many-objects", "file-025.txt") is True
+            assert client.object_exists("many-objects", "file-049.txt") is True
+            # Check nonexistent
+            assert client.object_exists("many-objects", "file-050.txt") is False
+            assert client.object_exists("many-objects", "other.txt") is False

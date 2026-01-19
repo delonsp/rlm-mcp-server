@@ -75,7 +75,7 @@ src/rlm_mcp/
 - [x] Testar list_objects com mock retorna objetos
 - [x] Testar get_object com mock retorna bytes
 - [x] Testar get_object_info com mock retorna metadados
-- [ ] Testar object_exists com mock retorna True/False
+- [x] Testar object_exists com mock retorna True/False
 
 ## Fase 6: Testes do Módulo pdf_parser.py (com mocks)
 
