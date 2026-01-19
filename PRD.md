@@ -109,7 +109,7 @@ src/rlm_mcp/
 - [x] Testar repl.py com código malicioso (eval, exec em string)
 - [x] Testar repl.py com loop infinito (timeout)
 - [x] Testar SQLite não vulnerável a injection (usar parâmetros)
-- [ ] Testar http_server.py valida inputs obrigatórios
+- [x] Testar http_server.py valida inputs obrigatórios
 
 ---
 

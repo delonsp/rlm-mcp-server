@@ -3666,3 +3666,397 @@ class TestMcpToolRlmPersistenceStats:
         data = response.json()
         assert response.status_code == 200
         assert data.get("error") is None
+
+
+class TestRequiredInputValidation:
+    """Tests for validating that http_server.py properly validates required inputs.
+
+    Each tool with required parameters should return an error when those
+    parameters are missing from the request.
+    """
+
+    def call_tool(self, client, tool_name: str, arguments: dict, request_id: int = 1):
+        """Helper to make MCP tools/call requests."""
+        payload = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "tools/call",
+            "params": {
+                "name": tool_name,
+                "arguments": arguments
+            }
+        }
+        return client.post("/mcp", json=payload)
+
+    # rlm_execute requires "code"
+    def test_rlm_execute_missing_code_returns_error(self, client):
+        """rlm_execute should return error when 'code' is missing."""
+        response = self.call_tool(client, "rlm_execute", {})
+        data = response.json()
+        # Should have either an error response or isError in result
+        has_error = (
+            data.get("error") is not None or
+            (data.get("result") and data["result"].get("isError") is True)
+        )
+        assert has_error or "error" in str(data.get("result", {}).get("content", [{}])[0].get("text", "")).lower()
+
+    def test_rlm_execute_with_code_succeeds(self, client):
+        """rlm_execute should succeed when 'code' is provided."""
+        response = self.call_tool(client, "rlm_execute", {"code": "print('hello')"})
+        data = response.json()
+        assert data.get("error") is None
+        assert "result" in data
+
+    # rlm_load_data requires "name" and "data"
+    def test_rlm_load_data_missing_name_returns_error(self, client):
+        """rlm_load_data should return error when 'name' is missing."""
+        response = self.call_tool(client, "rlm_load_data", {"data": "test"})
+        data = response.json()
+        has_error = (
+            data.get("error") is not None or
+            (data.get("result") and data["result"].get("isError") is True)
+        )
+        assert has_error or "error" in str(data.get("result", {}).get("content", [{}])[0].get("text", "")).lower()
+
+    def test_rlm_load_data_missing_data_returns_error(self, client):
+        """rlm_load_data should return error when 'data' is missing."""
+        response = self.call_tool(client, "rlm_load_data", {"name": "test"})
+        data = response.json()
+        has_error = (
+            data.get("error") is not None or
+            (data.get("result") and data["result"].get("isError") is True)
+        )
+        assert has_error or "error" in str(data.get("result", {}).get("content", [{}])[0].get("text", "")).lower()
+
+    def test_rlm_load_data_missing_both_returns_error(self, client):
+        """rlm_load_data should return error when both 'name' and 'data' are missing."""
+        response = self.call_tool(client, "rlm_load_data", {})
+        data = response.json()
+        has_error = (
+            data.get("error") is not None or
+            (data.get("result") and data["result"].get("isError") is True)
+        )
+        assert has_error or "error" in str(data.get("result", {}).get("content", [{}])[0].get("text", "")).lower()
+
+    def test_rlm_load_data_with_all_required_succeeds(self, client):
+        """rlm_load_data should succeed when 'name' and 'data' are provided."""
+        response = self.call_tool(client, "rlm_load_data", {"name": "test_var", "data": "test content"})
+        data = response.json()
+        assert data.get("error") is None
+        assert "result" in data
+        # Clean up
+        self.call_tool(client, "rlm_clear", {"name": "test_var"})
+
+    # rlm_load_file requires "name" and "path"
+    def test_rlm_load_file_missing_name_returns_error(self, client):
+        """rlm_load_file should return error when 'name' is missing."""
+        response = self.call_tool(client, "rlm_load_file", {"path": "/data/test.txt"})
+        data = response.json()
+        has_error = (
+            data.get("error") is not None or
+            (data.get("result") and data["result"].get("isError") is True)
+        )
+        assert has_error or "error" in str(data.get("result", {}).get("content", [{}])[0].get("text", "")).lower()
+
+    def test_rlm_load_file_missing_path_returns_error(self, client):
+        """rlm_load_file should return error when 'path' is missing."""
+        response = self.call_tool(client, "rlm_load_file", {"name": "test"})
+        data = response.json()
+        has_error = (
+            data.get("error") is not None or
+            (data.get("result") and data["result"].get("isError") is True)
+        )
+        assert has_error or "error" in str(data.get("result", {}).get("content", [{}])[0].get("text", "")).lower()
+
+    def test_rlm_load_file_missing_both_returns_error(self, client):
+        """rlm_load_file should return error when both 'name' and 'path' are missing."""
+        response = self.call_tool(client, "rlm_load_file", {})
+        data = response.json()
+        has_error = (
+            data.get("error") is not None or
+            (data.get("result") and data["result"].get("isError") is True)
+        )
+        assert has_error or "error" in str(data.get("result", {}).get("content", [{}])[0].get("text", "")).lower()
+
+    # rlm_var_info requires "name"
+    def test_rlm_var_info_missing_name_returns_error(self, client):
+        """rlm_var_info should return error when 'name' is missing."""
+        response = self.call_tool(client, "rlm_var_info", {})
+        data = response.json()
+        has_error = (
+            data.get("error") is not None or
+            (data.get("result") and data["result"].get("isError") is True)
+        )
+        assert has_error or "error" in str(data.get("result", {}).get("content", [{}])[0].get("text", "")).lower()
+
+    def test_rlm_var_info_with_name_succeeds(self, client):
+        """rlm_var_info should succeed when 'name' is provided (even if var doesn't exist)."""
+        response = self.call_tool(client, "rlm_var_info", {"name": "nonexistent_var"})
+        data = response.json()
+        # Should not have a KeyError type error
+        assert data.get("error") is None
+        assert "result" in data
+
+    # rlm_load_s3 requires "key" and "name"
+    def test_rlm_load_s3_missing_key_returns_error(self, client):
+        """rlm_load_s3 should return error when 'key' is missing."""
+        response = self.call_tool(client, "rlm_load_s3", {"name": "test"})
+        data = response.json()
+        has_error = (
+            data.get("error") is not None or
+            (data.get("result") and data["result"].get("isError") is True)
+        )
+        assert has_error or "error" in str(data.get("result", {}).get("content", [{}])[0].get("text", "")).lower()
+
+    def test_rlm_load_s3_missing_name_returns_error(self, client):
+        """rlm_load_s3 should return error when 'name' is missing."""
+        response = self.call_tool(client, "rlm_load_s3", {"key": "test/file.txt"})
+        data = response.json()
+        has_error = (
+            data.get("error") is not None or
+            (data.get("result") and data["result"].get("isError") is True)
+        )
+        assert has_error or "error" in str(data.get("result", {}).get("content", [{}])[0].get("text", "")).lower()
+
+    def test_rlm_load_s3_missing_both_returns_error(self, client):
+        """rlm_load_s3 should return error when both 'key' and 'name' are missing."""
+        response = self.call_tool(client, "rlm_load_s3", {})
+        data = response.json()
+        has_error = (
+            data.get("error") is not None or
+            (data.get("result") and data["result"].get("isError") is True)
+        )
+        assert has_error or "error" in str(data.get("result", {}).get("content", [{}])[0].get("text", "")).lower()
+
+    # rlm_upload_url requires "url" and "key"
+    def test_rlm_upload_url_missing_url_returns_error(self, client):
+        """rlm_upload_url should return error when 'url' is missing."""
+        response = self.call_tool(client, "rlm_upload_url", {"key": "test/file.txt"})
+        data = response.json()
+        has_error = (
+            data.get("error") is not None or
+            (data.get("result") and data["result"].get("isError") is True)
+        )
+        assert has_error or "error" in str(data.get("result", {}).get("content", [{}])[0].get("text", "")).lower()
+
+    def test_rlm_upload_url_missing_key_returns_error(self, client):
+        """rlm_upload_url should return error when 'key' is missing."""
+        response = self.call_tool(client, "rlm_upload_url", {"url": "https://example.com/test.txt"})
+        data = response.json()
+        has_error = (
+            data.get("error") is not None or
+            (data.get("result") and data["result"].get("isError") is True)
+        )
+        assert has_error or "error" in str(data.get("result", {}).get("content", [{}])[0].get("text", "")).lower()
+
+    def test_rlm_upload_url_missing_both_returns_error(self, client):
+        """rlm_upload_url should return error when both 'url' and 'key' are missing."""
+        response = self.call_tool(client, "rlm_upload_url", {})
+        data = response.json()
+        has_error = (
+            data.get("error") is not None or
+            (data.get("result") and data["result"].get("isError") is True)
+        )
+        assert has_error or "error" in str(data.get("result", {}).get("content", [{}])[0].get("text", "")).lower()
+
+    # rlm_process_pdf requires "key"
+    def test_rlm_process_pdf_missing_key_returns_error(self, client):
+        """rlm_process_pdf should return error when 'key' is missing."""
+        response = self.call_tool(client, "rlm_process_pdf", {})
+        data = response.json()
+        has_error = (
+            data.get("error") is not None or
+            (data.get("result") and data["result"].get("isError") is True)
+        )
+        assert has_error or "error" in str(data.get("result", {}).get("content", [{}])[0].get("text", "")).lower()
+
+    # rlm_search_index requires "var_name" and "terms"
+    def test_rlm_search_index_missing_var_name_returns_error(self, client):
+        """rlm_search_index should return error when 'var_name' is missing."""
+        response = self.call_tool(client, "rlm_search_index", {"terms": ["test"]})
+        data = response.json()
+        has_error = (
+            data.get("error") is not None or
+            (data.get("result") and data["result"].get("isError") is True)
+        )
+        assert has_error or "error" in str(data.get("result", {}).get("content", [{}])[0].get("text", "")).lower()
+
+    def test_rlm_search_index_missing_terms_returns_error(self, client):
+        """rlm_search_index should return error when 'terms' is missing."""
+        response = self.call_tool(client, "rlm_search_index", {"var_name": "test"})
+        data = response.json()
+        has_error = (
+            data.get("error") is not None or
+            (data.get("result") and data["result"].get("isError") is True)
+        )
+        assert has_error or "error" in str(data.get("result", {}).get("content", [{}])[0].get("text", "")).lower()
+
+    def test_rlm_search_index_missing_both_returns_error(self, client):
+        """rlm_search_index should return error when both 'var_name' and 'terms' are missing."""
+        response = self.call_tool(client, "rlm_search_index", {})
+        data = response.json()
+        has_error = (
+            data.get("error") is not None or
+            (data.get("result") and data["result"].get("isError") is True)
+        )
+        assert has_error or "error" in str(data.get("result", {}).get("content", [{}])[0].get("text", "")).lower()
+
+    # rlm_collection_create requires "name"
+    def test_rlm_collection_create_missing_name_returns_error(self, client):
+        """rlm_collection_create should return error when 'name' is missing."""
+        response = self.call_tool(client, "rlm_collection_create", {})
+        data = response.json()
+        has_error = (
+            data.get("error") is not None or
+            (data.get("result") and data["result"].get("isError") is True)
+        )
+        assert has_error or "error" in str(data.get("result", {}).get("content", [{}])[0].get("text", "")).lower()
+
+    def test_rlm_collection_create_with_name_succeeds(self, client):
+        """rlm_collection_create should succeed when 'name' is provided."""
+        response = self.call_tool(client, "rlm_collection_create", {"name": "test_collection"})
+        data = response.json()
+        assert data.get("error") is None
+        assert "result" in data
+
+    # rlm_collection_add requires "collection" and "vars"
+    def test_rlm_collection_add_missing_collection_returns_error(self, client):
+        """rlm_collection_add should return error when 'collection' is missing."""
+        response = self.call_tool(client, "rlm_collection_add", {"vars": ["test_var"]})
+        data = response.json()
+        has_error = (
+            data.get("error") is not None or
+            (data.get("result") and data["result"].get("isError") is True)
+        )
+        assert has_error or "error" in str(data.get("result", {}).get("content", [{}])[0].get("text", "")).lower()
+
+    def test_rlm_collection_add_missing_vars_returns_error(self, client):
+        """rlm_collection_add should return error when 'vars' is missing."""
+        response = self.call_tool(client, "rlm_collection_add", {"collection": "test"})
+        data = response.json()
+        has_error = (
+            data.get("error") is not None or
+            (data.get("result") and data["result"].get("isError") is True)
+        )
+        assert has_error or "error" in str(data.get("result", {}).get("content", [{}])[0].get("text", "")).lower()
+
+    def test_rlm_collection_add_missing_both_returns_error(self, client):
+        """rlm_collection_add should return error when both 'collection' and 'vars' are missing."""
+        response = self.call_tool(client, "rlm_collection_add", {})
+        data = response.json()
+        has_error = (
+            data.get("error") is not None or
+            (data.get("result") and data["result"].get("isError") is True)
+        )
+        assert has_error or "error" in str(data.get("result", {}).get("content", [{}])[0].get("text", "")).lower()
+
+    # rlm_collection_info requires "name"
+    def test_rlm_collection_info_missing_name_returns_error(self, client):
+        """rlm_collection_info should return error when 'name' is missing."""
+        response = self.call_tool(client, "rlm_collection_info", {})
+        data = response.json()
+        has_error = (
+            data.get("error") is not None or
+            (data.get("result") and data["result"].get("isError") is True)
+        )
+        assert has_error or "error" in str(data.get("result", {}).get("content", [{}])[0].get("text", "")).lower()
+
+    # rlm_search_collection requires "collection" and "terms"
+    def test_rlm_search_collection_missing_collection_returns_error(self, client):
+        """rlm_search_collection should return error when 'collection' is missing."""
+        response = self.call_tool(client, "rlm_search_collection", {"terms": ["test"]})
+        data = response.json()
+        has_error = (
+            data.get("error") is not None or
+            (data.get("result") and data["result"].get("isError") is True)
+        )
+        assert has_error or "error" in str(data.get("result", {}).get("content", [{}])[0].get("text", "")).lower()
+
+    def test_rlm_search_collection_missing_terms_returns_error(self, client):
+        """rlm_search_collection should return error when 'terms' is missing."""
+        response = self.call_tool(client, "rlm_search_collection", {"collection": "test"})
+        data = response.json()
+        has_error = (
+            data.get("error") is not None or
+            (data.get("result") and data["result"].get("isError") is True)
+        )
+        assert has_error or "error" in str(data.get("result", {}).get("content", [{}])[0].get("text", "")).lower()
+
+    def test_rlm_search_collection_missing_both_returns_error(self, client):
+        """rlm_search_collection should return error when both 'collection' and 'terms' are missing."""
+        response = self.call_tool(client, "rlm_search_collection", {})
+        data = response.json()
+        has_error = (
+            data.get("error") is not None or
+            (data.get("result") and data["result"].get("isError") is True)
+        )
+        assert has_error or "error" in str(data.get("result", {}).get("content", [{}])[0].get("text", "")).lower()
+
+    # Test that tools without required params work with empty arguments
+    def test_rlm_list_vars_no_required_params(self, client):
+        """rlm_list_vars should work without any parameters."""
+        response = self.call_tool(client, "rlm_list_vars", {})
+        data = response.json()
+        assert data.get("error") is None
+        assert "result" in data
+
+    def test_rlm_memory_no_required_params(self, client):
+        """rlm_memory should work without any parameters."""
+        response = self.call_tool(client, "rlm_memory", {})
+        data = response.json()
+        assert data.get("error") is None
+        assert "result" in data
+
+    def test_rlm_list_buckets_no_required_params(self, client):
+        """rlm_list_buckets should work without any parameters (may error if S3 not configured)."""
+        response = self.call_tool(client, "rlm_list_buckets", {})
+        data = response.json()
+        # Should not have KeyError type error - either success or S3 config error
+        assert response.status_code == 200
+        assert "result" in data
+
+    def test_rlm_list_s3_no_required_params(self, client):
+        """rlm_list_s3 should work without any parameters (may error if S3 not configured)."""
+        response = self.call_tool(client, "rlm_list_s3", {})
+        data = response.json()
+        # Should not have KeyError type error - either success or S3 config error
+        assert response.status_code == 200
+        assert "result" in data
+
+    def test_rlm_persistence_stats_no_required_params(self, client):
+        """rlm_persistence_stats should work without any parameters."""
+        response = self.call_tool(client, "rlm_persistence_stats", {})
+        data = response.json()
+        assert data.get("error") is None
+        assert "result" in data
+
+    def test_rlm_collection_list_no_required_params(self, client):
+        """rlm_collection_list should work without any parameters."""
+        response = self.call_tool(client, "rlm_collection_list", {})
+        data = response.json()
+        assert data.get("error") is None
+        assert "result" in data
+
+    def test_rlm_clear_works_with_just_all_param(self, client):
+        """rlm_clear should work with just 'all' parameter."""
+        response = self.call_tool(client, "rlm_clear", {"all": True})
+        data = response.json()
+        assert data.get("error") is None
+        assert "result" in data
+
+    def test_rlm_clear_works_with_just_name_param(self, client):
+        """rlm_clear should work with just 'name' parameter."""
+        response = self.call_tool(client, "rlm_clear", {"name": "nonexistent_var"})
+        data = response.json()
+        assert data.get("error") is None
+        assert "result" in data
+
+    def test_rlm_clear_works_with_empty_params(self, client):
+        """rlm_clear should work with empty parameters (returns guidance message)."""
+        response = self.call_tool(client, "rlm_clear", {})
+        data = response.json()
+        assert data.get("error") is None
+        assert "result" in data
+        # Should contain guidance message
+        text = data["result"]["content"][0]["text"]
+        assert "name" in text.lower() or "all" in text.lower()
