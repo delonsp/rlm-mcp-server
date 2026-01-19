@@ -80,7 +80,7 @@ src/rlm_mcp/
 ## Fase 6: Testes do Módulo pdf_parser.py (com mocks)
 
 - [x] Testar extract_with_pdfplumber com PDF machine readable (criar fixture)
-- [ ] Testar extract_with_pdfplumber retorna erro se arquivo não existe
+- [x] Testar extract_with_pdfplumber retorna erro se arquivo não existe
 - [ ] Testar extract_pdf com method="auto" usa pdfplumber primeiro
 - [ ] Testar extract_pdf faz fallback para OCR se pdfplumber extrai pouco
 - [ ] Testar split_pdf_into_chunks divide corretamente

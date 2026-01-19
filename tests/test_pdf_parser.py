@@ -352,3 +352,109 @@ class TestExtractWithPdfplumber:
         result = extract_with_pdfplumber(sample_pdf_many_pages)
         for i in range(1, 11):
             assert f"Page {i} of 10" in result.text
+
+
+# ============================================================================
+# Tests for extract_with_pdfplumber - File Not Exists
+# ============================================================================
+
+
+class TestExtractWithPdfplumberFileNotExists:
+    """Tests for extract_with_pdfplumber when file does not exist."""
+
+    def test_returns_pdf_extraction_result_for_nonexistent_file(self):
+        """extract_with_pdfplumber returns PDFExtractionResult for nonexistent file."""
+        result = extract_with_pdfplumber("/nonexistent/path/to/file.pdf")
+        assert isinstance(result, PDFExtractionResult)
+
+    def test_returns_success_false_for_nonexistent_file(self):
+        """extract_with_pdfplumber returns success=False when file doesn't exist."""
+        result = extract_with_pdfplumber("/nonexistent/path/to/file.pdf")
+        assert result.success is False
+
+    def test_returns_error_message_for_nonexistent_file(self):
+        """extract_with_pdfplumber returns error message when file doesn't exist."""
+        result = extract_with_pdfplumber("/nonexistent/path/to/file.pdf")
+        assert result.error is not None
+        assert len(result.error) > 0
+
+    def test_returns_empty_text_for_nonexistent_file(self):
+        """extract_with_pdfplumber returns empty text when file doesn't exist."""
+        result = extract_with_pdfplumber("/nonexistent/path/to/file.pdf")
+        assert result.text == ""
+
+    def test_returns_zero_pages_for_nonexistent_file(self):
+        """extract_with_pdfplumber returns pages=0 when file doesn't exist."""
+        result = extract_with_pdfplumber("/nonexistent/path/to/file.pdf")
+        assert result.pages == 0
+
+    def test_returns_method_pdfplumber_for_nonexistent_file(self):
+        """extract_with_pdfplumber returns method='pdfplumber' even on error."""
+        result = extract_with_pdfplumber("/nonexistent/path/to/file.pdf")
+        assert result.method == "pdfplumber"
+
+    def test_error_mentions_file_path_or_error_type(self):
+        """extract_with_pdfplumber error contains relevant info about the failure."""
+        path = "/nonexistent/path/to/file.pdf"
+        result = extract_with_pdfplumber(path)
+        # The error should mention the file or be a relevant OS/file error
+        assert result.error is not None
+        # pdfplumber raises FileNotFoundError or similar OS errors
+        error_lower = result.error.lower()
+        assert (
+            "no such file" in error_lower
+            or "not found" in error_lower
+            or "does not exist" in error_lower
+            or path in result.error
+            or "errno" in error_lower
+        )
+
+    def test_handles_empty_path(self):
+        """extract_with_pdfplumber handles empty string path."""
+        result = extract_with_pdfplumber("")
+        assert result.success is False
+        assert result.error is not None
+
+    def test_handles_directory_path(self, tmp_path):
+        """extract_with_pdfplumber handles path that is a directory, not file."""
+        result = extract_with_pdfplumber(str(tmp_path))
+        assert result.success is False
+        assert result.error is not None
+
+    def test_handles_path_with_special_characters(self):
+        """extract_with_pdfplumber handles path with special characters."""
+        result = extract_with_pdfplumber("/path/with spaces/and-dashes/file (1).pdf")
+        assert result.success is False
+        assert result.error is not None
+
+    def test_handles_unicode_path(self):
+        """extract_with_pdfplumber handles path with unicode characters."""
+        result = extract_with_pdfplumber("/caminho/português/arquivo.pdf")
+        assert result.success is False
+        assert result.error is not None
+
+    def test_does_not_raise_exception(self):
+        """extract_with_pdfplumber does not raise exception for nonexistent file."""
+        # Should not raise, should return PDFExtractionResult with success=False
+        try:
+            result = extract_with_pdfplumber("/nonexistent/file.pdf")
+            assert result is not None  # Got result without exception
+        except Exception as e:
+            pytest.fail(f"extract_with_pdfplumber raised exception: {e}")
+
+    def test_handles_path_with_null_byte(self):
+        """extract_with_pdfplumber handles path with embedded null byte gracefully."""
+        result = extract_with_pdfplumber("/path/with\x00null/file.pdf")
+        # Should either return error or fail gracefully (not crash)
+        assert result.success is False
+        assert result.error is not None
+
+    def test_nonexistent_with_valid_extension(self):
+        """extract_with_pdfplumber fails for .pdf path that doesn't exist."""
+        result = extract_with_pdfplumber("/tmp/definitely_does_not_exist_12345.pdf")
+        assert result.success is False
+
+    def test_nonexistent_with_no_extension(self):
+        """extract_with_pdfplumber fails for path without .pdf extension that doesn't exist."""
+        result = extract_with_pdfplumber("/tmp/definitely_does_not_exist_12345")
+        assert result.success is False
