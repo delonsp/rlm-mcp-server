@@ -1,14 +1,66 @@
 """
 Pytest fixtures for RLM MCP Server tests.
+
+IMPORTANT: The RLM_PERSIST_DIR environment variable must be set at module load
+time, BEFORE any rlm_mcp modules are imported. This is done in pytest_configure().
 """
 
 import os
 import tempfile
+import shutil
 from datetime import datetime, timezone
 from io import BytesIO
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+
+# ============================================================================
+# Global setup: RLM_PERSIST_DIR MUST be set BEFORE any module imports
+# ============================================================================
+
+# Global variable to track the temp directory
+_TEST_PERSIST_DIR = None
+
+
+def pytest_configure(config):
+    """
+    Called early in pytest startup, before any test modules are imported.
+
+    This is the right place to set environment variables that affect module load.
+    """
+    global _TEST_PERSIST_DIR
+    _TEST_PERSIST_DIR = tempfile.mkdtemp(prefix="rlm_test_persist_")
+    os.environ["RLM_PERSIST_DIR"] = _TEST_PERSIST_DIR
+
+
+def pytest_unconfigure(config):
+    """
+    Called when pytest is about to exit.
+
+    Clean up the temp directory.
+    """
+    global _TEST_PERSIST_DIR
+    if _TEST_PERSIST_DIR and os.path.exists(_TEST_PERSIST_DIR):
+        shutil.rmtree(_TEST_PERSIST_DIR, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def reset_persistence_singleton():
+    """
+    Reset the persistence singleton before each test.
+
+    This ensures each test starts with a fresh PersistenceManager instance
+    that uses the test persist directory.
+    """
+    # Reset the singleton so it re-initializes with the test directory
+    import rlm_mcp.persistence as persistence_module
+    persistence_module._persistence = None
+
+    yield
+
+    # Reset again after the test
+    persistence_module._persistence = None
 
 
 @pytest.fixture

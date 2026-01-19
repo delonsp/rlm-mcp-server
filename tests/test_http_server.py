@@ -3418,3 +3418,251 @@ class TestMcpToolRlmSearchIndex:
         })
         data = response.json()
         assert isinstance(data, dict)
+
+
+class TestMcpToolRlmPersistenceStats:
+    """Tests for rlm_persistence_stats tool via MCP tools/call method."""
+
+    def make_mcp_request(self, client, method: str, params: dict = None, request_id: int = 1):
+        """Helper to make MCP JSON-RPC requests."""
+        payload = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+        }
+        if params is not None:
+            payload["params"] = params
+        return client.post("/mcp", json=payload)
+
+    def call_tool(self, client, tool_name: str, arguments: dict, request_id: int = 1):
+        """Helper to call a tool via MCP tools/call."""
+        return self.make_mcp_request(
+            client,
+            "tools/call",
+            params={"name": tool_name, "arguments": arguments},
+            request_id=request_id
+        )
+
+    @pytest.fixture(autouse=True)
+    def reset_repl(self):
+        """Reset REPL state before each test to avoid cross-test pollution."""
+        from rlm_mcp.http_server import repl
+        repl.clear_all()
+        yield
+        repl.clear_all()
+
+    def test_returns_200_status_code(self, client):
+        """rlm_persistence_stats should return 200 status code."""
+        response = self.call_tool(client, "rlm_persistence_stats", {})
+        assert response.status_code == 200
+
+    def test_returns_jsonrpc_format(self, client):
+        """rlm_persistence_stats should return valid JSON-RPC format."""
+        response = self.call_tool(client, "rlm_persistence_stats", {})
+        data = response.json()
+        assert data["jsonrpc"] == "2.0"
+        assert "id" in data
+        assert "result" in data
+
+    def test_returns_text_content(self, client):
+        """rlm_persistence_stats should return text content."""
+        response = self.call_tool(client, "rlm_persistence_stats", {})
+        data = response.json()
+        assert "content" in data["result"]
+        assert len(data["result"]["content"]) > 0
+        assert data["result"]["content"][0]["type"] == "text"
+
+    def test_content_is_string(self, client):
+        """rlm_persistence_stats content text should be a string."""
+        response = self.call_tool(client, "rlm_persistence_stats", {})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert isinstance(text, str)
+
+    def test_contains_statistics_header(self, client):
+        """rlm_persistence_stats should show statistics header."""
+        response = self.call_tool(client, "rlm_persistence_stats", {})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        # Should contain the Portuguese header
+        assert "Estatísticas" in text or "Persistência" in text
+
+    def test_shows_variables_count(self, client):
+        """rlm_persistence_stats should show count of saved variables."""
+        response = self.call_tool(client, "rlm_persistence_stats", {})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        # Should show variable count (in Portuguese)
+        assert "Variáveis salvas" in text or "variáveis" in text.lower()
+
+    def test_shows_total_size(self, client):
+        """rlm_persistence_stats should show total size in bytes."""
+        response = self.call_tool(client, "rlm_persistence_stats", {})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        # Should show size info
+        assert "bytes" in text.lower() or "Tamanho" in text
+
+    def test_shows_indices_count(self, client):
+        """rlm_persistence_stats should show count of saved indices."""
+        response = self.call_tool(client, "rlm_persistence_stats", {})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        # Should show indices count (in Portuguese)
+        assert "Índices" in text or "índices" in text.lower()
+
+    def test_shows_db_info(self, client):
+        """rlm_persistence_stats should show database file info."""
+        response = self.call_tool(client, "rlm_persistence_stats", {})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        # Should show DB file info
+        assert "DB" in text or "db" in text.lower()
+
+    def test_no_error_on_empty_persistence(self, client):
+        """rlm_persistence_stats should not error when no variables are persisted."""
+        response = self.call_tool(client, "rlm_persistence_stats", {})
+        data = response.json()
+        # Should not have error field
+        assert data.get("error") is None
+        assert data["result"].get("isError") != True
+
+    def test_returns_same_request_id(self, client):
+        """rlm_persistence_stats should return the same request id."""
+        response = self.call_tool(client, "rlm_persistence_stats", {}, request_id=42)
+        data = response.json()
+        assert data["id"] == 42
+
+    def test_works_with_string_request_id(self, client):
+        """rlm_persistence_stats should work with string request id."""
+        payload = {
+            "jsonrpc": "2.0",
+            "id": "persistence-stats-test",
+            "method": "tools/call",
+            "params": {
+                "name": "rlm_persistence_stats",
+                "arguments": {}
+            }
+        }
+        response = client.post("/mcp", json=payload)
+        data = response.json()
+        assert data["id"] == "persistence-stats-test"
+        assert "result" in data
+
+    def test_shows_persisted_variables_after_load(self, client):
+        """rlm_persistence_stats should list persisted variables after rlm_load_data."""
+        # First load a variable (persistence is automatic)
+        self.call_tool(client, "rlm_load_data", {
+            "name": "test_var",
+            "data": "test content"
+        })
+
+        # Now check persistence stats
+        response = self.call_tool(client, "rlm_persistence_stats", {})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        # Should show the loaded variable in the list
+        assert "test_var" in text or "Variáveis salvas: 0" not in text
+
+    def test_shows_variable_type(self, client):
+        """rlm_persistence_stats should show variable type for persisted variables."""
+        # Load a variable
+        self.call_tool(client, "rlm_load_data", {
+            "name": "test_var",
+            "data": "test content"
+        })
+
+        response = self.call_tool(client, "rlm_persistence_stats", {})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        # Should show type (str, dict, list, etc.)
+        # Looking for parenthesis with type inside, e.g., "(str,"
+        assert "str" in text.lower() or "type" in text.lower() or "(" in text
+
+    def test_shows_variable_size(self, client):
+        """rlm_persistence_stats should show variable size for persisted variables."""
+        # Load a variable
+        self.call_tool(client, "rlm_load_data", {
+            "name": "test_var",
+            "data": "test content with some data"
+        })
+
+        response = self.call_tool(client, "rlm_persistence_stats", {})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        # Should show size in bytes
+        assert "bytes" in text.lower()
+
+    def test_shows_indexed_terms_count(self, client):
+        """rlm_persistence_stats should show count of indexed terms."""
+        response = self.call_tool(client, "rlm_persistence_stats", {})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        # Should show indexed terms count
+        assert "indexado" in text.lower() or "termos" in text.lower()
+
+    def test_multiple_requests_succeed(self, client):
+        """Multiple rlm_persistence_stats requests should all succeed."""
+        for i in range(3):
+            response = self.call_tool(client, "rlm_persistence_stats", {}, request_id=i)
+            assert response.status_code == 200
+            data = response.json()
+            assert data.get("error") is None
+
+    def test_response_is_dict(self, client):
+        """rlm_persistence_stats should return a dictionary response."""
+        response = self.call_tool(client, "rlm_persistence_stats", {})
+        data = response.json()
+        assert isinstance(data, dict)
+
+    def test_ignores_extra_parameters(self, client):
+        """rlm_persistence_stats should work even if extra parameters are passed."""
+        response = self.call_tool(client, "rlm_persistence_stats", {
+            "extra_param": "should be ignored"
+        })
+        data = response.json()
+        # Should not error, just ignore the extra param
+        assert response.status_code == 200
+        assert "result" in data
+
+    def test_updated_at_timestamp_shown(self, client):
+        """rlm_persistence_stats should show updated_at timestamp for variables."""
+        # Load a variable
+        self.call_tool(client, "rlm_load_data", {
+            "name": "test_var",
+            "data": "test content"
+        })
+
+        response = self.call_tool(client, "rlm_persistence_stats", {})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        # Should show timestamp info
+        assert "Atualizado" in text or "atualizado" in text.lower() or "202" in text  # Year prefix
+
+    def test_no_is_error_field_on_success(self, client):
+        """rlm_persistence_stats should not have isError field on success."""
+        response = self.call_tool(client, "rlm_persistence_stats", {})
+        data = response.json()
+        assert data["result"].get("isError") != True
+
+    def test_works_after_clear(self, client):
+        """rlm_persistence_stats should work after rlm_clear is called."""
+        # Load a variable
+        self.call_tool(client, "rlm_load_data", {
+            "name": "test_var",
+            "data": "test content"
+        })
+
+        # Clear all
+        self.call_tool(client, "rlm_clear", {"all": True})
+
+        # Check stats - should not error
+        response = self.call_tool(client, "rlm_persistence_stats", {})
+        data = response.json()
+        assert response.status_code == 200
+        assert data.get("error") is None

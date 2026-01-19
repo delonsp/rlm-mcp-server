@@ -99,7 +99,7 @@ src/rlm_mcp/
 - [x] Testar tool rlm_load_s3 com skip_if_exists=True pula se existe
 - [x] Testar tool rlm_load_s3 com skip_if_exists=False força reload
 - [x] Testar tool rlm_search_index busca termos
-- [ ] Testar tool rlm_persistence_stats retorna estatísticas
+- [x] Testar tool rlm_persistence_stats retorna estatísticas
 
 ## Fase 8: Testes de Edge Cases e Segurança
 
