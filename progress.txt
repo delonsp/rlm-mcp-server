@@ -1552,6 +1552,44 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 47 - Test tool rlm_execute with simple code
+
+- What was implemented:
+  - Added TestMcpToolRlmExecute class to tests/test_http_server.py
+  - 33 test cases covering:
+    - Returns 200 status code, JSON content-type, jsonrpc 2.0
+    - Returns same request id
+    - Returns result dict with 'content' key containing list of text items
+    - Captures print() output (single and multiple)
+    - Handles simple assignment, arithmetic, string, list, dict operations
+    - Handles list comprehension, function definition and call
+    - Error handling for syntax errors, runtime errors (ZeroDivision), NameError
+    - No error field in response for valid code
+    - Shows OK status and execution time in ms
+    - Handles empty code and comment-only code
+    - Handles multiline code
+    - Safe imports work (math, json, re)
+    - Blocked imports fail (os) with "bloqueado" error
+    - Variables persist across executions
+    - Functions persist across executions
+    - Missing code parameter returns error
+
+- Files changed:
+  - tests/test_http_server.py (added TestMcpToolRlmExecute class with 33 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - MCP tools/call requires params with "name" and "arguments" keys
+  - rlm_execute returns {result: {content: [{type: "text", text: "..."}]}}
+  - format_execution_result() adds "=== OUTPUT ===", "=== ERRORS ===", "=== VARIÁVEIS ALTERADAS ===" sections
+  - Response text contains "[Execução: X.Xms | Status: OK]" or "ERRO"
+  - autouse fixtures are good for resetting global state (repl) between tests
+  - import rlm_mcp.http_server.repl gives access to the global REPL instance
+  - repl.clear_all() resets state between tests to avoid pollution
+
+---
+
 ## Iteration 45 - Test MCP initialize returns capabilities
 
 - What was implemented:

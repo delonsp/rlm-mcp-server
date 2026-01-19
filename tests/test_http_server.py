@@ -564,3 +564,285 @@ class TestMcpToolsList:
         response = self.make_mcp_request(client, "tools/list")
         data = response.json()
         assert isinstance(data, dict)
+
+
+class TestMcpToolRlmExecute:
+    """Tests for rlm_execute tool via MCP tools/call method."""
+
+    def make_mcp_request(self, client, method: str, params: dict = None, request_id: int = 1):
+        """Helper to make MCP JSON-RPC requests."""
+        payload = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+        }
+        if params is not None:
+            payload["params"] = params
+        return client.post("/mcp", json=payload)
+
+    def call_tool(self, client, tool_name: str, arguments: dict, request_id: int = 1):
+        """Helper to call a tool via MCP tools/call."""
+        return self.make_mcp_request(
+            client,
+            "tools/call",
+            params={"name": tool_name, "arguments": arguments},
+            request_id=request_id
+        )
+
+    @pytest.fixture(autouse=True)
+    def reset_repl(self):
+        """Reset REPL state before each test to avoid cross-test pollution."""
+        from rlm_mcp.http_server import repl
+        repl.clear_all()
+        yield
+        repl.clear_all()
+
+    def test_returns_200_status_code(self, client):
+        """rlm_execute should return 200 OK."""
+        response = self.call_tool(client, "rlm_execute", {"code": "print('hello')"})
+        assert response.status_code == 200
+
+    def test_returns_json(self, client):
+        """rlm_execute should return JSON content."""
+        response = self.call_tool(client, "rlm_execute", {"code": "print('hello')"})
+        assert response.headers["content-type"].startswith("application/json")
+
+    def test_returns_jsonrpc_version(self, client):
+        """rlm_execute should return jsonrpc 2.0."""
+        response = self.call_tool(client, "rlm_execute", {"code": "print('hello')"})
+        data = response.json()
+        assert data["jsonrpc"] == "2.0"
+
+    def test_returns_same_id(self, client):
+        """rlm_execute should return the same request id."""
+        response = self.call_tool(client, "rlm_execute", {"code": "print('hello')"}, request_id=42)
+        data = response.json()
+        assert data["id"] == 42
+
+    def test_returns_result_dict(self, client):
+        """rlm_execute should return a result dict."""
+        response = self.call_tool(client, "rlm_execute", {"code": "print('hello')"})
+        data = response.json()
+        assert "result" in data
+        assert isinstance(data["result"], dict)
+
+    def test_result_has_content(self, client):
+        """rlm_execute result should have 'content' key."""
+        response = self.call_tool(client, "rlm_execute", {"code": "print('hello')"})
+        data = response.json()
+        assert "content" in data["result"]
+
+    def test_content_is_list(self, client):
+        """rlm_execute content should be a list."""
+        response = self.call_tool(client, "rlm_execute", {"code": "print('hello')"})
+        data = response.json()
+        assert isinstance(data["result"]["content"], list)
+
+    def test_content_has_text_item(self, client):
+        """rlm_execute content should have text type item."""
+        response = self.call_tool(client, "rlm_execute", {"code": "print('hello')"})
+        data = response.json()
+        content = data["result"]["content"]
+        assert len(content) > 0
+        assert content[0]["type"] == "text"
+        assert "text" in content[0]
+
+    def test_captures_print_output(self, client):
+        """rlm_execute should capture print() output."""
+        response = self.call_tool(client, "rlm_execute", {"code": "print('hello world')"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "hello world" in text
+
+    def test_captures_multiple_prints(self, client):
+        """rlm_execute should capture multiple print() statements."""
+        response = self.call_tool(client, "rlm_execute", {"code": "print('line1')\nprint('line2')"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "line1" in text
+        assert "line2" in text
+
+    def test_simple_assignment(self, client):
+        """rlm_execute should handle simple variable assignment."""
+        response = self.call_tool(client, "rlm_execute", {"code": "x = 42"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        # Should mention variable changed
+        assert "x" in text or "VARIÁVEIS ALTERADAS" in text
+
+    def test_arithmetic_operation(self, client):
+        """rlm_execute should handle arithmetic operations."""
+        response = self.call_tool(client, "rlm_execute", {"code": "print(2 + 3)"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "5" in text
+
+    def test_string_operations(self, client):
+        """rlm_execute should handle string operations."""
+        response = self.call_tool(client, "rlm_execute", {"code": "print('hello'.upper())"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "HELLO" in text
+
+    def test_list_operations(self, client):
+        """rlm_execute should handle list operations."""
+        response = self.call_tool(client, "rlm_execute", {"code": "nums = [1, 2, 3]\nprint(sum(nums))"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "6" in text
+
+    def test_dict_operations(self, client):
+        """rlm_execute should handle dict operations."""
+        response = self.call_tool(client, "rlm_execute", {"code": "d = {'a': 1, 'b': 2}\nprint(d['a'])"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "1" in text
+
+    def test_list_comprehension(self, client):
+        """rlm_execute should handle list comprehension."""
+        response = self.call_tool(client, "rlm_execute", {"code": "print([x*2 for x in range(3)])"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "0" in text and "2" in text and "4" in text
+
+    def test_function_definition_and_call(self, client):
+        """rlm_execute should handle function definition and call."""
+        code = """def greet(name):
+    return f'Hello, {name}!'
+print(greet('World'))"""
+        response = self.call_tool(client, "rlm_execute", {"code": code})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "Hello, World!" in text
+
+    def test_syntax_error_returns_error(self, client):
+        """rlm_execute should handle syntax errors gracefully."""
+        response = self.call_tool(client, "rlm_execute", {"code": "print('unclosed"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        # Should indicate error
+        assert "ERRO" in text or "Error" in text.lower() or "error" in text.lower()
+
+    def test_runtime_error_returns_error(self, client):
+        """rlm_execute should handle runtime errors gracefully."""
+        response = self.call_tool(client, "rlm_execute", {"code": "print(1/0)"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "ERRO" in text or "Error" in text.lower() or "ZeroDivision" in text
+
+    def test_name_error_returns_error(self, client):
+        """rlm_execute should handle NameError gracefully."""
+        response = self.call_tool(client, "rlm_execute", {"code": "print(undefined_var)"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "ERRO" in text or "Error" in text.lower() or "NameError" in text
+
+    def test_no_error_in_response_for_valid_code(self, client):
+        """rlm_execute should not return error field for valid code."""
+        response = self.call_tool(client, "rlm_execute", {"code": "print('test')"})
+        data = response.json()
+        assert data.get("error") is None
+
+    def test_execution_status_ok(self, client):
+        """rlm_execute should show OK status for valid code."""
+        response = self.call_tool(client, "rlm_execute", {"code": "x = 1"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "OK" in text
+
+    def test_execution_time_shown(self, client):
+        """rlm_execute should show execution time."""
+        response = self.call_tool(client, "rlm_execute", {"code": "x = 1"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        # Should contain execution time in ms
+        assert "ms" in text
+
+    def test_empty_code_succeeds(self, client):
+        """rlm_execute should handle empty code."""
+        response = self.call_tool(client, "rlm_execute", {"code": ""})
+        data = response.json()
+        assert "result" in data
+        text = data["result"]["content"][0]["text"]
+        assert "OK" in text or "concluída" in text.lower()
+
+    def test_comment_only_code_succeeds(self, client):
+        """rlm_execute should handle code with only comments."""
+        response = self.call_tool(client, "rlm_execute", {"code": "# this is a comment"})
+        data = response.json()
+        assert "result" in data
+
+    def test_multiline_code(self, client):
+        """rlm_execute should handle multiline code."""
+        code = """a = 1
+b = 2
+c = a + b
+print(f'Sum: {c}')"""
+        response = self.call_tool(client, "rlm_execute", {"code": code})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "Sum: 3" in text
+
+    def test_safe_imports_work(self, client):
+        """rlm_execute should allow safe imports."""
+        response = self.call_tool(client, "rlm_execute", {"code": "import math\nprint(math.pi)"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "3.14" in text
+
+    def test_blocked_imports_fail(self, client):
+        """rlm_execute should block dangerous imports."""
+        response = self.call_tool(client, "rlm_execute", {"code": "import os"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        # Should contain error about blocked import
+        assert "bloqueado" in text.lower() or "blocked" in text.lower() or "ERRO" in text
+
+    def test_json_module_works(self, client):
+        """rlm_execute should allow json module."""
+        code = """import json
+data = json.dumps({'key': 'value'})
+print(data)"""
+        response = self.call_tool(client, "rlm_execute", {"code": code})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "key" in text and "value" in text
+
+    def test_re_module_works(self, client):
+        """rlm_execute should allow re module."""
+        code = """import re
+result = re.findall(r'\\d+', 'abc123def456')
+print(result)"""
+        response = self.call_tool(client, "rlm_execute", {"code": code})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "123" in text and "456" in text
+
+    def test_variables_persist_across_executions(self, client):
+        """Variables from one execution should be available in the next."""
+        # First execution: set variable
+        self.call_tool(client, "rlm_execute", {"code": "my_var = 'persisted_value'"})
+
+        # Second execution: use variable
+        response = self.call_tool(client, "rlm_execute", {"code": "print(my_var)"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "persisted_value" in text
+
+    def test_functions_persist_across_executions(self, client):
+        """Functions from one execution should be available in the next."""
+        # First execution: define function
+        self.call_tool(client, "rlm_execute", {"code": "def double(x): return x * 2"})
+
+        # Second execution: use function
+        response = self.call_tool(client, "rlm_execute", {"code": "print(double(21))"})
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "42" in text
+
+    def test_missing_code_parameter(self, client):
+        """rlm_execute should handle missing code parameter."""
+        response = self.call_tool(client, "rlm_execute", {})
+        data = response.json()
+        # Should return an error
+        assert "error" in data or "isError" in data.get("result", {})
