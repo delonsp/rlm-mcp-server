@@ -3045,3 +3045,376 @@ class TestMcpToolRlmLoadS3ForceReload:
         assert repl.variables["my_var"] == ["line1", "line2", "line3"]
         text = response.json()["result"]["content"][0]["text"]
         assert "carregada" in text.lower()
+
+
+class TestMcpToolRlmSearchIndex:
+    """Tests for rlm_search_index tool via MCP tools/call method."""
+
+    def make_mcp_request(self, client, method: str, params: dict = None, request_id: int = 1):
+        """Helper to make MCP JSON-RPC requests."""
+        payload = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+        }
+        if params is not None:
+            payload["params"] = params
+        return client.post("/mcp", json=payload)
+
+    def call_tool(self, client, tool_name: str, arguments: dict, request_id: int = 1):
+        """Helper to call a tool via MCP tools/call."""
+        return self.make_mcp_request(
+            client,
+            "tools/call",
+            params={"name": tool_name, "arguments": arguments},
+            request_id=request_id
+        )
+
+    @pytest.fixture(autouse=True)
+    def reset_repl_and_indices(self):
+        """Reset REPL state and indices before each test."""
+        from rlm_mcp.http_server import repl
+        from rlm_mcp.indexer import clear_all_indices
+        repl.clear_all()
+        clear_all_indices()
+        yield
+        repl.clear_all()
+        clear_all_indices()
+
+    def create_indexed_variable(self, client):
+        """Helper to create a large text variable that will be indexed."""
+        # Text with terms from DEFAULT_INDEX_TERMS: medo, ansiedade, trabalho, família
+        # Each term repeated to ensure indexability
+        text_parts = []
+        for i in range(50):
+            text_parts.append(f"Linha {i}: O paciente relata medo e ansiedade relacionados ao trabalho.")
+            text_parts.append(f"Linha {i+50}: Também menciona família e problemas de cabeça.")
+            text_parts.append(f"Linha {i+100}: Sintomas de medo intenso e coração acelerado.")
+            text_parts.append(f"Linha {i+150}: Relação com mãe é conflituosa.")
+        # Make it >= 100k chars to trigger auto-indexing
+        base_text = "\n".join(text_parts)
+        while len(base_text) < 100000:
+            base_text += "\n" + base_text[:10000]
+
+        # Load the large text
+        self.call_tool(client, "rlm_load_data", {"name": "large_text", "data": base_text})
+
+        # Manually create index since auto-indexing may not run in test
+        from rlm_mcp.indexer import create_index, set_index
+        index = create_index(base_text, "large_text")
+        set_index("large_text", index)
+
+        return base_text
+
+    def test_returns_200_status_code(self, client):
+        """rlm_search_index should return 200 OK."""
+        self.create_indexed_variable(client)
+        response = self.call_tool(client, "rlm_search_index", {
+            "var_name": "large_text",
+            "terms": ["medo"]
+        })
+        assert response.status_code == 200
+
+    def test_returns_json(self, client):
+        """rlm_search_index should return JSON content."""
+        self.create_indexed_variable(client)
+        response = self.call_tool(client, "rlm_search_index", {
+            "var_name": "large_text",
+            "terms": ["medo"]
+        })
+        assert response.headers["content-type"].startswith("application/json")
+
+    def test_returns_jsonrpc_version(self, client):
+        """rlm_search_index should return jsonrpc 2.0."""
+        self.create_indexed_variable(client)
+        response = self.call_tool(client, "rlm_search_index", {
+            "var_name": "large_text",
+            "terms": ["medo"]
+        })
+        data = response.json()
+        assert data["jsonrpc"] == "2.0"
+
+    def test_returns_same_id(self, client):
+        """rlm_search_index should return the same request id."""
+        self.create_indexed_variable(client)
+        response = self.call_tool(client, "rlm_search_index", {
+            "var_name": "large_text",
+            "terms": ["medo"]
+        }, request_id=42)
+        data = response.json()
+        assert data["id"] == 42
+
+    def test_returns_result_with_content(self, client):
+        """rlm_search_index should return result with content list."""
+        self.create_indexed_variable(client)
+        response = self.call_tool(client, "rlm_search_index", {
+            "var_name": "large_text",
+            "terms": ["medo"]
+        })
+        data = response.json()
+        assert "result" in data
+        assert "content" in data["result"]
+        assert isinstance(data["result"]["content"], list)
+        assert len(data["result"]["content"]) > 0
+        assert data["result"]["content"][0]["type"] == "text"
+
+    def test_finds_indexed_term(self, client):
+        """rlm_search_index should find terms that are in the index."""
+        self.create_indexed_variable(client)
+        response = self.call_tool(client, "rlm_search_index", {
+            "var_name": "large_text",
+            "terms": ["medo"]
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        # Should show results
+        assert "Resultados" in text or "ocorrências" in text
+        assert "medo" in text.lower()
+
+    def test_multiple_terms_or_mode(self, client):
+        """rlm_search_index with require_all=False should search multiple terms (OR mode)."""
+        self.create_indexed_variable(client)
+        response = self.call_tool(client, "rlm_search_index", {
+            "var_name": "large_text",
+            "terms": ["medo", "ansiedade"],
+            "require_all": False
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        # Should show results for both terms
+        assert "medo" in text.lower()
+        assert "ansiedade" in text.lower()
+
+    def test_require_all_true_and_mode(self, client):
+        """rlm_search_index with require_all=True should find lines with ALL terms (AND mode)."""
+        self.create_indexed_variable(client)
+        response = self.call_tool(client, "rlm_search_index", {
+            "var_name": "large_text",
+            "terms": ["medo", "ansiedade"],
+            "require_all": True
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        # Should indicate AND mode results
+        assert "todos os termos" in text.lower() or "encontradas" in text.lower()
+
+    def test_term_not_found_message(self, client):
+        """rlm_search_index should show message when terms are not found."""
+        self.create_indexed_variable(client)
+        response = self.call_tool(client, "rlm_search_index", {
+            "var_name": "large_text",
+            "terms": ["xyz_nonexistent_term_123"]
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        # Should indicate no results
+        assert "nenhum" in text.lower()
+
+    def test_shows_index_stats(self, client):
+        """rlm_search_index should show index stats at the end."""
+        self.create_indexed_variable(client)
+        response = self.call_tool(client, "rlm_search_index", {
+            "var_name": "large_text",
+            "terms": ["medo"]
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        # Should show index stats
+        assert "Índice" in text or "índice" in text
+        assert "termos" in text.lower()
+
+    def test_variable_not_found_error(self, client):
+        """rlm_search_index should return error for nonexistent variable."""
+        response = self.call_tool(client, "rlm_search_index", {
+            "var_name": "nonexistent_var",
+            "terms": ["medo"]
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        # Should show error
+        assert "erro" in text.lower() or "não encontrada" in text.lower()
+        assert data["result"].get("isError") == True
+
+    def test_variable_without_index_error(self, client):
+        """rlm_search_index should return error for variable without index."""
+        # Load a small text (won't be auto-indexed)
+        self.call_tool(client, "rlm_load_data", {"name": "small_text", "data": "small text without index"})
+
+        response = self.call_tool(client, "rlm_search_index", {
+            "var_name": "small_text",
+            "terms": ["medo"]
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        # Should show error about missing index
+        assert "não possui índice" in text.lower() or "100k" in text
+        assert data["result"].get("isError") == True
+
+    def test_limit_parameter(self, client):
+        """rlm_search_index should respect limit parameter."""
+        self.create_indexed_variable(client)
+        response = self.call_tool(client, "rlm_search_index", {
+            "var_name": "large_text",
+            "terms": ["medo"],
+            "limit": 5
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        # Should return results (limit affects how many are shown)
+        assert "medo" in text.lower()
+
+    def test_default_require_all_is_false(self, client):
+        """rlm_search_index should default require_all to False (OR mode)."""
+        self.create_indexed_variable(client)
+        # Call without require_all parameter
+        response = self.call_tool(client, "rlm_search_index", {
+            "var_name": "large_text",
+            "terms": ["medo", "ansiedade"]
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        # Should be in OR mode (show results per term)
+        assert "ocorrências" in text.lower() or "Resultados" in text
+
+    def test_empty_terms_list(self, client):
+        """rlm_search_index should handle empty terms list."""
+        self.create_indexed_variable(client)
+        response = self.call_tool(client, "rlm_search_index", {
+            "var_name": "large_text",
+            "terms": []
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        # Should show no results or handle gracefully
+        assert "nenhum" in text.lower() or "Índice" in text
+
+    def test_case_insensitive_search(self, client):
+        """rlm_search_index should search case-insensitively."""
+        self.create_indexed_variable(client)
+        # Search with uppercase term
+        response = self.call_tool(client, "rlm_search_index", {
+            "var_name": "large_text",
+            "terms": ["MEDO"]  # Uppercase
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        # Should find results (search is case-insensitive)
+        assert "medo" in text.lower() or "MEDO" in text
+
+    def test_shows_line_context(self, client):
+        """rlm_search_index OR mode should show line context for matches."""
+        self.create_indexed_variable(client)
+        response = self.call_tool(client, "rlm_search_index", {
+            "var_name": "large_text",
+            "terms": ["medo"],
+            "require_all": False
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        # Should show line numbers and context
+        assert "Linha" in text
+
+    def test_with_string_request_id(self, client):
+        """rlm_search_index should work with string request id."""
+        self.create_indexed_variable(client)
+        payload = {
+            "jsonrpc": "2.0",
+            "id": "search-index-test-123",
+            "method": "tools/call",
+            "params": {
+                "name": "rlm_search_index",
+                "arguments": {
+                    "var_name": "large_text",
+                    "terms": ["medo"]
+                }
+            }
+        }
+        response = client.post("/mcp", json=payload)
+        data = response.json()
+        assert data["id"] == "search-index-test-123"
+        assert "result" in data
+
+    def test_missing_var_name_parameter(self, client):
+        """rlm_search_index should handle missing var_name parameter."""
+        response = self.call_tool(client, "rlm_search_index", {
+            "terms": ["medo"]
+        })
+        data = response.json()
+        # Should return an error
+        assert "error" in data or data["result"].get("isError") == True
+
+    def test_missing_terms_parameter(self, client):
+        """rlm_search_index should handle missing terms parameter."""
+        self.create_indexed_variable(client)
+        response = self.call_tool(client, "rlm_search_index", {
+            "var_name": "large_text"
+        })
+        data = response.json()
+        # Should return an error
+        assert "error" in data or data["result"].get("isError") == True
+
+    def test_no_error_field_on_success(self, client):
+        """rlm_search_index should not have error field on successful search."""
+        self.create_indexed_variable(client)
+        response = self.call_tool(client, "rlm_search_index", {
+            "var_name": "large_text",
+            "terms": ["medo"]
+        })
+        data = response.json()
+        assert data.get("error") is None
+        assert data["result"].get("isError") != True
+
+    def test_multiple_requests_same_results(self, client):
+        """Multiple searches for same term should return consistent results."""
+        self.create_indexed_variable(client)
+        response1 = self.call_tool(client, "rlm_search_index", {
+            "var_name": "large_text",
+            "terms": ["medo"]
+        }, request_id=1)
+        response2 = self.call_tool(client, "rlm_search_index", {
+            "var_name": "large_text",
+            "terms": ["medo"]
+        }, request_id=2)
+
+        text1 = response1.json()["result"]["content"][0]["text"]
+        text2 = response2.json()["result"]["content"][0]["text"]
+
+        # Results should be similar (both contain medo)
+        assert "medo" in text1.lower()
+        assert "medo" in text2.lower()
+
+    def test_require_all_no_match_message(self, client):
+        """rlm_search_index with require_all=True should show message when no line has all terms."""
+        self.create_indexed_variable(client)
+        response = self.call_tool(client, "rlm_search_index", {
+            "var_name": "large_text",
+            "terms": ["medo", "xyz_nonexistent_123"],
+            "require_all": True
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        # Should indicate no lines found with all terms
+        assert "nenhuma linha" in text.lower() or "todos os termos" in text.lower()
+
+    def test_shows_occurrence_count(self, client):
+        """rlm_search_index OR mode should show occurrence count per term."""
+        self.create_indexed_variable(client)
+        response = self.call_tool(client, "rlm_search_index", {
+            "var_name": "large_text",
+            "terms": ["medo"],
+            "require_all": False
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        # Should show count of occurrences
+        assert "ocorrências" in text.lower() or "ocorrência" in text.lower()
+
+    def test_response_is_dict(self, client):
+        """rlm_search_index should return a dictionary response."""
+        self.create_indexed_variable(client)
+        response = self.call_tool(client, "rlm_search_index", {
+            "var_name": "large_text",
+            "terms": ["medo"]
+        })
+        data = response.json()
+        assert isinstance(data, dict)

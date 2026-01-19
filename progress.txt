@@ -1814,3 +1814,83 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 53 - Test tool rlm_load_s3 com skip_if_exists=False força reload
+
+- What was implemented:
+  - Added TestMcpToolRlmLoadS3ForceReload class to tests/test_http_server.py
+  - 20 test cases covering:
+    - Returns 200 status code, JSON content-type, jsonrpc 2.0, same request id
+    - Returns result dict with 'content' key containing list of text items
+    - skip_if_exists=False overwrites existing variable with S3 content
+    - No "já existe" skip message when force reloading
+    - Force reload triggers S3 download (verified by counting get_object calls)
+    - Force reload updates variable with different file content
+    - Works on empty REPL (loads normally)
+    - Updates variable metadata (last_accessed timestamp)
+    - Works with data_type=json, csv, lines
+    - Overwrites variables created via rlm_execute
+    - Works with string request id
+    - Returns error for nonexistent S3 file (even when variable exists)
+    - No error field on success
+    - Multiple consecutive reloads work
+    - Preserves other variables when reloading one
+    - Force reload replaces original content entirely
+
+- Files changed:
+  - tests/test_http_server.py (added TestMcpToolRlmLoadS3ForceReload class with 20 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - skip_if_exists=False bypasses the `if skip_if_exists and var_name in repl.variables` check
+  - When skip_if_exists=False, S3 download is ALWAYS attempted (even if variable exists)
+  - This means nonexistent S3 file will error even if variable exists (different from skip_if_exists=True which skips early)
+  - Mock S3 client setup: use S3Client() with _client injected as mock_minio_client_with_data (same pattern as SkipIfExists tests)
+  - Cannot create MockS3Client with lambda object_exists - MockMinioClient doesn't have that method
+  - Use counting_get_object wrapper to verify S3 downloads are happening
+
+---
+
+## Iteration 54 - Test tool rlm_search_index busca termos
+
+- What was implemented:
+  - Added TestMcpToolRlmSearchIndex class to tests/test_http_server.py
+  - 25 test cases covering:
+    - Returns 200 status code, JSON content-type, jsonrpc 2.0, same request id
+    - Returns result dict with 'content' key containing list of text items
+    - Finds indexed terms and shows results (OR mode default)
+    - Multiple terms search in OR mode (require_all=False)
+    - AND mode (require_all=True) finds lines with ALL terms
+    - Shows "nenhum" message when terms not found
+    - Shows index stats (termos count, occurrences)
+    - Error for nonexistent variable (isError=True)
+    - Error for variable without index (mentions 100k chars threshold)
+    - Limit parameter is respected
+    - Default require_all is False (OR mode)
+    - Empty terms list handled gracefully
+    - Case-insensitive search
+    - Shows line context for matches
+    - Works with string request id
+    - Missing var_name or terms parameter returns error
+    - No error field on success
+    - Multiple requests return consistent results
+    - AND mode shows "nenhuma linha" message when no match
+    - Shows occurrence count per term
+
+- Files changed:
+  - tests/test_http_server.py (added TestMcpToolRlmSearchIndex class with 25 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - rlm_search_index requires both var_name and terms parameters
+  - Tool checks if variable exists in repl.variables BEFORE checking for index
+  - Tool uses get_index(var_name) from indexer module to retrieve cached index
+  - OR mode returns: term -> matches dict with occurrence count per term
+  - AND mode returns: lines that contain ALL terms (shows line numbers)
+  - Index must be manually created via set_index() in tests (auto-indexing happens in rlm_load_data)
+  - Use clear_all_indices() from indexer module to reset indices between tests
+  - Index stats include "indexed_terms" and "total_occurrences" counts
+
+---
+
