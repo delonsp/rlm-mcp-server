@@ -1153,3 +1153,82 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 35 - Test get_object com mock retorna bytes
+
+- What was implemented:
+  - Added TestGetObject class to tests/test_s3_client.py
+  - 16 test cases covering:
+    - Returns bytes type
+    - Returns correct content (text file)
+    - Returns JSON file content as bytes
+    - Returns binary file content (PNG with magic bytes verification)
+    - Raises RuntimeError for nonexistent object
+    - Raises RuntimeError for nonexistent bucket
+    - Raises RuntimeError when client is not configured
+    - Empty file returns empty bytes (b"")
+    - Large file handling (1MB+)
+    - UTF-8 encoded content with international characters
+    - Nested path objects (a/b/c/deep.txt)
+    - Special characters in object key (spaces, hyphens, underscores)
+    - Read-only operation (doesn't modify stored data)
+    - Binary data with null bytes
+    - Multiple objects retrieved independently
+    - Object keys with multiple dots
+
+- Files changed:
+  - tests/test_s3_client.py (added TestGetObject class with 16 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - get_object uses response.read(), response.close(), response.release_conn() pattern
+  - MockMinioResponse wraps bytes and provides read(), close(), release_conn() methods
+  - get_object raises RuntimeError when object not found (wraps internal exception)
+  - Empty file returns b"" (empty bytes), not None
+  - Binary data with null bytes is handled correctly without corruption
+  - Large files (1MB+) work correctly with the mock
+
+---
+
+## Iteration 36 - Test get_object_info com mock retorna metadados
+
+- What was implemented:
+  - Added TestGetObjectInfo class to tests/test_s3_client.py
+  - 23 test cases covering:
+    - Returns dict type
+    - Returns expected keys (bucket, key, size, size_human, content_type, last_modified, etag)
+    - Returns correct bucket name
+    - Returns correct object key
+    - Returns correct size in bytes
+    - Returns human-readable size string
+    - Returns correct content_type (text/plain, application/json, image/png)
+    - Returns last_modified in ISO format
+    - Returns etag
+    - Returns None for nonexistent object
+    - Returns None for nonexistent bucket
+    - Returns None when client is not configured (catches exception internally)
+    - Handles nested path objects
+    - Large file size handling (1MB+, MB unit)
+    - Empty file metadata (size=0)
+    - Special characters in object key
+    - Read-only operation
+    - Does NOT download object (uses stat_object, not get_object)
+    - Default content_type (application/octet-stream)
+    - Multiple objects info independently
+    - Object keys with multiple dots
+
+- Files changed:
+  - tests/test_s3_client.py (added TestGetObjectInfo class with 23 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - get_object_info uses self.client.stat_object(bucket, key) to get metadata without downloading
+  - Unlike get_object/list_buckets, get_object_info catches ALL exceptions and returns None instead of raising RuntimeError
+  - Returns dict with keys: bucket, key, size, size_human, content_type, last_modified, etag
+  - last_modified is converted to ISO format via .isoformat()
+  - _human_size() formats bytes to B, KB, MB, GB, TB
+  - MockMinioStat has attributes: size, content_type, last_modified, etag
+
+---
+

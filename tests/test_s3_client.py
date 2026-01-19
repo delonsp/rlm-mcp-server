@@ -784,3 +784,249 @@ class TestGetObject:
             client._client = mock_minio_client
             result = client.get_object("dots", "file.backup.2024.01.txt")
             assert result == b"backup content"
+
+
+class TestGetObjectInfo:
+    """Tests for S3Client.get_object_info() method."""
+
+    def test_returns_dict(self, s3_client_with_mock):
+        """get_object_info returns a dict."""
+        result = s3_client_with_mock.get_object_info("test-bucket", "test.txt")
+        assert isinstance(result, dict)
+
+    def test_returns_expected_keys(self, s3_client_with_mock):
+        """get_object_info returns dict with expected keys: bucket, key, size, size_human, content_type, last_modified, etag."""
+        result = s3_client_with_mock.get_object_info("test-bucket", "test.txt")
+        assert "bucket" in result
+        assert "key" in result
+        assert "size" in result
+        assert "size_human" in result
+        assert "content_type" in result
+        assert "last_modified" in result
+        assert "etag" in result
+
+    def test_returns_correct_bucket(self, s3_client_with_mock):
+        """get_object_info returns the correct bucket name."""
+        result = s3_client_with_mock.get_object_info("test-bucket", "test.txt")
+        assert result["bucket"] == "test-bucket"
+
+    def test_returns_correct_key(self, s3_client_with_mock):
+        """get_object_info returns the correct object key."""
+        result = s3_client_with_mock.get_object_info("test-bucket", "test.txt")
+        assert result["key"] == "test.txt"
+
+    def test_returns_correct_size(self, s3_client_with_mock):
+        """get_object_info returns the correct size in bytes."""
+        result = s3_client_with_mock.get_object_info("test-bucket", "test.txt")
+        # test.txt is b"Hello, World!" (13 bytes)
+        assert result["size"] == 13
+
+    def test_returns_human_readable_size(self, s3_client_with_mock):
+        """get_object_info returns human-readable size string."""
+        result = s3_client_with_mock.get_object_info("test-bucket", "test.txt")
+        assert isinstance(result["size_human"], str)
+        assert "B" in result["size_human"]  # Should contain unit
+
+    def test_returns_content_type(self, s3_client_with_mock):
+        """get_object_info returns the correct content_type."""
+        result = s3_client_with_mock.get_object_info("test-bucket", "test.txt")
+        assert result["content_type"] == "text/plain"
+
+    def test_returns_content_type_for_json(self, s3_client_with_mock):
+        """get_object_info returns application/json for JSON file."""
+        result = s3_client_with_mock.get_object_info("test-bucket", "data/file.json")
+        assert result["content_type"] == "application/json"
+
+    def test_returns_content_type_for_image(self, s3_client_with_mock):
+        """get_object_info returns image/png for PNG file."""
+        result = s3_client_with_mock.get_object_info("test-bucket", "images/photo.png")
+        assert result["content_type"] == "image/png"
+
+    def test_returns_last_modified_iso_format(self, s3_client_with_mock):
+        """get_object_info returns last_modified in ISO format."""
+        result = s3_client_with_mock.get_object_info("test-bucket", "test.txt")
+        assert result["last_modified"] is not None
+        # ISO format contains T separator
+        assert "T" in result["last_modified"]
+
+    def test_returns_etag(self, s3_client_with_mock):
+        """get_object_info returns an etag."""
+        result = s3_client_with_mock.get_object_info("test-bucket", "test.txt")
+        assert result["etag"] is not None
+        assert isinstance(result["etag"], str)
+
+    def test_returns_none_for_nonexistent_object(self, s3_client_with_mock):
+        """get_object_info returns None for nonexistent object."""
+        result = s3_client_with_mock.get_object_info("test-bucket", "nonexistent.txt")
+        assert result is None
+
+    def test_returns_none_for_nonexistent_bucket(self, s3_client_with_mock):
+        """get_object_info returns None for nonexistent bucket."""
+        result = s3_client_with_mock.get_object_info("nonexistent-bucket", "file.txt")
+        assert result is None
+
+    def test_returns_none_when_unconfigured(self, s3_client_unconfigured):
+        """get_object_info returns None when client is not configured.
+
+        Note: Unlike get_object, list_buckets, etc., get_object_info catches all
+        exceptions and returns None instead of raising RuntimeError.
+        """
+        result = s3_client_unconfigured.get_object_info("any-bucket", "any-file.txt")
+        assert result is None
+
+    def test_nested_path_object(self, s3_client_with_mock):
+        """get_object_info returns metadata for nested path objects."""
+        result = s3_client_with_mock.get_object_info("test-bucket", "data/file.json")
+        assert result is not None
+        assert result["bucket"] == "test-bucket"
+        assert result["key"] == "data/file.json"
+        assert result["content_type"] == "application/json"
+
+    def test_large_file_size(self, mock_minio_client):
+        """get_object_info returns correct size for large file."""
+        large_data = b"x" * (1024 * 1024)  # 1MB
+        mock_minio_client.add_bucket("large-bucket")
+        mock_minio_client.add_object("large-bucket", "large.bin", large_data)
+        with patch.dict(
+            os.environ,
+            {
+                "MINIO_ENDPOINT": "mock-minio:9000",
+                "MINIO_ACCESS_KEY": "mock-access-key",
+                "MINIO_SECRET_KEY": "mock-secret-key",
+            },
+            clear=True,
+        ):
+            client = S3Client()
+            client._client = mock_minio_client
+            result = client.get_object_info("large-bucket", "large.bin")
+            assert result is not None
+            assert result["size"] == 1024 * 1024
+            assert "MB" in result["size_human"]
+
+    def test_empty_file(self, mock_minio_client):
+        """get_object_info returns metadata for empty file."""
+        mock_minio_client.add_bucket("empty-files")
+        mock_minio_client.add_object("empty-files", "empty.txt", b"")
+        with patch.dict(
+            os.environ,
+            {
+                "MINIO_ENDPOINT": "mock-minio:9000",
+                "MINIO_ACCESS_KEY": "mock-access-key",
+                "MINIO_SECRET_KEY": "mock-secret-key",
+            },
+            clear=True,
+        ):
+            client = S3Client()
+            client._client = mock_minio_client
+            result = client.get_object_info("empty-files", "empty.txt")
+            assert result is not None
+            assert result["size"] == 0
+
+    def test_special_characters_in_key(self, mock_minio_client):
+        """get_object_info handles special characters in object key."""
+        mock_minio_client.add_bucket("special")
+        mock_minio_client.add_object(
+            "special", "file with spaces.txt", b"content"
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "MINIO_ENDPOINT": "mock-minio:9000",
+                "MINIO_ACCESS_KEY": "mock-access-key",
+                "MINIO_SECRET_KEY": "mock-secret-key",
+            },
+            clear=True,
+        ):
+            client = S3Client()
+            client._client = mock_minio_client
+            result = client.get_object_info("special", "file with spaces.txt")
+            assert result is not None
+            assert result["key"] == "file with spaces.txt"
+
+    def test_get_object_info_is_read_only(self, s3_client_with_mock, mock_minio_client_with_data):
+        """get_object_info does not modify the stored object."""
+        result1 = s3_client_with_mock.get_object_info("test-bucket", "test.txt")
+        result2 = s3_client_with_mock.get_object_info("test-bucket", "test.txt")
+        assert result1 == result2
+        # Check underlying mock data unchanged
+        assert mock_minio_client_with_data.buckets["test-bucket"]["test.txt"] == b"Hello, World!"
+
+    def test_does_not_download_object(self, mock_minio_client):
+        """get_object_info uses stat_object, not get_object (doesn't download data)."""
+        mock_minio_client.add_bucket("stat-test")
+        mock_minio_client.add_object("stat-test", "test.txt", b"content")
+
+        # Track if get_object was called
+        original_get_object = mock_minio_client.get_object
+        get_object_calls = []
+
+        def tracked_get_object(*args, **kwargs):
+            get_object_calls.append(args)
+            return original_get_object(*args, **kwargs)
+
+        mock_minio_client.get_object = tracked_get_object
+
+        with patch.dict(
+            os.environ,
+            {
+                "MINIO_ENDPOINT": "mock-minio:9000",
+                "MINIO_ACCESS_KEY": "mock-access-key",
+                "MINIO_SECRET_KEY": "mock-secret-key",
+            },
+            clear=True,
+        ):
+            client = S3Client()
+            client._client = mock_minio_client
+            result = client.get_object_info("stat-test", "test.txt")
+            assert result is not None
+            # get_object should NOT have been called
+            assert len(get_object_calls) == 0
+
+    def test_default_content_type(self, mock_minio_client):
+        """get_object_info returns default content_type for unknown file type."""
+        mock_minio_client.add_bucket("default-ct")
+        mock_minio_client.add_object("default-ct", "unknown.xyz", b"content")
+        with patch.dict(
+            os.environ,
+            {
+                "MINIO_ENDPOINT": "mock-minio:9000",
+                "MINIO_ACCESS_KEY": "mock-access-key",
+                "MINIO_SECRET_KEY": "mock-secret-key",
+            },
+            clear=True,
+        ):
+            client = S3Client()
+            client._client = mock_minio_client
+            result = client.get_object_info("default-ct", "unknown.xyz")
+            assert result is not None
+            # MockMinioClient uses "application/octet-stream" as default
+            assert result["content_type"] == "application/octet-stream"
+
+    def test_multiple_objects_info_independently(self, s3_client_with_mock):
+        """get_object_info retrieves info for different objects correctly."""
+        txt_info = s3_client_with_mock.get_object_info("test-bucket", "test.txt")
+        json_info = s3_client_with_mock.get_object_info("test-bucket", "data/file.json")
+        png_info = s3_client_with_mock.get_object_info("test-bucket", "images/photo.png")
+
+        assert txt_info["content_type"] == "text/plain"
+        assert json_info["content_type"] == "application/json"
+        assert png_info["content_type"] == "image/png"
+
+    def test_object_key_with_dots(self, mock_minio_client):
+        """get_object_info handles object keys with multiple dots."""
+        mock_minio_client.add_bucket("dots")
+        mock_minio_client.add_object("dots", "file.backup.2024.01.txt", b"backup content")
+        with patch.dict(
+            os.environ,
+            {
+                "MINIO_ENDPOINT": "mock-minio:9000",
+                "MINIO_ACCESS_KEY": "mock-access-key",
+                "MINIO_SECRET_KEY": "mock-secret-key",
+            },
+            clear=True,
+        ):
+            client = S3Client()
+            client._client = mock_minio_client
+            result = client.get_object_info("dots", "file.backup.2024.01.txt")
+            assert result is not None
+            assert result["key"] == "file.backup.2024.01.txt"
