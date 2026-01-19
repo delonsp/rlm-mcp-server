@@ -88,7 +88,7 @@ src/rlm_mcp/
 
 ## Fase 7: Testes de Integração HTTP (FastAPI TestClient)
 
-- [ ] Testar endpoint /health retorna 200
+- [x] Testar endpoint /health retorna 200
 - [ ] Testar MCP initialize retorna capabilities
 - [ ] Testar MCP tools/list retorna todas as tools
 - [ ] Testar tool rlm_execute com código simples
