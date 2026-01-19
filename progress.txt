@@ -1232,3 +1232,78 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 37 - Test object_exists com mock retorna True/False
+
+- What was implemented:
+  - Added TestObjectExists class to tests/test_s3_client.py
+  - 18 test cases covering:
+    - Returns True for existing object (test.txt, nested paths, images)
+    - Returns False for nonexistent object
+    - Returns False for nonexistent bucket
+    - Returns False when client is not configured (catches exception, doesn't raise RuntimeError)
+    - Returns bool type (both True and False cases)
+    - Handles nested paths (data/file.json, a/b/c/d/e/deep.txt)
+    - Returns False for empty bucket
+    - Returns True for empty file (0 bytes)
+    - Handles special characters in key (spaces, dots, hyphens)
+    - Handles deeply nested paths
+    - Is read-only (doesn't modify stored data)
+    - Uses stat_object, not get_object (doesn't download data)
+    - Is case-sensitive for object keys
+    - Works with many objects (50) in bucket
+
+- Files changed:
+  - tests/test_s3_client.py (added TestObjectExists class with 18 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - object_exists uses self.client.stat_object(bucket, key) to check existence
+  - Unlike get_object/list_buckets, object_exists catches ALL exceptions and returns False (not RuntimeError)
+  - Similar to get_object_info, object_exists is exception-safe (returns False for any error)
+  - Empty file (0 bytes) still exists - object_exists returns True
+  - S3/MinIO keys are case-sensitive - "Test.txt" != "test.txt"
+  - Checking existence via stat_object is efficient - doesn't download the object content
+
+---
+
+## Iteration 38 - Test extract_with_pdfplumber com PDF machine readable (criar fixture)
+
+- What was implemented:
+  - Created tests/test_pdf_parser.py with TestExtractWithPdfplumber class
+  - Created multiple PDF fixtures using reportlab:
+    - sample_pdf: 2-page PDF with text content
+    - sample_pdf_single_page: 1-page PDF
+    - sample_pdf_many_pages: 10-page PDF
+    - sample_pdf_empty_pages: 3 pages, one empty (page 2)
+    - sample_pdf_unicode: PDF with Portuguese, Spanish, French characters
+    - sample_pdf_long_text: PDF with long Lorem ipsum text
+  - 22 test cases covering:
+    - Returns PDFExtractionResult object
+    - Returns success=True for valid PDF
+    - Returns method="pdfplumber"
+    - Returns correct page count (1, 2, 10 pages)
+    - Extracts text content from all pages
+    - Includes page markers "--- Página N ---"
+    - Skips empty pages in text_parts (but counts them in pages)
+    - Handles Unicode/international characters
+    - Returns error=None on success
+    - Returns string text, int pages
+    - Preserves line breaks and separates pages with double newline
+
+- Files changed:
+  - tests/test_pdf_parser.py (new file)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - reportlab (already installed) can generate test PDFs with selectable text
+  - extract_with_pdfplumber uses layout=True for text extraction
+  - Page markers format: "--- Página {i + 1} ---\n{page_text}"
+  - Empty pages (page.extract_text() returns "" or whitespace) are skipped in text_parts
+  - But result.pages counts ALL pages including empty ones (len(pdf.pages))
+  - Pages are joined with "\n\n" separator
+  - PDFExtractionResult fields: text (str), pages (int), method (str), success (bool), error (Optional[str])
+
+---
+
