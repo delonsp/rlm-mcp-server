@@ -94,7 +94,7 @@ src/rlm_mcp/
 - [x] Testar tool rlm_execute com código simples
 - [x] Testar tool rlm_load_data carrega variável
 - [x] Testar tool rlm_list_vars lista variáveis carregadas
-- [ ] Testar tool rlm_var_info retorna info da variável
+- [x] Testar tool rlm_var_info retorna info da variável
 - [ ] Testar tool rlm_clear limpa namespace
 - [ ] Testar tool rlm_load_s3 com skip_if_exists=True pula se existe
 - [ ] Testar tool rlm_load_s3 com skip_if_exists=False força reload

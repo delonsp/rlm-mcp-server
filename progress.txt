@@ -1663,3 +1663,39 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 49 - Test tool rlm_list_vars lista variáveis carregadas
+
+- What was implemented:
+  - Added TestMcpToolRlmListVars class to tests/test_http_server.py
+  - 28 test cases covering:
+    - Returns 200 status code, JSON content-type, jsonrpc 2.0
+    - Returns same request id (int and string)
+    - Returns result dict with 'content' key containing list of text items
+    - Empty REPL shows "Nenhuma variável no REPL" message
+    - Shows loaded variables (name, type, size, preview)
+    - Lists multiple variables (var1, var2, var3)
+    - Shows dict, list, CSV variables with correct type
+    - Shows variables created via rlm_execute
+    - Shows header "Variáveis no REPL" when there are variables
+    - Multiple requests return same variables
+    - Reflects cleared variables (after rlm_clear)
+    - Shows large variable size in KB
+    - Preview truncated for long values (>100 chars) with "..."
+    - Does not include internal llm_* functions (only user variables)
+    - Handles Unicode content in preview
+
+- Files changed:
+  - tests/test_http_server.py (added TestMcpToolRlmListVars class with 28 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - rlm_list_vars tool calls repl.list_variables() which returns list[VariableInfo]
+  - list_variables() returns list(self.variable_metadata.values()) - only user variables with metadata
+  - llm_* functions are injected into namespace but NOT tracked in variable_metadata
+  - Output format: "  {name}: {type_name} ({size_human})\n    Preview: {preview[:100]}..."
+  - call_tool helper needs arguments={} even for tools with no parameters (not None)
+  - rlm_clear tool parameter is 'all' (boolean), not 'clear_all'
+
+---
+
