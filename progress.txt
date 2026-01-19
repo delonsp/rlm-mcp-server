@@ -1343,3 +1343,78 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 40 - Test extract_pdf com method="auto" usa pdfplumber primeiro
+
+- What was implemented:
+  - Added TestExtractPdfAutoUsesPdfplumberFirst class to tests/test_pdf_parser.py
+  - Added import for extract_pdf function
+  - 22 test cases covering:
+    - Returns PDFExtractionResult object
+    - Returns success=True for machine readable PDF
+    - Returns method='pdfplumber' when text is sufficient
+    - Extracts text from PDF and all pages
+    - Returns correct page count (1, 2, 10 pages)
+    - Single page, many pages, long text, unicode, empty pages PDFs
+    - Returns error=None on success
+    - Default method is 'auto' (no method specified)
+    - Includes page markers from pdfplumber
+    - File not found returns error with method='none'
+    - Does NOT call OCR when pdfplumber succeeds (verified with monkeypatch)
+    - Default min_chars_threshold=100 (tested with monkeypatch)
+    - Custom min_chars_threshold respected (triggers OCR when threshold not met)
+    - Returns string text, int pages
+
+- Files changed:
+  - tests/test_pdf_parser.py (added TestExtractPdfAutoUsesPdfplumberFirst class, added import)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - extract_pdf with method='auto' calls extract_with_pdfplumber first
+  - If pdfplumber extracts >= min_chars_threshold chars (default 100), returns pdfplumber result
+  - If pdfplumber extracts < min_chars_threshold chars, falls back to OCR
+  - File not found check happens BEFORE method routing (returns method='none', not 'pdfplumber')
+  - monkeypatch.setattr(pdf_parser, "extract_with_mistral_ocr", mock_ocr) allows verifying OCR is/isn't called
+  - The sample_pdf fixture creates PDF with ~100+ chars, sufficient for default threshold
+  - Setting min_chars_threshold=999999 forces OCR fallback even for text-rich PDFs
+
+---
+
+## Iteration 41 - Test extract_pdf faz fallback para OCR se pdfplumber extrai pouco
+
+- What was implemented:
+  - Added TestExtractPdfFallbackToOcr class to tests/test_pdf_parser.py
+  - Added 2 new fixtures: sample_pdf_minimal_text (PDF with "Hi"), sample_pdf_empty_text (PDF with only shapes)
+  - 17 test cases covering:
+    - OCR is called when pdfplumber text is below min_chars_threshold
+    - Returns method='mistral_ocr' when OCR fallback succeeds
+    - Returns OCR text and page count when fallback succeeds
+    - Returns success=True when OCR fallback succeeds
+    - Fallback triggered for empty text PDF
+    - Fallback respects min_chars_threshold parameter
+    - No fallback when threshold is 0 (any text is enough)
+    - Returns pdfplumber result if OCR fails but pdfplumber had some text
+    - Returns OCR error if both pdfplumber and OCR fail
+    - Fallback for text just below threshold
+    - No fallback for text at or above threshold
+    - Correct path passed to OCR function
+    - Multi-page PDF fallback
+    - Fallback when pdfplumber returns success=False
+    - Whitespace-only text triggers fallback
+
+- Files changed:
+  - tests/test_pdf_parser.py (added TestExtractPdfFallbackToOcr class with 17 tests, added 2 fixtures)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - pdfplumber with layout=True extracts lots of whitespace (full page width), making text length much larger than expected
+  - A single page with "Hi" text extracts to ~200+ chars stripped due to page marker "--- Página 1 ---"
+  - Multi-page PDFs extract even more (~10k chars for 3 pages with minimal text)
+  - Use high min_chars_threshold values (500+) to force fallback in tests
+  - extract_pdf checks len(result.text.strip()) >= min_chars_threshold to decide on fallback
+  - When both pdfplumber and OCR fail, extract_pdf returns OCR error (considered more informative)
+  - When OCR fails but pdfplumber had some text (result.text.strip()), returns pdfplumber result
+
+---
+

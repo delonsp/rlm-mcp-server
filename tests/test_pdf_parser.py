@@ -651,3 +651,508 @@ class TestExtractPdfAutoUsesPdfplumberFirst:
         """extract_pdf with method='auto' returns pages as int."""
         result = extract_pdf(sample_pdf, method="auto")
         assert isinstance(result.pages, int)
+
+
+# ============================================================================
+# Tests for extract_pdf fallback to OCR when pdfplumber extracts little text
+# ============================================================================
+
+
+@pytest.fixture
+def sample_pdf_minimal_text():
+    """
+    Creates a PDF with minimal text content (below default threshold).
+
+    This simulates a scanned PDF where pdfplumber can extract very little text.
+
+    Yields:
+        str: Path to the temporary PDF file.
+    """
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
+
+    fd, path = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)
+
+    c = canvas.Canvas(path, pagesize=letter)
+    # Only add minimal text (less than 100 chars which is default threshold)
+    c.drawString(100, 750, "Hi")  # Just 2 chars
+    c.showPage()
+    c.save()
+
+    yield path
+
+    if os.path.exists(path):
+        os.unlink(path)
+
+
+@pytest.fixture
+def sample_pdf_empty_text():
+    """
+    Creates a PDF with no text content at all.
+
+    This simulates a purely image-based scanned PDF.
+
+    Yields:
+        str: Path to the temporary PDF file.
+    """
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
+
+    fd, path = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)
+
+    c = canvas.Canvas(path, pagesize=letter)
+    # Don't add any text, just draw a shape to make valid PDF
+    c.rect(100, 700, 200, 50)  # Just a rectangle, no text
+    c.showPage()
+    c.save()
+
+    yield path
+
+    if os.path.exists(path):
+        os.unlink(path)
+
+
+class TestExtractPdfFallbackToOcr:
+    """Tests for extract_pdf fallback to OCR when pdfplumber extracts insufficient text."""
+
+    def test_calls_ocr_when_pdfplumber_extracts_below_threshold(self, sample_pdf_minimal_text, monkeypatch):
+        """extract_pdf calls OCR when pdfplumber text is below min_chars_threshold."""
+        ocr_called = []
+
+        def mock_ocr(path):
+            ocr_called.append(path)
+            return PDFExtractionResult(
+                text="OCR extracted text from scanned PDF",
+                pages=1,
+                method="mistral_ocr",
+                success=True
+            )
+
+        from rlm_mcp import pdf_parser
+        monkeypatch.setattr(pdf_parser, "extract_with_mistral_ocr", mock_ocr)
+
+        # pdfplumber extracts ~200+ chars (including page marker), set threshold higher
+        result = extract_pdf(sample_pdf_minimal_text, method="auto", min_chars_threshold=500)
+
+        # Should have called OCR because pdfplumber text is below threshold
+        assert len(ocr_called) == 1
+        assert ocr_called[0] == sample_pdf_minimal_text
+
+    def test_returns_ocr_method_when_fallback_succeeds(self, sample_pdf_minimal_text, monkeypatch):
+        """extract_pdf returns method='mistral_ocr' when OCR fallback succeeds."""
+        def mock_ocr(path):
+            return PDFExtractionResult(
+                text="OCR extracted text from scanned PDF",
+                pages=1,
+                method="mistral_ocr",
+                success=True
+            )
+
+        from rlm_mcp import pdf_parser
+        monkeypatch.setattr(pdf_parser, "extract_with_mistral_ocr", mock_ocr)
+
+        # Use high threshold to force fallback
+        result = extract_pdf(sample_pdf_minimal_text, method="auto", min_chars_threshold=500)
+
+        assert result.method == "mistral_ocr"
+
+    def test_returns_ocr_text_when_fallback_succeeds(self, sample_pdf_minimal_text, monkeypatch):
+        """extract_pdf returns OCR text when fallback succeeds."""
+        ocr_text = "OCR extracted: detailed text from scanned document"
+
+        def mock_ocr(path):
+            return PDFExtractionResult(
+                text=ocr_text,
+                pages=1,
+                method="mistral_ocr",
+                success=True
+            )
+
+        from rlm_mcp import pdf_parser
+        monkeypatch.setattr(pdf_parser, "extract_with_mistral_ocr", mock_ocr)
+
+        # Use high threshold to force fallback
+        result = extract_pdf(sample_pdf_minimal_text, method="auto", min_chars_threshold=500)
+
+        assert result.text == ocr_text
+
+    def test_returns_success_true_when_ocr_fallback_succeeds(self, sample_pdf_minimal_text, monkeypatch):
+        """extract_pdf returns success=True when OCR fallback succeeds."""
+        def mock_ocr(path):
+            return PDFExtractionResult(
+                text="OCR text",
+                pages=1,
+                method="mistral_ocr",
+                success=True
+            )
+
+        from rlm_mcp import pdf_parser
+        monkeypatch.setattr(pdf_parser, "extract_with_mistral_ocr", mock_ocr)
+
+        # Use high threshold to force fallback
+        result = extract_pdf(sample_pdf_minimal_text, method="auto", min_chars_threshold=500)
+
+        assert result.success is True
+
+    def test_ocr_page_count_is_used_when_fallback_succeeds(self, sample_pdf_minimal_text, monkeypatch):
+        """extract_pdf returns OCR page count when OCR fallback succeeds."""
+        def mock_ocr(path):
+            return PDFExtractionResult(
+                text="OCR text",
+                pages=5,  # Different from pdfplumber
+                method="mistral_ocr",
+                success=True
+            )
+
+        from rlm_mcp import pdf_parser
+        monkeypatch.setattr(pdf_parser, "extract_with_mistral_ocr", mock_ocr)
+
+        # Use high threshold to force fallback
+        result = extract_pdf(sample_pdf_minimal_text, method="auto", min_chars_threshold=500)
+
+        assert result.pages == 5
+
+    def test_fallback_triggered_for_empty_text_pdf(self, sample_pdf_empty_text, monkeypatch):
+        """extract_pdf falls back to OCR when pdfplumber extracts no text."""
+        ocr_called = []
+
+        def mock_ocr(path):
+            ocr_called.append(path)
+            return PDFExtractionResult(
+                text="OCR text from empty PDF",
+                pages=1,
+                method="mistral_ocr",
+                success=True
+            )
+
+        from rlm_mcp import pdf_parser
+        monkeypatch.setattr(pdf_parser, "extract_with_mistral_ocr", mock_ocr)
+
+        result = extract_pdf(sample_pdf_empty_text, method="auto")
+
+        assert len(ocr_called) == 1
+        assert result.method == "mistral_ocr"
+
+    def test_fallback_respects_min_chars_threshold(self, sample_pdf, monkeypatch):
+        """extract_pdf uses min_chars_threshold to decide whether to fallback."""
+        ocr_called = []
+
+        def mock_ocr(path):
+            ocr_called.append(path)
+            return PDFExtractionResult(
+                text="OCR text",
+                pages=1,
+                method="mistral_ocr",
+                success=True
+            )
+
+        from rlm_mcp import pdf_parser
+        monkeypatch.setattr(pdf_parser, "extract_with_mistral_ocr", mock_ocr)
+
+        # sample_pdf has ~100+ chars, set threshold very high
+        result = extract_pdf(sample_pdf, method="auto", min_chars_threshold=50000)
+
+        # Should have called OCR because threshold not met
+        assert len(ocr_called) == 1
+        assert result.method == "mistral_ocr"
+
+    def test_no_fallback_when_threshold_is_zero(self, sample_pdf_minimal_text, monkeypatch):
+        """extract_pdf does not fallback when min_chars_threshold=0."""
+        ocr_called = []
+
+        def mock_ocr(path):
+            ocr_called.append(path)
+            return PDFExtractionResult(
+                text="OCR text",
+                pages=1,
+                method="mistral_ocr",
+                success=True
+            )
+
+        from rlm_mcp import pdf_parser
+        monkeypatch.setattr(pdf_parser, "extract_with_mistral_ocr", mock_ocr)
+
+        # With threshold=0, even minimal text should pass
+        result = extract_pdf(sample_pdf_minimal_text, method="auto", min_chars_threshold=0)
+
+        # Should NOT call OCR
+        assert len(ocr_called) == 0
+        assert result.method == "pdfplumber"
+
+    def test_returns_pdfplumber_if_ocr_fails_but_has_some_text(self, sample_pdf_minimal_text, monkeypatch):
+        """extract_pdf returns pdfplumber result if OCR fails but pdfplumber had some text."""
+        def mock_ocr(path):
+            return PDFExtractionResult(
+                text="",
+                pages=0,
+                method="mistral_ocr",
+                success=False,
+                error="OCR API error"
+            )
+
+        from rlm_mcp import pdf_parser
+        monkeypatch.setattr(pdf_parser, "extract_with_mistral_ocr", mock_ocr)
+
+        result = extract_pdf(sample_pdf_minimal_text, method="auto")
+
+        # pdfplumber has "Hi" which is some text
+        assert result.method == "pdfplumber"
+        assert result.success is True
+        assert "Hi" in result.text
+
+    def test_returns_ocr_error_if_both_fail(self, sample_pdf_empty_text, monkeypatch):
+        """extract_pdf returns OCR error if both pdfplumber and OCR fail."""
+        def mock_ocr(path):
+            return PDFExtractionResult(
+                text="",
+                pages=0,
+                method="mistral_ocr",
+                success=False,
+                error="MISTRAL_API_KEY não configurada"
+            )
+
+        from rlm_mcp import pdf_parser
+        monkeypatch.setattr(pdf_parser, "extract_with_mistral_ocr", mock_ocr)
+
+        result = extract_pdf(sample_pdf_empty_text, method="auto")
+
+        # Both failed, should return OCR result (more informative)
+        assert result.method == "mistral_ocr"
+        assert result.success is False
+        assert result.error is not None
+
+    def test_fallback_for_text_just_below_threshold(self, monkeypatch):
+        """extract_pdf falls back when text is below threshold."""
+        from reportlab.lib.pagesizes import letter
+        from reportlab.pdfgen import canvas
+
+        fd, path = tempfile.mkstemp(suffix=".pdf")
+        os.close(fd)
+
+        try:
+            c = canvas.Canvas(path, pagesize=letter)
+            # Create text that will result in ~200 chars after extraction (with page marker)
+            c.drawString(100, 750, "X" * 50)  # 50 chars
+            c.showPage()
+            c.save()
+
+            ocr_called = []
+
+            def mock_ocr(pdf_path):
+                ocr_called.append(pdf_path)
+                return PDFExtractionResult(
+                    text="OCR text",
+                    pages=1,
+                    method="mistral_ocr",
+                    success=True
+                )
+
+            from rlm_mcp import pdf_parser
+            monkeypatch.setattr(pdf_parser, "extract_with_mistral_ocr", mock_ocr)
+
+            # Use threshold higher than what pdfplumber extracts (~200 chars)
+            result = extract_pdf(path, method="auto", min_chars_threshold=500)
+
+            # Should have called OCR (extracted text < 500 threshold)
+            assert len(ocr_called) == 1
+
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
+    def test_no_fallback_for_text_at_threshold(self, monkeypatch):
+        """extract_pdf does not fallback when text is exactly at threshold."""
+        from reportlab.lib.pagesizes import letter
+        from reportlab.pdfgen import canvas
+
+        fd, path = tempfile.mkstemp(suffix=".pdf")
+        os.close(fd)
+
+        try:
+            c = canvas.Canvas(path, pagesize=letter)
+            # Create enough text to meet a lower threshold
+            text = "A" * 50
+            c.drawString(100, 750, text)
+            c.showPage()
+            c.save()
+
+            ocr_called = []
+
+            def mock_ocr(pdf_path):
+                ocr_called.append(pdf_path)
+                return PDFExtractionResult(
+                    text="OCR text",
+                    pages=1,
+                    method="mistral_ocr",
+                    success=True
+                )
+
+            from rlm_mcp import pdf_parser
+            monkeypatch.setattr(pdf_parser, "extract_with_mistral_ocr", mock_ocr)
+
+            # Use threshold of 20 chars, we have 50+ (including page marker)
+            result = extract_pdf(path, method="auto", min_chars_threshold=20)
+
+            # Should NOT call OCR (extracted text >= 20 chars)
+            assert len(ocr_called) == 0
+            assert result.method == "pdfplumber"
+
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
+    def test_fallback_path_passed_to_ocr(self, sample_pdf_minimal_text, monkeypatch):
+        """extract_pdf passes correct path to OCR function."""
+        received_path = []
+
+        def mock_ocr(path):
+            received_path.append(path)
+            return PDFExtractionResult(
+                text="OCR text",
+                pages=1,
+                method="mistral_ocr",
+                success=True
+            )
+
+        from rlm_mcp import pdf_parser
+        monkeypatch.setattr(pdf_parser, "extract_with_mistral_ocr", mock_ocr)
+
+        # Use high threshold to force fallback
+        extract_pdf(sample_pdf_minimal_text, method="auto", min_chars_threshold=500)
+
+        assert len(received_path) == 1
+        assert received_path[0] == sample_pdf_minimal_text
+
+    def test_ocr_error_none_when_ocr_succeeds(self, sample_pdf_minimal_text, monkeypatch):
+        """extract_pdf returns error=None when OCR fallback succeeds."""
+        def mock_ocr(path):
+            return PDFExtractionResult(
+                text="OCR text",
+                pages=1,
+                method="mistral_ocr",
+                success=True,
+                error=None
+            )
+
+        from rlm_mcp import pdf_parser
+        monkeypatch.setattr(pdf_parser, "extract_with_mistral_ocr", mock_ocr)
+
+        result = extract_pdf(sample_pdf_minimal_text, method="auto")
+
+        assert result.error is None
+
+    def test_multi_page_pdf_fallback(self, monkeypatch):
+        """extract_pdf falls back for multi-page PDF with text below threshold."""
+        from reportlab.lib.pagesizes import letter
+        from reportlab.pdfgen import canvas
+
+        fd, path = tempfile.mkstemp(suffix=".pdf")
+        os.close(fd)
+
+        try:
+            c = canvas.Canvas(path, pagesize=letter)
+            # Create 3 pages with minimal text each
+            for i in range(3):
+                c.drawString(100, 750, f"P{i}")  # Just 2 chars per page
+                c.showPage()
+            c.save()
+
+            ocr_called = []
+
+            def mock_ocr(pdf_path):
+                ocr_called.append(pdf_path)
+                return PDFExtractionResult(
+                    text="OCR text for all 3 pages",
+                    pages=3,
+                    method="mistral_ocr",
+                    success=True
+                )
+
+            from rlm_mcp import pdf_parser
+            monkeypatch.setattr(pdf_parser, "extract_with_mistral_ocr", mock_ocr)
+
+            # pdfplumber with layout=True extracts ~10k chars for 3 pages (lots of whitespace)
+            # Use very high threshold to force fallback
+            result = extract_pdf(path, method="auto", min_chars_threshold=50000)
+
+            # Should call OCR (extracted text < threshold)
+            assert len(ocr_called) == 1
+            assert result.method == "mistral_ocr"
+            assert result.pages == 3
+
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
+    def test_pdfplumber_success_false_triggers_fallback(self, sample_pdf, monkeypatch):
+        """extract_pdf falls back to OCR when pdfplumber returns success=False."""
+        # Monkeypatch pdfplumber to return failure
+        def mock_pdfplumber(path):
+            return PDFExtractionResult(
+                text="",
+                pages=0,
+                method="pdfplumber",
+                success=False,
+                error="pdfplumber error"
+            )
+
+        ocr_called = []
+
+        def mock_ocr(path):
+            ocr_called.append(path)
+            return PDFExtractionResult(
+                text="OCR text",
+                pages=2,
+                method="mistral_ocr",
+                success=True
+            )
+
+        from rlm_mcp import pdf_parser
+        monkeypatch.setattr(pdf_parser, "extract_with_pdfplumber", mock_pdfplumber)
+        monkeypatch.setattr(pdf_parser, "extract_with_mistral_ocr", mock_ocr)
+
+        result = extract_pdf(sample_pdf, method="auto")
+
+        # Should fall back to OCR
+        assert len(ocr_called) == 1
+        assert result.method == "mistral_ocr"
+
+    def test_whitespace_only_text_triggers_fallback(self, monkeypatch):
+        """extract_pdf falls back when pdfplumber extracts only whitespace."""
+        from reportlab.lib.pagesizes import letter
+        from reportlab.pdfgen import canvas
+
+        fd, path = tempfile.mkstemp(suffix=".pdf")
+        os.close(fd)
+
+        try:
+            c = canvas.Canvas(path, pagesize=letter)
+            # PDF with only whitespace (pdfplumber might extract spaces)
+            c.drawString(100, 750, "   ")  # Just spaces
+            c.showPage()
+            c.save()
+
+            ocr_called = []
+
+            def mock_ocr(pdf_path):
+                ocr_called.append(pdf_path)
+                return PDFExtractionResult(
+                    text="OCR text",
+                    pages=1,
+                    method="mistral_ocr",
+                    success=True
+                )
+
+            from rlm_mcp import pdf_parser
+            monkeypatch.setattr(pdf_parser, "extract_with_mistral_ocr", mock_ocr)
+
+            result = extract_pdf(path, method="auto")
+
+            # Should call OCR (only whitespace, strip() makes it empty)
+            assert len(ocr_called) == 1
+
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
