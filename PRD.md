@@ -70,7 +70,7 @@ src/rlm_mcp/
 ## Fase 5: Testes do Módulo s3_client.py (com mocks)
 
 - [x] Criar mock do MinIO client em conftest.py
-- [ ] Testar is_configured retorna False sem credenciais
+- [x] Testar is_configured retorna False sem credenciais
 - [ ] Testar list_buckets com mock retorna lista
 - [ ] Testar list_objects com mock retorna objetos
 - [ ] Testar get_object com mock retorna bytes
