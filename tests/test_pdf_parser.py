@@ -16,6 +16,7 @@ from rlm_mcp.pdf_parser import (
     PDFExtractionResult,
     extract_with_pdfplumber,
     extract_pdf,
+    split_pdf_into_chunks,
 )
 
 
@@ -1156,3 +1157,290 @@ class TestExtractPdfFallbackToOcr:
         finally:
             if os.path.exists(path):
                 os.unlink(path)
+
+
+# ============================================================================
+# Tests for split_pdf_into_chunks
+# ============================================================================
+
+
+@pytest.fixture
+def sample_pdf_12_pages():
+    """
+    Creates a 12-page PDF for testing chunking.
+
+    Yields:
+        str: Path to the temporary PDF file.
+    """
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
+
+    fd, path = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)
+
+    c = canvas.Canvas(path, pagesize=letter)
+
+    for i in range(1, 13):
+        c.drawString(100, 750, f"Page {i} of 12")
+        c.showPage()
+
+    c.save()
+
+    yield path
+
+    if os.path.exists(path):
+        os.unlink(path)
+
+
+@pytest.fixture
+def sample_pdf_1_page():
+    """
+    Creates a 1-page PDF for edge case testing.
+
+    Yields:
+        str: Path to the temporary PDF file.
+    """
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
+
+    fd, path = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)
+
+    c = canvas.Canvas(path, pagesize=letter)
+    c.drawString(100, 750, "Single page")
+    c.showPage()
+    c.save()
+
+    yield path
+
+    if os.path.exists(path):
+        os.unlink(path)
+
+
+@pytest.fixture
+def sample_pdf_5_pages():
+    """
+    Creates a 5-page PDF for testing.
+
+    Yields:
+        str: Path to the temporary PDF file.
+    """
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
+
+    fd, path = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)
+
+    c = canvas.Canvas(path, pagesize=letter)
+
+    for i in range(1, 6):
+        c.drawString(100, 750, f"Page {i}")
+        c.showPage()
+
+    c.save()
+
+    yield path
+
+    if os.path.exists(path):
+        os.unlink(path)
+
+
+class TestSplitPdfIntoChunks:
+    """Tests for split_pdf_into_chunks function."""
+
+    def test_returns_list(self, sample_pdf):
+        """split_pdf_into_chunks returns a list."""
+        result = split_pdf_into_chunks(sample_pdf)
+        assert isinstance(result, list)
+
+    def test_returns_list_of_tuples(self, sample_pdf):
+        """split_pdf_into_chunks returns a list of tuples."""
+        result = split_pdf_into_chunks(sample_pdf)
+        assert all(isinstance(chunk, tuple) for chunk in result)
+
+    def test_tuples_have_two_elements(self, sample_pdf):
+        """Each chunk tuple has exactly two elements (start, end)."""
+        result = split_pdf_into_chunks(sample_pdf)
+        assert all(len(chunk) == 2 for chunk in result)
+
+    def test_tuples_contain_integers(self, sample_pdf):
+        """Each chunk tuple contains integers."""
+        result = split_pdf_into_chunks(sample_pdf)
+        for start, end in result:
+            assert isinstance(start, int)
+            assert isinstance(end, int)
+
+    def test_12_page_pdf_with_default_chunk_size(self, sample_pdf_12_pages):
+        """12-page PDF with default 10 pages per chunk creates 2 chunks."""
+        result = split_pdf_into_chunks(sample_pdf_12_pages)
+        assert len(result) == 2
+        assert result[0] == (1, 10)
+        assert result[1] == (11, 12)
+
+    def test_12_page_pdf_with_5_pages_per_chunk(self, sample_pdf_12_pages):
+        """12-page PDF with 5 pages per chunk creates 3 chunks."""
+        result = split_pdf_into_chunks(sample_pdf_12_pages, pages_per_chunk=5)
+        assert len(result) == 3
+        assert result[0] == (1, 5)
+        assert result[1] == (6, 10)
+        assert result[2] == (11, 12)
+
+    def test_12_page_pdf_with_3_pages_per_chunk(self, sample_pdf_12_pages):
+        """12-page PDF with 3 pages per chunk creates 4 chunks."""
+        result = split_pdf_into_chunks(sample_pdf_12_pages, pages_per_chunk=3)
+        assert len(result) == 4
+        assert result[0] == (1, 3)
+        assert result[1] == (4, 6)
+        assert result[2] == (7, 9)
+        assert result[3] == (10, 12)
+
+    def test_12_page_pdf_with_4_pages_per_chunk(self, sample_pdf_12_pages):
+        """12-page PDF with 4 pages per chunk creates 3 chunks."""
+        result = split_pdf_into_chunks(sample_pdf_12_pages, pages_per_chunk=4)
+        assert len(result) == 3
+        assert result[0] == (1, 4)
+        assert result[1] == (5, 8)
+        assert result[2] == (9, 12)
+
+    def test_single_page_pdf(self, sample_pdf_1_page):
+        """1-page PDF creates 1 chunk."""
+        result = split_pdf_into_chunks(sample_pdf_1_page)
+        assert len(result) == 1
+        assert result[0] == (1, 1)
+
+    def test_single_page_pdf_with_large_chunk_size(self, sample_pdf_1_page):
+        """1-page PDF with large chunk size still creates 1 chunk."""
+        result = split_pdf_into_chunks(sample_pdf_1_page, pages_per_chunk=100)
+        assert len(result) == 1
+        assert result[0] == (1, 1)
+
+    def test_exact_multiple_of_chunk_size(self, sample_pdf_12_pages):
+        """12-page PDF with 4 pages per chunk (exact multiple) creates correct chunks."""
+        result = split_pdf_into_chunks(sample_pdf_12_pages, pages_per_chunk=4)
+        # 12 / 4 = 3 chunks exactly
+        assert len(result) == 3
+        # Last chunk should end at page 12
+        assert result[-1] == (9, 12)
+
+    def test_exact_multiple_with_6_pages_per_chunk(self, sample_pdf_12_pages):
+        """12-page PDF with 6 pages per chunk creates 2 equal chunks."""
+        result = split_pdf_into_chunks(sample_pdf_12_pages, pages_per_chunk=6)
+        assert len(result) == 2
+        assert result[0] == (1, 6)
+        assert result[1] == (7, 12)
+
+    def test_chunk_size_larger_than_pdf(self, sample_pdf_5_pages):
+        """5-page PDF with 10 pages per chunk creates 1 chunk."""
+        result = split_pdf_into_chunks(sample_pdf_5_pages, pages_per_chunk=10)
+        assert len(result) == 1
+        assert result[0] == (1, 5)
+
+    def test_chunk_size_equal_to_pdf_pages(self, sample_pdf_5_pages):
+        """5-page PDF with 5 pages per chunk creates 1 chunk."""
+        result = split_pdf_into_chunks(sample_pdf_5_pages, pages_per_chunk=5)
+        assert len(result) == 1
+        assert result[0] == (1, 5)
+
+    def test_chunk_size_1_creates_many_chunks(self, sample_pdf_5_pages):
+        """5-page PDF with 1 page per chunk creates 5 chunks."""
+        result = split_pdf_into_chunks(sample_pdf_5_pages, pages_per_chunk=1)
+        assert len(result) == 5
+        assert result == [(1, 1), (2, 2), (3, 3), (4, 4), (5, 5)]
+
+    def test_pages_are_1_indexed(self, sample_pdf):
+        """Chunks use 1-indexed page numbers (PDF standard)."""
+        result = split_pdf_into_chunks(sample_pdf, pages_per_chunk=1)
+        # First page is 1, not 0
+        assert result[0][0] == 1
+
+    def test_end_is_inclusive(self, sample_pdf_12_pages):
+        """End page in chunk is inclusive."""
+        result = split_pdf_into_chunks(sample_pdf_12_pages, pages_per_chunk=5)
+        # First chunk (1, 5) means pages 1, 2, 3, 4, 5
+        assert result[0] == (1, 5)
+        # Second chunk (6, 10) means pages 6, 7, 8, 9, 10
+        assert result[1] == (6, 10)
+        # Third chunk (11, 12) means pages 11, 12
+        assert result[2] == (11, 12)
+
+    def test_no_overlap_between_chunks(self, sample_pdf_12_pages):
+        """Chunks do not overlap."""
+        result = split_pdf_into_chunks(sample_pdf_12_pages, pages_per_chunk=3)
+        for i in range(len(result) - 1):
+            current_end = result[i][1]
+            next_start = result[i + 1][0]
+            assert next_start == current_end + 1
+
+    def test_all_pages_covered(self, sample_pdf_12_pages):
+        """All pages are covered by chunks."""
+        result = split_pdf_into_chunks(sample_pdf_12_pages, pages_per_chunk=3)
+        assert result[0][0] == 1  # First page
+        assert result[-1][1] == 12  # Last page
+
+    def test_nonexistent_file_returns_empty_list(self):
+        """Nonexistent file returns empty list."""
+        result = split_pdf_into_chunks("/nonexistent/path/to/file.pdf")
+        assert result == []
+
+    def test_invalid_path_returns_empty_list(self):
+        """Invalid path returns empty list."""
+        result = split_pdf_into_chunks("")
+        assert result == []
+
+    def test_directory_path_returns_empty_list(self, tmp_path):
+        """Directory path (not a file) returns empty list."""
+        result = split_pdf_into_chunks(str(tmp_path))
+        assert result == []
+
+    def test_zero_pages_per_chunk_returns_empty_list(self, sample_pdf):
+        """pages_per_chunk=0 returns empty list (invalid)."""
+        result = split_pdf_into_chunks(sample_pdf, pages_per_chunk=0)
+        assert result == []
+
+    def test_negative_pages_per_chunk_returns_empty_list(self, sample_pdf):
+        """Negative pages_per_chunk returns empty list (invalid)."""
+        result = split_pdf_into_chunks(sample_pdf, pages_per_chunk=-1)
+        assert result == []
+
+    def test_does_not_raise_exception_for_invalid_input(self):
+        """Function does not raise exceptions for invalid input."""
+        try:
+            result = split_pdf_into_chunks("/nonexistent/file.pdf")
+            assert isinstance(result, list)
+        except Exception as e:
+            pytest.fail(f"split_pdf_into_chunks raised exception: {e}")
+
+    def test_is_read_only(self, sample_pdf):
+        """split_pdf_into_chunks does not modify the PDF file."""
+        import hashlib
+
+        with open(sample_pdf, "rb") as f:
+            hash_before = hashlib.md5(f.read()).hexdigest()
+
+        split_pdf_into_chunks(sample_pdf)
+
+        with open(sample_pdf, "rb") as f:
+            hash_after = hashlib.md5(f.read()).hexdigest()
+
+        assert hash_before == hash_after
+
+    def test_2_page_pdf_with_default(self, sample_pdf):
+        """2-page PDF (sample_pdf fixture) with default chunk size creates 1 chunk."""
+        result = split_pdf_into_chunks(sample_pdf)
+        assert len(result) == 1
+        assert result[0] == (1, 2)
+
+    def test_many_pages_pdf_with_large_chunk(self, sample_pdf_many_pages):
+        """10-page PDF with 10 pages per chunk creates 1 chunk."""
+        result = split_pdf_into_chunks(sample_pdf_many_pages)
+        assert len(result) == 1
+        assert result[0] == (1, 10)
+
+    def test_many_pages_pdf_with_small_chunk(self, sample_pdf_many_pages):
+        """10-page PDF with 3 pages per chunk creates 4 chunks."""
+        result = split_pdf_into_chunks(sample_pdf_many_pages, pages_per_chunk=3)
+        assert len(result) == 4
+        assert result[0] == (1, 3)
+        assert result[1] == (4, 6)
+        assert result[2] == (7, 9)
+        assert result[3] == (10, 10)

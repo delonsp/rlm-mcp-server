@@ -150,6 +150,63 @@ def extract_with_mistral_ocr(pdf_path: str) -> PDFExtractionResult:
         )
 
 
+def split_pdf_into_chunks(
+    pdf_path: str,
+    pages_per_chunk: int = 10
+) -> list[tuple[int, int]]:
+    """
+    Divide um PDF em chunks de páginas para processamento.
+
+    Útil para processar PDFs grandes em partes menores.
+
+    Args:
+        pdf_path: Caminho para o arquivo PDF
+        pages_per_chunk: Número de páginas por chunk (default: 10)
+
+    Returns:
+        Lista de tuplas (start_page, end_page) onde:
+        - start_page: Página inicial do chunk (1-indexed)
+        - end_page: Página final do chunk (1-indexed, inclusive)
+
+        Retorna lista vazia se o arquivo não existir ou não for um PDF válido.
+
+    Example:
+        >>> split_pdf_into_chunks("doc.pdf", pages_per_chunk=5)
+        [(1, 5), (6, 10), (11, 12)]  # Para um PDF de 12 páginas
+    """
+    if pages_per_chunk < 1:
+        logger.warning(f"pages_per_chunk deve ser >= 1, recebido: {pages_per_chunk}")
+        return []
+
+    if not os.path.exists(pdf_path):
+        logger.warning(f"Arquivo não encontrado: {pdf_path}")
+        return []
+
+    try:
+        import pdfplumber
+    except ImportError:
+        logger.error("pdfplumber não instalado. Execute: pip install pdfplumber")
+        return []
+
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            total_pages = len(pdf.pages)
+
+        if total_pages == 0:
+            return []
+
+        chunks = []
+        for start in range(1, total_pages + 1, pages_per_chunk):
+            end = min(start + pages_per_chunk - 1, total_pages)
+            chunks.append((start, end))
+
+        return chunks
+
+    except Exception as e:
+        logger.exception(f"Erro ao dividir PDF em chunks: {e}")
+        return []
+
+
 def extract_pdf(
     pdf_path: str,
     method: str = "auto",
