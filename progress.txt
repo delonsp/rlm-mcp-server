@@ -2162,3 +2162,38 @@ Este arquivo registra o progresso do Ralph em cada iteração.
   - Pattern: Test that operations on malicious names don't affect unrelated data
 
 ---
+
+## Iteration 40 - Test http_server.py validates required inputs
+
+- What was implemented:
+  - Added TestRequiredInputValidation class to tests/test_http_server.py
+  - 39 test cases covering required input validation for all MCP tools:
+    - rlm_execute: Missing 'code' parameter returns error
+    - rlm_load_data: Missing 'name' or 'data' parameters return error
+    - rlm_load_file: Missing 'name' or 'path' parameters return error
+    - rlm_var_info: Missing 'name' parameter returns error
+    - rlm_load_s3: Missing 'key' or 'name' parameters return error
+    - rlm_upload_url: Missing 'url' or 'key' parameters return error
+    - rlm_process_pdf: Missing 'key' parameter returns error
+    - rlm_search_index: Missing 'var_name' or 'terms' parameters return error
+    - rlm_collection_create: Missing 'name' parameter returns error
+    - rlm_collection_add: Missing 'collection' or 'vars' parameters return error
+    - rlm_collection_info: Missing 'name' parameter returns error
+    - rlm_search_collection: Missing 'collection' or 'terms' parameters return error
+    - Tools without required params (rlm_list_vars, rlm_memory, etc.) work with empty arguments
+    - rlm_clear works with just 'all', just 'name', or neither (guidance message)
+
+- Files changed:
+  - tests/test_http_server.py (added TestRequiredInputValidation class with 39 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - http_server.py call_tool() function uses arguments["key"] for required params which raises KeyError if missing
+  - KeyError is caught by the outer try/except and returns error response with code -32603
+  - Tests verify errors are returned via either data.get("error") or result.get("isError") or error text
+  - Tools with no required params use arguments.get("key", default) pattern
+  - rlm_clear is special: works with either 'name' or 'all=True' or neither (shows guidance)
+  - For S3/bucket tools, missing required params return error before S3 config is even checked
+
+---
