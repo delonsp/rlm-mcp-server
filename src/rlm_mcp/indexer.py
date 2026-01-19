@@ -139,7 +139,7 @@ def create_index(
     Cria um índice semântico para um texto.
 
     Args:
-        text: Texto para indexar
+        text: Texto para indexar (None tratado como string vazia)
         var_name: Nome da variável associada
         additional_terms: Termos adicionais para indexar além dos padrão
         context_chars: Caracteres de contexto ao redor do termo
@@ -147,6 +147,10 @@ def create_index(
     Returns:
         TextIndex com o índice criado
     """
+    # Tratar None como string vazia
+    if text is None:
+        text = ""
+
     logger.info(f"Criando índice para '{var_name}' ({len(text):,} chars)")
 
     # Combinar termos padrão + adicionais
@@ -196,6 +200,10 @@ def _detect_structure(text: str) -> dict:
         "remedios": []
     }
 
+    # Tratar None como string vazia
+    if text is None:
+        text = ""
+
     lines = text.split('\n')
 
     for i, line in enumerate(lines):
@@ -234,13 +242,17 @@ def auto_index_if_large(text: str, var_name: str, min_chars: int = 100000) -> Op
     Cria índice automaticamente se o texto for grande o suficiente.
 
     Args:
-        text: Texto para potencialmente indexar
+        text: Texto para potencialmente indexar (None tratado como string vazia)
         var_name: Nome da variável
         min_chars: Tamanho mínimo para indexar automaticamente
 
     Returns:
         TextIndex se indexado, None se texto pequeno
     """
+    # Tratar None como string vazia
+    if text is None:
+        text = ""
+
     if len(text) >= min_chars:
         return create_index(text, var_name)
     return None

@@ -105,7 +105,7 @@ src/rlm_mcp/
 
 - [x] Testar persistence.py com caracteres especiais em nomes de variáveis
 - [x] Testar indexer.py com texto vazio
-- [ ] Testar indexer.py com texto None (deve tratar gracefully)
+- [x] Testar indexer.py com texto None (deve tratar gracefully)
 - [ ] Testar repl.py com código malicioso (eval, exec em string)
 - [ ] Testar repl.py com loop infinito (timeout)
 - [ ] Testar SQLite não vulnerável a injection (usar parâmetros)

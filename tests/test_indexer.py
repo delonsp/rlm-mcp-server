@@ -1586,3 +1586,205 @@ class TestIndexerEmptyTextEdgeCases:
         stats = restored.get_stats()
         assert stats["indexed_terms"] == 0
         assert stats["total_occurrences"] == 0
+
+
+class TestIndexerNoneTextHandling:
+    """Test edge cases for indexer.py with None text input (should treat gracefully)."""
+
+    # create_index with None text
+    def test_create_index_none_text_returns_valid_index(self):
+        """create_index with None text returns a valid TextIndex object."""
+        index = create_index(None, "none_var")
+
+        assert isinstance(index, TextIndex)
+        assert index.var_name == "none_var"
+
+    def test_create_index_none_text_has_zero_chars(self):
+        """create_index with None text sets total_chars to 0."""
+        index = create_index(None, "none_var")
+
+        assert index.total_chars == 0
+
+    def test_create_index_none_text_has_zero_lines(self):
+        """create_index with None text sets total_lines to 0."""
+        index = create_index(None, "none_var")
+
+        assert index.total_lines == 0
+
+    def test_create_index_none_text_has_empty_terms(self):
+        """create_index with None text has no indexed terms."""
+        index = create_index(None, "none_var")
+
+        assert index.terms == {}
+        assert len(index.terms) == 0
+
+    def test_create_index_none_text_has_empty_structure(self):
+        """create_index with None text has empty structure."""
+        index = create_index(None, "none_var")
+
+        assert index.structure["headers"] == []
+        assert index.structure["capitulos"] == []
+        assert index.structure["remedios"] == []
+
+    def test_create_index_none_text_with_additional_terms(self):
+        """create_index with None text ignores additional_terms (none found)."""
+        index = create_index(None, "none_var", additional_terms=["termo1", "termo2"])
+
+        assert index.custom_terms == ["termo1", "termo2"]
+        assert "termo1" not in index.terms  # not found in None/empty text
+        assert "termo2" not in index.terms
+
+    def test_create_index_none_text_same_as_empty_string(self):
+        """create_index with None produces same result as empty string."""
+        index_none = create_index(None, "test_var")
+        index_empty = create_index("", "test_var")
+
+        assert index_none.total_chars == index_empty.total_chars
+        assert index_none.total_lines == index_empty.total_lines
+        assert index_none.terms == index_empty.terms
+        assert index_none.structure == index_empty.structure
+        assert index_none.custom_terms == index_empty.custom_terms
+
+    # _detect_structure with None text
+    def test_detect_structure_none_text_returns_empty_lists(self):
+        """_detect_structure with None text returns dict with empty lists."""
+        structure = _detect_structure(None)
+
+        assert structure["headers"] == []
+        assert structure["capitulos"] == []
+        assert structure["remedios"] == []
+
+    def test_detect_structure_none_text_has_required_keys(self):
+        """_detect_structure with None text returns dict with all required keys."""
+        structure = _detect_structure(None)
+
+        assert "headers" in structure
+        assert "capitulos" in structure
+        assert "remedios" in structure
+
+    def test_detect_structure_none_text_same_as_empty_string(self):
+        """_detect_structure with None produces same result as empty string."""
+        structure_none = _detect_structure(None)
+        structure_empty = _detect_structure("")
+
+        assert structure_none == structure_empty
+
+    # auto_index_if_large with None text
+    def test_auto_index_if_large_none_text_returns_none(self):
+        """auto_index_if_large with None text returns None (below default threshold)."""
+        result = auto_index_if_large(None, "none_var")
+
+        assert result is None
+
+    def test_auto_index_if_large_none_text_with_zero_threshold(self):
+        """auto_index_if_large with None text and min_chars=0 returns valid index."""
+        result = auto_index_if_large(None, "none_var", min_chars=0)
+
+        assert result is not None
+        assert isinstance(result, TextIndex)
+        assert result.total_chars == 0
+
+    def test_auto_index_if_large_none_text_same_as_empty_string(self):
+        """auto_index_if_large with None produces same result as empty string."""
+        result_none = auto_index_if_large(None, "test_var")
+        result_empty = auto_index_if_large("", "test_var")
+
+        # Both should return None (below default threshold)
+        assert result_none is None
+        assert result_empty is None
+
+    def test_auto_index_if_large_none_with_zero_threshold_same_as_empty(self):
+        """auto_index_if_large with None and min_chars=0 same as empty string."""
+        result_none = auto_index_if_large(None, "test_var", min_chars=0)
+        result_empty = auto_index_if_large("", "test_var", min_chars=0)
+
+        # Both should return valid index
+        assert result_none is not None
+        assert result_empty is not None
+        assert result_none.total_chars == result_empty.total_chars
+        assert result_none.terms == result_empty.terms
+
+    # TextIndex operations on index from None text
+    def test_search_on_none_text_index_returns_empty_list(self):
+        """TextIndex.search on index from None text returns empty list."""
+        index = create_index(None, "none_var")
+
+        results = index.search("medo")
+
+        assert results == []
+
+    def test_search_multiple_or_mode_on_none_text_index(self):
+        """TextIndex.search_multiple OR mode on None text index returns empty dict."""
+        index = create_index(None, "none_var")
+
+        results = index.search_multiple(["medo", "trabalho"], require_all=False)
+
+        assert results == {}
+
+    def test_search_multiple_and_mode_on_none_text_index(self):
+        """TextIndex.search_multiple AND mode on None text index returns empty dict."""
+        index = create_index(None, "none_var")
+
+        results = index.search_multiple(["medo", "trabalho"], require_all=True)
+
+        assert results == {}
+
+    def test_get_stats_on_none_text_index(self):
+        """TextIndex.get_stats on index from None text returns valid stats."""
+        index = create_index(None, "none_var")
+
+        stats = index.get_stats()
+
+        assert stats["var_name"] == "none_var"
+        assert stats["total_chars"] == 0
+        assert stats["total_lines"] == 0
+        assert stats["indexed_terms"] == 0
+        assert stats["total_occurrences"] == 0
+        assert stats["top_terms"] == []
+
+    # Serialization with None text index
+    def test_to_dict_on_none_text_index(self):
+        """TextIndex.to_dict on None text index returns valid dict."""
+        index = create_index(None, "none_var")
+
+        data = index.to_dict()
+
+        assert data["var_name"] == "none_var"
+        assert data["total_chars"] == 0
+        assert data["total_lines"] == 0
+        assert data["terms"] == {}
+        assert data["custom_terms"] == []
+
+    def test_from_dict_roundtrip_none_text_index(self):
+        """None text index survives to_dict/from_dict roundtrip."""
+        original = create_index(None, "none_var")
+
+        data = original.to_dict()
+        restored = TextIndex.from_dict(data)
+
+        assert restored.var_name == original.var_name
+        assert restored.total_chars == original.total_chars
+        assert restored.total_lines == original.total_lines
+        assert restored.terms == original.terms
+        assert restored.custom_terms == original.custom_terms
+
+    def test_restored_none_text_index_search_works(self):
+        """Restored None text index from from_dict can perform searches."""
+        original = create_index(None, "none_var")
+
+        data = original.to_dict()
+        restored = TextIndex.from_dict(data)
+
+        results = restored.search("medo")
+        assert results == []
+
+    def test_restored_none_text_index_get_stats_works(self):
+        """Restored None text index from from_dict can return stats."""
+        original = create_index(None, "none_var")
+
+        data = original.to_dict()
+        restored = TextIndex.from_dict(data)
+
+        stats = restored.get_stats()
+        assert stats["indexed_terms"] == 0
+        assert stats["total_occurrences"] == 0

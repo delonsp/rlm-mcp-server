@@ -1957,3 +1957,76 @@ Este arquivo registra o progresso do Ralph em cada iteração.
   - The persistence module is robust against SQL injection because it uses parameterized queries (?-style)
 
 ---
+
+## Iteration 35 - Test indexer.py with empty text
+
+- What was implemented:
+  - Added TestIndexerEmptyTextEdgeCases class to tests/test_indexer.py
+  - 20 test cases covering:
+    - create_index with empty text returns valid index
+    - create_index with empty text has zero chars and lines
+    - create_index with empty text has empty terms and structure
+    - create_index with empty text and additional_terms
+    - _detect_structure with empty text returns empty lists
+    - auto_index_if_large with empty text returns None (below threshold)
+    - auto_index_if_large with empty text and min_chars=0 returns valid index
+    - TextIndex.search on empty index returns empty list
+    - TextIndex.search with empty term on empty index
+    - TextIndex.search_multiple OR and AND modes on empty index
+    - TextIndex.search_multiple with empty term list on empty index
+    - TextIndex.get_stats on empty index returns valid stats with zeros
+    - TextIndex.to_dict on empty index returns valid dict
+    - Empty index survives to_dict/from_dict roundtrip
+    - Restored empty index search and get_stats work
+
+- Files changed:
+  - tests/test_indexer.py (added TestIndexerEmptyTextEdgeCases class with 20 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - Empty string text creates a valid TextIndex with total_chars=0, total_lines=0, terms={}
+  - splitlines() on "" returns [], so len is 0 (not 1 as you might expect)
+  - All search methods gracefully handle empty index (return [] or {})
+  - get_stats returns valid dict with zeros for empty index
+  - to_dict/from_dict roundtrip works correctly for empty index
+  - Empty index is fully functional - all methods work without errors
+
+---
+
+## Iteration 36 - Test indexer.py with None text (graceful handling)
+
+- What was implemented:
+  - Updated src/rlm_mcp/indexer.py to handle None text gracefully:
+    - create_index: Added None check, treats None as empty string
+    - _detect_structure: Added None check, treats None as empty string
+    - auto_index_if_large: Added None check, treats None as empty string
+  - Added TestIndexerNoneTextHandling class to tests/test_indexer.py
+  - 22 test cases covering:
+    - create_index with None text returns valid index (same as empty string)
+    - create_index with None text has zero chars, lines, empty terms, empty structure
+    - create_index with None text and additional_terms (custom_terms preserved, none found)
+    - create_index with None produces same result as empty string
+    - _detect_structure with None text returns empty lists
+    - _detect_structure with None produces same result as empty string
+    - auto_index_if_large with None text returns None (below default threshold)
+    - auto_index_if_large with None text and min_chars=0 returns valid index
+    - auto_index_if_large with None produces same result as empty string
+    - TextIndex operations (search, search_multiple, get_stats) work on None text index
+    - Serialization (to_dict, from_dict) works for None text index
+    - Restored None text index methods work correctly
+
+- Files changed:
+  - src/rlm_mcp/indexer.py (added None checks in create_index, _detect_structure, auto_index_if_large)
+  - tests/test_indexer.py (added TestIndexerNoneTextHandling class with 22 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - Without None handling, functions raise TypeError/AttributeError: len(None), None.split()
+  - Graceful handling means treating None as empty string - simple `if text is None: text = ""`
+  - None text produces identical results to empty string (verified with comparison tests)
+  - Pattern: Always check for None at function entry when parameters could realistically be None
+  - Test both the error case (before fix) and the graceful behavior (after fix)
+
+---
