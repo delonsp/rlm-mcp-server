@@ -72,7 +72,7 @@ src/rlm_mcp/
 - [x] Criar mock do MinIO client em conftest.py
 - [x] Testar is_configured retorna False sem credenciais
 - [x] Testar list_buckets com mock retorna lista
-- [ ] Testar list_objects com mock retorna objetos
+- [x] Testar list_objects com mock retorna objetos
 - [ ] Testar get_object com mock retorna bytes
 - [ ] Testar get_object_info com mock retorna metadados
 - [ ] Testar object_exists com mock retorna True/False

@@ -1114,3 +1114,42 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 34 - Test list_objects com mock retorna objetos
+
+- What was implemented:
+  - Added TestListObjects class to tests/test_s3_client.py
+  - 19 test cases covering:
+    - Returns a list of dicts
+    - Returns expected keys (name, size, size_human, last_modified)
+    - Returns expected objects from mock (test.txt, data/file.json, images/photo.png)
+    - Returns empty list for empty bucket
+    - Returns correct size for objects
+    - Returns human-readable size string
+    - Returns last_modified in ISO format
+    - Prefix filters objects correctly
+    - Prefix with no match returns empty list
+    - Empty prefix returns all objects
+    - Raises RuntimeError for nonexistent bucket
+    - Raises RuntimeError when client is not configured
+    - list_objects is read-only
+    - Handles many objects (50)
+    - Handles prefix with special characters (hyphens, underscores)
+    - Handles nested folder structure
+    - Correctly filters when objects share prefix substrings (data/ vs data-backup/)
+
+- Files changed:
+  - tests/test_s3_client.py (added TestListObjects class with 19 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - list_objects returns list of dicts with keys: name, size, size_human, last_modified
+  - Uses self.client.list_objects(bucket, prefix=prefix, recursive=True) - recursive by default
+  - _human_size() formats bytes into B, KB, MB, GB, TB format
+  - last_modified is converted to ISO format via .isoformat()
+  - prefix filtering uses key.startswith(prefix) - exact prefix match, not substring match
+  - MockMinioClient.list_objects() raises Exception if bucket not found
+  - S3Client wraps exceptions in RuntimeError with informative message
+
+---
+
