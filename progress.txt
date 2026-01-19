@@ -1017,3 +1017,30 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 31 - Create mock MinIO client in conftest.py
+
+- What was implemented:
+  - Added MockMinioClient class with full MinIO client interface
+  - Added helper classes: MockMinioObject, MockMinioStat, MockMinioBucket, MockMinioResponse
+  - Added fixtures: mock_minio_client, mock_minio_client_with_data, s3_client_with_mock, s3_client_unconfigured
+  - Added 16 tests in test_fixtures.py to verify mock fixtures work correctly
+  - Tests verify all mock methods: list_buckets, list_objects, get_object, stat_object, put_object, presigned URLs
+  - s3_client_with_mock provides full S3Client with injected mock for testing
+  - s3_client_unconfigured provides S3Client without credentials (is_configured() returns False)
+
+- Files changed:
+  - tests/conftest.py (added MockMinioClient and related fixtures)
+  - tests/test_fixtures.py (added 16 tests for MinIO mock fixtures)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - MockMinioClient uses dict[bucket][key] = bytes for storage, dict[bucket][key] = MockMinioStat for metadata
+  - add_object() auto-creates bucket if it doesn't exist
+  - MockMinioResponse wraps bytes and provides read(), close(), release_conn() methods
+  - s3_client_with_mock uses patch.dict(os.environ) to set fake credentials, then injects mock via _client attribute
+  - s3_client_unconfigured uses patch.dict with empty strings for MINIO_* vars
+  - S3Client lazy-initializes _client on first .client access - we bypass by setting _client directly
+
+---
+
