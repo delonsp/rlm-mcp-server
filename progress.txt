@@ -1307,3 +1307,39 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 39 - Test extract_with_pdfplumber retorna erro se arquivo não existe
+
+- What was implemented:
+  - Added TestExtractWithPdfplumberFileNotExists class to tests/test_pdf_parser.py
+  - 15 test cases covering:
+    - Returns PDFExtractionResult for nonexistent file
+    - Returns success=False when file doesn't exist
+    - Returns error message (not None)
+    - Returns empty text ("")
+    - Returns pages=0
+    - Returns method="pdfplumber" even on error
+    - Error message contains relevant info (file path or "no such file" type message)
+    - Handles empty path string
+    - Handles directory path (not a file)
+    - Handles path with special characters (spaces, dashes, parentheses)
+    - Handles unicode path (Portuguese characters)
+    - Does not raise exception - returns PDFExtractionResult gracefully
+    - Handles path with embedded null byte
+    - Handles nonexistent path with .pdf extension
+    - Handles nonexistent path without .pdf extension
+
+- Files changed:
+  - tests/test_pdf_parser.py (added TestExtractWithPdfplumberFileNotExists class)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - extract_with_pdfplumber catches ALL exceptions in try-except and returns PDFExtractionResult with success=False
+  - pdfplumber.open() raises FileNotFoundError for nonexistent files
+  - The error string contains the OS error message (e.g., "No such file or directory")
+  - Empty path raises similar error as nonexistent file
+  - Directory path raises error (pdfplumber can't open directory as PDF)
+  - tmp_path pytest fixture provides a temporary directory for testing
+
+---
+

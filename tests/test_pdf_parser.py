@@ -15,6 +15,7 @@ import pytest
 from rlm_mcp.pdf_parser import (
     PDFExtractionResult,
     extract_with_pdfplumber,
+    extract_pdf,
 )
 
 
@@ -458,3 +459,195 @@ class TestExtractWithPdfplumberFileNotExists:
         """extract_with_pdfplumber fails for path without .pdf extension that doesn't exist."""
         result = extract_with_pdfplumber("/tmp/definitely_does_not_exist_12345")
         assert result.success is False
+
+
+# ============================================================================
+# Tests for extract_pdf with method="auto" uses pdfplumber first
+# ============================================================================
+
+
+class TestExtractPdfAutoUsesPdfplumberFirst:
+    """Tests for extract_pdf with method='auto' using pdfplumber as first extraction method."""
+
+    def test_returns_pdf_extraction_result(self, sample_pdf):
+        """extract_pdf with method='auto' returns PDFExtractionResult."""
+        result = extract_pdf(sample_pdf, method="auto")
+        assert isinstance(result, PDFExtractionResult)
+
+    def test_returns_success_true_for_machine_readable_pdf(self, sample_pdf):
+        """extract_pdf with method='auto' returns success=True for machine readable PDF."""
+        result = extract_pdf(sample_pdf, method="auto")
+        assert result.success is True
+
+    def test_uses_pdfplumber_method_for_text_rich_pdf(self, sample_pdf):
+        """extract_pdf with method='auto' returns method='pdfplumber' when text is sufficient."""
+        result = extract_pdf(sample_pdf, method="auto")
+        assert result.method == "pdfplumber"
+
+    def test_extracts_text_from_pdf(self, sample_pdf):
+        """extract_pdf with method='auto' extracts text using pdfplumber."""
+        result = extract_pdf(sample_pdf, method="auto")
+        assert "Hello World" in result.text
+
+    def test_extracts_text_from_all_pages(self, sample_pdf):
+        """extract_pdf with method='auto' extracts text from all pages."""
+        result = extract_pdf(sample_pdf, method="auto")
+        assert "Hello World" in result.text  # Page 1
+        assert "Page Two" in result.text  # Page 2
+
+    def test_returns_correct_page_count(self, sample_pdf):
+        """extract_pdf with method='auto' returns correct page count."""
+        result = extract_pdf(sample_pdf, method="auto")
+        assert result.pages == 2
+
+    def test_single_page_pdf(self, sample_pdf_single_page):
+        """extract_pdf with method='auto' works for single page PDF."""
+        result = extract_pdf(sample_pdf_single_page, method="auto")
+        assert result.success is True
+        assert result.method == "pdfplumber"
+        assert result.pages == 1
+        assert "Single Page PDF" in result.text
+
+    def test_many_pages_pdf(self, sample_pdf_many_pages):
+        """extract_pdf with method='auto' works for PDF with many pages."""
+        result = extract_pdf(sample_pdf_many_pages, method="auto")
+        assert result.success is True
+        assert result.method == "pdfplumber"
+        assert result.pages == 10
+
+    def test_long_text_pdf(self, sample_pdf_long_text):
+        """extract_pdf with method='auto' works for PDF with long text."""
+        result = extract_pdf(sample_pdf_long_text, method="auto")
+        assert result.success is True
+        assert result.method == "pdfplumber"
+        assert "Lorem ipsum" in result.text
+
+    def test_returns_error_none_on_success(self, sample_pdf):
+        """extract_pdf with method='auto' returns error=None on success."""
+        result = extract_pdf(sample_pdf, method="auto")
+        assert result.error is None
+
+    def test_default_method_is_auto(self, sample_pdf):
+        """extract_pdf default method is 'auto'."""
+        result = extract_pdf(sample_pdf)  # No method specified
+        assert result.success is True
+        assert result.method == "pdfplumber"
+
+    def test_includes_page_markers(self, sample_pdf):
+        """extract_pdf with method='auto' includes page markers from pdfplumber."""
+        result = extract_pdf(sample_pdf, method="auto")
+        assert "--- Página 1 ---" in result.text
+        assert "--- Página 2 ---" in result.text
+
+    def test_file_not_found_returns_error(self):
+        """extract_pdf with method='auto' returns error for nonexistent file."""
+        result = extract_pdf("/nonexistent/path/file.pdf", method="auto")
+        assert result.success is False
+        assert result.error is not None
+        assert "não encontrado" in result.error or "not found" in result.error.lower()
+
+    def test_file_not_found_returns_method_none(self):
+        """extract_pdf returns method='none' for file not found error."""
+        result = extract_pdf("/nonexistent/path/file.pdf", method="auto")
+        assert result.method == "none"
+
+    def test_does_not_call_ocr_for_text_rich_pdf(self, sample_pdf, monkeypatch):
+        """extract_pdf with method='auto' does not call OCR when pdfplumber succeeds."""
+        ocr_called = []
+
+        def mock_ocr(path):
+            ocr_called.append(path)
+            return PDFExtractionResult(
+                text="OCR text",
+                pages=1,
+                method="mistral_ocr",
+                success=True
+            )
+
+        # Monkeypatch the OCR function
+        from rlm_mcp import pdf_parser
+        monkeypatch.setattr(pdf_parser, "extract_with_mistral_ocr", mock_ocr)
+
+        result = extract_pdf(sample_pdf, method="auto")
+
+        # Should use pdfplumber, not OCR
+        assert result.method == "pdfplumber"
+        assert len(ocr_called) == 0
+
+    def test_min_chars_threshold_default_100(self, sample_pdf, monkeypatch):
+        """extract_pdf with method='auto' uses default min_chars_threshold=100."""
+        # The sample_pdf has way more than 100 chars, so should pass threshold
+
+        # Track if OCR is called
+        ocr_called = []
+
+        def mock_ocr(path):
+            ocr_called.append(path)
+            return PDFExtractionResult(
+                text="OCR text",
+                pages=1,
+                method="mistral_ocr",
+                success=True
+            )
+
+        from rlm_mcp import pdf_parser
+        monkeypatch.setattr(pdf_parser, "extract_with_mistral_ocr", mock_ocr)
+
+        result = extract_pdf(sample_pdf, method="auto")
+
+        # sample_pdf has "Hello World" etc, way more than 100 chars
+        assert result.method == "pdfplumber"
+        assert len(ocr_called) == 0
+
+    def test_custom_min_chars_threshold(self, sample_pdf, monkeypatch):
+        """extract_pdf with method='auto' respects custom min_chars_threshold."""
+        # Track if OCR is called
+        ocr_called = []
+
+        def mock_ocr(path):
+            ocr_called.append(path)
+            return PDFExtractionResult(
+                text="OCR text",
+                pages=1,
+                method="mistral_ocr",
+                success=True
+            )
+
+        from rlm_mcp import pdf_parser
+        monkeypatch.setattr(pdf_parser, "extract_with_mistral_ocr", mock_ocr)
+
+        # Set threshold very high so pdfplumber text is considered insufficient
+        result = extract_pdf(sample_pdf, method="auto", min_chars_threshold=999999)
+
+        # Should have called OCR due to high threshold
+        assert len(ocr_called) == 1
+
+    def test_pdfplumber_result_is_used_when_meets_threshold(self, sample_pdf_long_text):
+        """extract_pdf uses pdfplumber result when it meets min_chars_threshold."""
+        result = extract_pdf(sample_pdf_long_text, method="auto", min_chars_threshold=50)
+        assert result.success is True
+        assert result.method == "pdfplumber"
+        assert len(result.text.strip()) >= 50
+
+    def test_unicode_pdf(self, sample_pdf_unicode):
+        """extract_pdf with method='auto' handles Unicode content."""
+        result = extract_pdf(sample_pdf_unicode, method="auto")
+        assert result.success is True
+        assert result.method == "pdfplumber"
+
+    def test_empty_pages_pdf(self, sample_pdf_empty_pages):
+        """extract_pdf with method='auto' handles PDF with empty pages."""
+        result = extract_pdf(sample_pdf_empty_pages, method="auto")
+        assert result.success is True
+        assert result.method == "pdfplumber"
+        assert result.pages == 3
+
+    def test_returns_string_text(self, sample_pdf):
+        """extract_pdf with method='auto' returns text as string."""
+        result = extract_pdf(sample_pdf, method="auto")
+        assert isinstance(result.text, str)
+
+    def test_returns_int_pages(self, sample_pdf):
+        """extract_pdf with method='auto' returns pages as int."""
+        result = extract_pdf(sample_pdf, method="auto")
+        assert isinstance(result.pages, int)
