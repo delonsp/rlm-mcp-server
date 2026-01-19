@@ -2596,3 +2596,452 @@ class TestMcpToolRlmLoadS3SkipIfExists:
         assert "já existe" in text.lower() or "already exists" in text.lower()
         # Should NOT have error about missing file
         assert "não encontrado" not in text.lower() and "not found" not in text.lower()
+
+
+class TestMcpToolRlmLoadS3ForceReload:
+    """Tests for rlm_load_s3 tool with skip_if_exists=False (force reload)."""
+
+    @pytest.fixture(autouse=True)
+    def reset_repl(self):
+        """Reset REPL state before each test."""
+        from rlm_mcp.http_server import repl
+        repl.clear_all()
+
+    @pytest.fixture(autouse=True)
+    def mock_s3(self, mock_minio_client_with_data):
+        """Mock the S3 client for all tests in this class."""
+        from unittest.mock import patch
+        from rlm_mcp.s3_client import S3Client
+        import os
+
+        self.mock_minio_client = mock_minio_client_with_data
+
+        # Create mock S3Client with fake credentials
+        with patch.dict(os.environ, {
+            "MINIO_ENDPOINT": "mock-minio:9000",
+            "MINIO_ACCESS_KEY": "mock-access-key",
+            "MINIO_SECRET_KEY": "mock-secret-key",
+            "MINIO_SECURE": "false",
+        }):
+            mock_client = S3Client()
+            mock_client._client = mock_minio_client_with_data
+
+            # Patch get_s3_client to return our mock
+            with patch("rlm_mcp.http_server.get_s3_client", return_value=mock_client):
+                yield mock_client
+
+    def call_tool(self, client, tool_name: str, arguments: dict, request_id: int = 1):
+        """Helper to call MCP tool."""
+        payload = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "tools/call",
+            "params": {
+                "name": tool_name,
+                "arguments": arguments
+            }
+        }
+        return client.post("/mcp", json=payload)
+
+    def test_returns_200_status_code(self, client):
+        """rlm_load_s3 with skip_if_exists=False should return 200 status code."""
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket",
+            "skip_if_exists": False
+        })
+        assert response.status_code == 200
+
+    def test_returns_json_content_type(self, client):
+        """rlm_load_s3 with skip_if_exists=False should return JSON."""
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket",
+            "skip_if_exists": False
+        })
+        assert response.headers["content-type"].startswith("application/json")
+
+    def test_returns_jsonrpc_2_0(self, client):
+        """rlm_load_s3 with skip_if_exists=False should return jsonrpc 2.0."""
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket",
+            "skip_if_exists": False
+        })
+        data = response.json()
+        assert data["jsonrpc"] == "2.0"
+
+    def test_returns_same_request_id(self, client):
+        """rlm_load_s3 with skip_if_exists=False should return same request id."""
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket",
+            "skip_if_exists": False
+        }, request_id=42)
+        data = response.json()
+        assert data["id"] == 42
+
+    def test_force_reload_overwrites_existing_variable(self, client):
+        """skip_if_exists=False should overwrite existing variable."""
+        from rlm_mcp.http_server import repl
+
+        # First, create variable with different content
+        self.call_tool(client, "rlm_load_data", {"name": "my_var", "data": "original content"})
+        assert repl.variables["my_var"] == "original content"
+
+        # Force reload from S3 (test.txt contains "Hello, World!")
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket",
+            "skip_if_exists": False
+        })
+
+        # Variable should now have S3 content
+        assert repl.variables["my_var"] == "Hello, World!"
+        # Response should show success, not "já existe"
+        text = response.json()["result"]["content"][0]["text"]
+        assert "já existe" not in text.lower()
+        assert "carregada" in text.lower() or "loaded" in text.lower()
+
+    def test_force_reload_no_skip_message(self, client):
+        """skip_if_exists=False should NOT show 'já existe' skip message."""
+        # First load
+        self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket"
+        })
+
+        # Force reload
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket",
+            "skip_if_exists": False
+        })
+        text = response.json()["result"]["content"][0]["text"]
+
+        # Should NOT show skip message
+        assert "já existe" not in text.lower()
+        assert "skip_if_exists=False" not in text
+
+    def test_force_reload_triggers_s3_download(self, client):
+        """skip_if_exists=False should trigger S3 download even if variable exists."""
+        # First load
+        self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket"
+        })
+
+        # Record get_object calls
+        original_get_object = self.mock_minio_client.get_object
+        call_count = [0]
+        def counting_get_object(*args, **kwargs):
+            call_count[0] += 1
+            return original_get_object(*args, **kwargs)
+        self.mock_minio_client.get_object = counting_get_object
+
+        # Force reload - should call get_object
+        self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket",
+            "skip_if_exists": False
+        })
+
+        # Should have downloaded
+        assert call_count[0] == 1
+
+    def test_force_reload_updates_variable_with_different_file(self, client):
+        """skip_if_exists=False should load different file into existing variable."""
+        from rlm_mcp.http_server import repl
+
+        # Load text file first
+        self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket"
+        })
+        assert repl.variables["my_var"] == "Hello, World!"
+
+        # Force reload with JSON file
+        self.call_tool(client, "rlm_load_s3", {
+            "key": "data/file.json",
+            "name": "my_var",
+            "bucket": "test-bucket",
+            "data_type": "json",
+            "skip_if_exists": False
+        })
+
+        # Variable should now be a dict (from JSON)
+        assert isinstance(repl.variables["my_var"], dict)
+        assert repl.variables["my_var"] == {"key": "value", "number": 42}
+
+    def test_force_reload_on_empty_repl(self, client):
+        """skip_if_exists=False should work normally when variable doesn't exist."""
+        from rlm_mcp.http_server import repl
+
+        # Make sure variable doesn't exist
+        assert "new_var" not in repl.variables
+
+        # Load with skip_if_exists=False
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "new_var",
+            "bucket": "test-bucket",
+            "skip_if_exists": False
+        })
+
+        # Should load successfully
+        assert "new_var" in repl.variables
+        assert repl.variables["new_var"] == "Hello, World!"
+        text = response.json()["result"]["content"][0]["text"]
+        assert "carregada" in text.lower() or "loaded" in text.lower()
+
+    def test_force_reload_updates_metadata(self, client):
+        """skip_if_exists=False should update variable metadata."""
+        from rlm_mcp.http_server import repl
+        import time
+
+        # First load
+        self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket"
+        })
+        first_metadata = repl.variable_metadata.get("my_var")
+        first_accessed = first_metadata.last_accessed if first_metadata else None
+
+        # Small delay
+        time.sleep(0.01)
+
+        # Force reload
+        self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket",
+            "skip_if_exists": False
+        })
+
+        # Metadata should be updated
+        second_metadata = repl.variable_metadata.get("my_var")
+        assert second_metadata is not None
+        # last_accessed should be updated (or created_at if that's what changes)
+        assert second_metadata.last_accessed >= first_accessed
+
+    def test_force_reload_with_json_data_type(self, client):
+        """skip_if_exists=False should work with data_type=json."""
+        from rlm_mcp.http_server import repl
+
+        # First load as text
+        self.call_tool(client, "rlm_load_data", {"name": "my_var", "data": "old data"})
+
+        # Force reload as JSON
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "data/file.json",
+            "name": "my_var",
+            "bucket": "test-bucket",
+            "data_type": "json",
+            "skip_if_exists": False
+        })
+
+        # Should be dict
+        assert isinstance(repl.variables["my_var"], dict)
+        text = response.json()["result"]["content"][0]["text"]
+        assert "carregada" in text.lower()
+
+    def test_force_reload_overwrites_variable_from_execute(self, client):
+        """skip_if_exists=False should overwrite variable created via execute."""
+        from rlm_mcp.http_server import repl
+
+        # Create via execute
+        self.call_tool(client, "rlm_execute", {"code": "my_var = [1, 2, 3]"})
+        assert repl.variables["my_var"] == [1, 2, 3]
+
+        # Force reload from S3
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket",
+            "skip_if_exists": False
+        })
+
+        # Should now be string from S3
+        assert repl.variables["my_var"] == "Hello, World!"
+        text = response.json()["result"]["content"][0]["text"]
+        assert "carregada" in text.lower()
+
+    def test_force_reload_with_string_request_id(self, client):
+        """skip_if_exists=False should work with string request id."""
+        payload = {
+            "jsonrpc": "2.0",
+            "id": "force-reload-test",
+            "method": "tools/call",
+            "params": {
+                "name": "rlm_load_s3",
+                "arguments": {
+                    "key": "test.txt",
+                    "name": "my_var",
+                    "bucket": "test-bucket",
+                    "skip_if_exists": False
+                }
+            }
+        }
+        response = client.post("/mcp", json=payload)
+        data = response.json()
+
+        assert data["id"] == "force-reload-test"
+        assert "carregada" in data["result"]["content"][0]["text"].lower()
+
+    def test_force_reload_returns_error_for_nonexistent_file(self, client):
+        """skip_if_exists=False should return error if S3 file doesn't exist."""
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "nonexistent/file.txt",
+            "name": "my_var",
+            "bucket": "test-bucket",
+            "skip_if_exists": False
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        # Should show error about file not found
+        assert "erro" in text.lower() or "error" in text.lower() or "não encontrado" in text.lower()
+
+    def test_force_reload_on_nonexistent_file_when_variable_exists(self, client):
+        """skip_if_exists=False should error even if variable exists when file doesn't exist."""
+        # Create variable first
+        self.call_tool(client, "rlm_load_data", {"name": "my_var", "data": "existing"})
+
+        # Try to force reload from nonexistent file
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "nonexistent/file.txt",
+            "name": "my_var",
+            "bucket": "test-bucket",
+            "skip_if_exists": False
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        # Should show error (not skip)
+        # Note: with skip_if_exists=True it would skip; with False it should try to load and fail
+        assert "erro" in text.lower() or "error" in text.lower() or "não encontrado" in text.lower()
+
+    def test_force_reload_no_error_field_on_success(self, client):
+        """skip_if_exists=False should not have error field on success."""
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket",
+            "skip_if_exists": False
+        })
+        data = response.json()
+
+        assert "error" not in data
+
+    def test_force_reload_multiple_times(self, client):
+        """skip_if_exists=False should allow multiple consecutive reloads."""
+        from rlm_mcp.http_server import repl
+
+        # Add different content to S3 mock
+        self.mock_minio_client.add_object("test-bucket", "v1.txt", b"version 1")
+        self.mock_minio_client.add_object("test-bucket", "v2.txt", b"version 2")
+        self.mock_minio_client.add_object("test-bucket", "v3.txt", b"version 3")
+
+        # Load v1
+        self.call_tool(client, "rlm_load_s3", {
+            "key": "v1.txt", "name": "data", "bucket": "test-bucket", "skip_if_exists": False
+        })
+        assert repl.variables["data"] == "version 1"
+
+        # Reload v2
+        self.call_tool(client, "rlm_load_s3", {
+            "key": "v2.txt", "name": "data", "bucket": "test-bucket", "skip_if_exists": False
+        })
+        assert repl.variables["data"] == "version 2"
+
+        # Reload v3
+        self.call_tool(client, "rlm_load_s3", {
+            "key": "v3.txt", "name": "data", "bucket": "test-bucket", "skip_if_exists": False
+        })
+        assert repl.variables["data"] == "version 3"
+
+    def test_force_reload_preserves_other_variables(self, client):
+        """skip_if_exists=False should not affect other variables."""
+        from rlm_mcp.http_server import repl
+
+        # Load multiple variables
+        self.call_tool(client, "rlm_load_data", {"name": "var1", "data": "data1"})
+        self.call_tool(client, "rlm_load_data", {"name": "var2", "data": "data2"})
+        self.call_tool(client, "rlm_load_data", {"name": "var3", "data": "data3"})
+
+        # Force reload var2
+        self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "var2",
+            "bucket": "test-bucket",
+            "skip_if_exists": False
+        })
+
+        # Other variables should be unchanged
+        assert repl.variables["var1"] == "data1"
+        assert repl.variables["var2"] == "Hello, World!"  # Changed
+        assert repl.variables["var3"] == "data3"
+
+    def test_force_reload_with_csv_data_type(self, client):
+        """skip_if_exists=False should work with data_type=csv."""
+        from rlm_mcp.http_server import repl
+
+        # Add CSV to mock
+        csv_content = b"name,age\nAlice,30\nBob,25"
+        self.mock_minio_client.add_object("test-bucket", "people.csv", csv_content)
+
+        # First load as text
+        self.call_tool(client, "rlm_load_data", {"name": "my_var", "data": "old data"})
+
+        # Force reload as CSV
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "people.csv",
+            "name": "my_var",
+            "bucket": "test-bucket",
+            "data_type": "csv",
+            "skip_if_exists": False
+        })
+
+        # Should be list of dicts
+        assert isinstance(repl.variables["my_var"], list)
+        assert len(repl.variables["my_var"]) == 2
+        assert repl.variables["my_var"][0] == {"name": "Alice", "age": "30"}
+        text = response.json()["result"]["content"][0]["text"]
+        assert "carregada" in text.lower()
+
+    def test_force_reload_with_lines_data_type(self, client):
+        """skip_if_exists=False should work with data_type=lines."""
+        from rlm_mcp.http_server import repl
+
+        # Add multiline file to mock
+        lines_content = b"line1\nline2\nline3"
+        self.mock_minio_client.add_object("test-bucket", "lines.txt", lines_content)
+
+        # First load as text
+        self.call_tool(client, "rlm_load_data", {"name": "my_var", "data": "old data"})
+
+        # Force reload as lines
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "lines.txt",
+            "name": "my_var",
+            "bucket": "test-bucket",
+            "data_type": "lines",
+            "skip_if_exists": False
+        })
+
+        # Should be list of lines
+        assert isinstance(repl.variables["my_var"], list)
+        assert repl.variables["my_var"] == ["line1", "line2", "line3"]
+        text = response.json()["result"]["content"][0]["text"]
+        assert "carregada" in text.lower()
