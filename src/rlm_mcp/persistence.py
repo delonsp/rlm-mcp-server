@@ -17,7 +17,6 @@ import pickle
 import zlib
 from datetime import datetime
 from typing import Any, Optional
-from pathlib import Path
 
 logger = logging.getLogger("rlm-mcp.persistence")
 

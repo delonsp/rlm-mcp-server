@@ -18,7 +18,6 @@ from typing import Any
 from contextlib import asynccontextmanager
 from datetime import datetime
 import uuid
-import hashlib
 import hmac
 
 from fastapi import FastAPI, Request, Response, HTTPException, Depends
@@ -27,11 +26,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
 
-from .repl import SafeREPL, ExecutionResult, VariableInfo
+from .repl import SafeREPL, ExecutionResult
 from .s3_client import get_s3_client
 from .pdf_parser import extract_pdf
 from .persistence import get_persistence
-from .indexer import create_index, get_index, set_index, clear_index, TextIndex, auto_index_if_large
+from .indexer import get_index, set_index, TextIndex, auto_index_if_large
 
 # Configuração
 logging.basicConfig(
@@ -99,7 +98,7 @@ async def lifespan(app: FastAPI):
                 name = var_info["name"]
                 value = persistence.load_variable(name)
                 if value is not None:
-                    repl.namespace[name] = value
+                    repl.variables[name] = value
                     # Restaurar índice se existir
                     index_data = persistence.load_index(name)
                     if index_data:
@@ -703,7 +702,7 @@ def call_tool(name: str, arguments: dict) -> dict:
             try:
                 # Persistir variável
                 persistence = get_persistence()
-                value = repl.namespace.get(var_name)
+                value = repl.variables.get(var_name)
                 if value is not None:
                     persistence.save_variable(var_name, value)
                     persist_msg = "💾 Persistido"
@@ -867,8 +866,8 @@ Uso: {mem['usage_percent']:.1f}%"""
             skip_if_exists = arguments.get("skip_if_exists", True)
 
             # Verificar se variável já existe e skip_if_exists=True
-            if skip_if_exists and var_name in repl.namespace:
-                existing = repl.namespace[var_name]
+            if skip_if_exists and var_name in repl.variables:
+                existing = repl.variables[var_name]
                 size_info = f"{len(existing):,} chars" if isinstance(existing, str) else f"{type(existing).__name__}"
                 return {
                     "content": [
@@ -914,7 +913,7 @@ Uso: {mem['usage_percent']:.1f}%"""
                         index_msg = ""
                         try:
                             persistence = get_persistence()
-                            value = repl.namespace.get(var_name)
+                            value = repl.variables.get(var_name)
                             if value is not None:
                                 persistence.save_variable(var_name, value)
                                 persist_msg = "💾 Persistido"
@@ -954,7 +953,7 @@ Variável: {var_name}{extras}
                 index_msg = ""
                 try:
                     persistence = get_persistence()
-                    value = repl.namespace.get(var_name)
+                    value = repl.variables.get(var_name)
                     if value is not None:
                         persistence.save_variable(var_name, value)
                         persist_msg = "💾 Persistido"
@@ -1172,7 +1171,7 @@ Próximo passo: rlm_load_s3(key="{output_key}", name="texto", data_type="text")"
             limit = arguments.get("limit", 20)
 
             # Verificar se variável existe
-            if var_name not in repl.namespace:
+            if var_name not in repl.variables:
                 return {
                     "content": [
                         {"type": "text", "text": f"Erro: Variável '{var_name}' não encontrada no REPL."}
@@ -1287,7 +1286,7 @@ Próximo passo: rlm_load_s3(key="{output_key}", name="texto", data_type="text")"
                 var_names = arguments["vars"]
 
                 # Verificar se variáveis existem
-                missing = [v for v in var_names if v not in repl.namespace]
+                missing = [v for v in var_names if v not in repl.variables]
                 if missing:
                     return {
                         "content": [
@@ -1502,7 +1501,7 @@ async def sse_endpoint(request: Request, _: bool = Depends(verify_api_key)):
                     yield f"event: message\ndata: {json.dumps(message)}\n\n"
                 except asyncio.TimeoutError:
                     # Envia ping para manter conexão
-                    yield f": ping\n\n"
+                    yield ": ping\n\n"
                 except asyncio.CancelledError:
                     break
         finally:

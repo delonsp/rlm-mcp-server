@@ -15,7 +15,6 @@ from io import StringIO
 from typing import Any, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
-import re
 import json
 import logging
 
@@ -306,7 +305,6 @@ class SafeREPL:
         namespace['llm_stats'] = self.llm_client.get_stats
         namespace['llm_reset_counter'] = self.llm_client.reset_counter
 
-        variables_before = set(self.variables.keys())
         success = True
 
         try:

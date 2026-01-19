@@ -153,7 +153,6 @@ class S3Client:
     def upload_from_url(self, url: str, bucket: str, key: str) -> dict:
         """Baixa arquivo de uma URL e faz upload para o Minio."""
         import urllib.request
-        import mimetypes
 
         try:
             logger.info(f"Baixando de {url}...")
