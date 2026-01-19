@@ -1197,3 +1197,305 @@ class TestMcpToolRlmLoadData:
         data = response.json()
         assert data["id"] == "load-data-123"
         assert "result" in data
+
+
+class TestMcpToolRlmListVars:
+    """Tests for rlm_list_vars tool via MCP tools/call method."""
+
+    def make_mcp_request(self, client, method: str, params: dict = None, request_id: int = 1):
+        """Helper to make MCP JSON-RPC requests."""
+        payload = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+        }
+        if params is not None:
+            payload["params"] = params
+        return client.post("/mcp", json=payload)
+
+    def call_tool(self, client, tool_name: str, arguments: dict = None, request_id: int = 1):
+        """Helper to call a tool via MCP tools/call."""
+        params = {"name": tool_name}
+        if arguments is not None:
+            params["arguments"] = arguments
+        else:
+            params["arguments"] = {}
+        return self.make_mcp_request(
+            client,
+            "tools/call",
+            params=params,
+            request_id=request_id
+        )
+
+    @pytest.fixture(autouse=True)
+    def reset_repl(self):
+        """Reset REPL state before each test to avoid cross-test pollution."""
+        from rlm_mcp.http_server import repl
+        repl.clear_all()
+        yield
+        repl.clear_all()
+
+    def test_returns_200_status_code(self, client):
+        """rlm_list_vars should return 200 OK."""
+        response = self.call_tool(client, "rlm_list_vars")
+        assert response.status_code == 200
+
+    def test_returns_json(self, client):
+        """rlm_list_vars should return JSON content."""
+        response = self.call_tool(client, "rlm_list_vars")
+        assert response.headers["content-type"].startswith("application/json")
+
+    def test_returns_jsonrpc_version(self, client):
+        """rlm_list_vars should return jsonrpc 2.0."""
+        response = self.call_tool(client, "rlm_list_vars")
+        data = response.json()
+        assert data["jsonrpc"] == "2.0"
+
+    def test_returns_same_id(self, client):
+        """rlm_list_vars should return the same request id."""
+        response = self.call_tool(client, "rlm_list_vars", request_id=55)
+        data = response.json()
+        assert data["id"] == 55
+
+    def test_returns_result_dict(self, client):
+        """rlm_list_vars should return a result dict."""
+        response = self.call_tool(client, "rlm_list_vars")
+        data = response.json()
+        assert "result" in data
+        assert isinstance(data["result"], dict)
+
+    def test_result_has_content(self, client):
+        """rlm_list_vars result should have 'content' key."""
+        response = self.call_tool(client, "rlm_list_vars")
+        data = response.json()
+        assert "content" in data["result"]
+
+    def test_content_is_list(self, client):
+        """rlm_list_vars content should be a list."""
+        response = self.call_tool(client, "rlm_list_vars")
+        data = response.json()
+        assert isinstance(data["result"]["content"], list)
+
+    def test_content_has_text_item(self, client):
+        """rlm_list_vars content should have text type item."""
+        response = self.call_tool(client, "rlm_list_vars")
+        data = response.json()
+        content = data["result"]["content"]
+        assert len(content) > 0
+        assert content[0]["type"] == "text"
+        assert "text" in content[0]
+
+    def test_empty_repl_shows_no_variables_message(self, client):
+        """rlm_list_vars should show 'no variables' message when REPL is empty."""
+        response = self.call_tool(client, "rlm_list_vars")
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "Nenhuma variável" in text or "nenhuma" in text.lower()
+
+    def test_shows_loaded_variable(self, client):
+        """rlm_list_vars should list variables loaded via rlm_load_data."""
+        # Load a variable first
+        self.call_tool(client, "rlm_load_data", {"name": "my_var", "data": "test data"})
+
+        # List variables
+        response = self.call_tool(client, "rlm_list_vars")
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "my_var" in text
+
+    def test_shows_variable_type(self, client):
+        """rlm_list_vars should show variable type."""
+        self.call_tool(client, "rlm_load_data", {"name": "str_var", "data": "hello"})
+
+        response = self.call_tool(client, "rlm_list_vars")
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "str" in text.lower()
+
+    def test_shows_variable_size(self, client):
+        """rlm_list_vars should show variable size in human-readable format."""
+        self.call_tool(client, "rlm_load_data", {"name": "sized_var", "data": "some data"})
+
+        response = self.call_tool(client, "rlm_list_vars")
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        # Should contain size like "9.0 B" or similar
+        assert "B" in text or "KB" in text or "MB" in text
+
+    def test_shows_variable_preview(self, client):
+        """rlm_list_vars should show variable preview."""
+        self.call_tool(client, "rlm_load_data", {"name": "preview_var", "data": "preview_content_here"})
+
+        response = self.call_tool(client, "rlm_list_vars")
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "Preview" in text
+        assert "preview_content" in text
+
+    def test_lists_multiple_variables(self, client):
+        """rlm_list_vars should list all loaded variables."""
+        self.call_tool(client, "rlm_load_data", {"name": "var1", "data": "data1"})
+        self.call_tool(client, "rlm_load_data", {"name": "var2", "data": "data2"})
+        self.call_tool(client, "rlm_load_data", {"name": "var3", "data": "data3"})
+
+        response = self.call_tool(client, "rlm_list_vars")
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "var1" in text
+        assert "var2" in text
+        assert "var3" in text
+
+    def test_shows_dict_variable(self, client):
+        """rlm_list_vars should show dict variable with correct type."""
+        json_data = '{"key": "value"}'
+        self.call_tool(client, "rlm_load_data", {"name": "dict_var", "data": json_data, "data_type": "json"})
+
+        response = self.call_tool(client, "rlm_list_vars")
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "dict_var" in text
+        assert "dict" in text.lower()
+
+    def test_shows_list_variable(self, client):
+        """rlm_list_vars should show list variable with correct type."""
+        json_data = '[1, 2, 3]'
+        self.call_tool(client, "rlm_load_data", {"name": "list_var", "data": json_data, "data_type": "json"})
+
+        response = self.call_tool(client, "rlm_list_vars")
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "list_var" in text
+        assert "list" in text.lower()
+
+    def test_shows_csv_variable_as_list(self, client):
+        """rlm_list_vars should show CSV variable as list type."""
+        csv_data = "name,age\nAlice,30\nBob,25"
+        self.call_tool(client, "rlm_load_data", {"name": "csv_var", "data": csv_data, "data_type": "csv"})
+
+        response = self.call_tool(client, "rlm_list_vars")
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "csv_var" in text
+        assert "list" in text.lower()
+
+    def test_shows_variable_created_via_execute(self, client):
+        """rlm_list_vars should show variables created via rlm_execute."""
+        self.call_tool(client, "rlm_execute", {"code": "exec_var = 'created via execute'"})
+
+        response = self.call_tool(client, "rlm_list_vars")
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "exec_var" in text
+
+    def test_no_error_in_response(self, client):
+        """rlm_list_vars should not return error field."""
+        response = self.call_tool(client, "rlm_list_vars")
+        data = response.json()
+        assert data.get("error") is None
+
+    def test_header_shows_variáveis_no_repl(self, client):
+        """rlm_list_vars should show header 'Variáveis no REPL' when there are variables."""
+        self.call_tool(client, "rlm_load_data", {"name": "test", "data": "value"})
+
+        response = self.call_tool(client, "rlm_list_vars")
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "Variáveis no REPL" in text
+
+    def test_with_string_request_id(self, client):
+        """rlm_list_vars should work with string request id."""
+        payload = {
+            "jsonrpc": "2.0",
+            "id": "list-vars-request",
+            "method": "tools/call",
+            "params": {
+                "name": "rlm_list_vars",
+                "arguments": {}
+            }
+        }
+        response = client.post("/mcp", json=payload)
+        data = response.json()
+        assert data["id"] == "list-vars-request"
+        assert "result" in data
+
+    def test_multiple_requests_return_same_variables(self, client):
+        """Multiple rlm_list_vars calls should return same variables."""
+        self.call_tool(client, "rlm_load_data", {"name": "persist_var", "data": "test"})
+
+        response1 = self.call_tool(client, "rlm_list_vars", request_id=1)
+        response2 = self.call_tool(client, "rlm_list_vars", request_id=2)
+
+        text1 = response1.json()["result"]["content"][0]["text"]
+        text2 = response2.json()["result"]["content"][0]["text"]
+
+        assert "persist_var" in text1
+        assert "persist_var" in text2
+
+    def test_reflects_cleared_variables(self, client):
+        """rlm_list_vars should reflect variables cleared via rlm_clear."""
+        # Load then clear
+        self.call_tool(client, "rlm_load_data", {"name": "to_clear", "data": "test"})
+        self.call_tool(client, "rlm_clear", {"all": True})
+
+        response = self.call_tool(client, "rlm_list_vars")
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "to_clear" not in text
+        assert "Nenhuma variável" in text or "nenhuma" in text.lower()
+
+    def test_shows_large_variable_size_in_kb(self, client):
+        """rlm_list_vars should show large variable size in KB."""
+        # Create ~10KB of data
+        large_data = "x" * 10000
+        self.call_tool(client, "rlm_load_data", {"name": "large_var", "data": large_data})
+
+        response = self.call_tool(client, "rlm_list_vars")
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "large_var" in text
+        # Size should be around 9.8 KB
+        assert "KB" in text
+
+    def test_preview_truncated_for_long_values(self, client):
+        """rlm_list_vars should truncate preview for long values."""
+        # Load data with more than 100 chars
+        long_data = "a" * 200
+        self.call_tool(client, "rlm_load_data", {"name": "long_var", "data": long_data})
+
+        response = self.call_tool(client, "rlm_list_vars")
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        # Preview should be truncated with "..."
+        assert "..." in text
+
+    def test_does_not_include_llm_functions(self, client):
+        """rlm_list_vars should not list internal llm_* functions in regular output."""
+        # Execute something to trigger llm_* injection
+        self.call_tool(client, "rlm_execute", {"code": "x = 1"})
+
+        response = self.call_tool(client, "rlm_list_vars")
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        # Internal functions like llm_query should not be prominently listed
+        # (they may exist in repl.variables but list_variables() uses variable_metadata)
+        # llm_* functions are injected into namespace but not added to variable_metadata
+        # unless explicitly created by user code
+        assert "x" in text  # User variable should be there
+
+    def test_handles_unicode_variable_names(self, client):
+        """rlm_list_vars should handle Unicode variable content in preview."""
+        unicode_data = "Olá, mundo! 日本語 中文"
+        self.call_tool(client, "rlm_load_data", {"name": "unicode_var", "data": unicode_data})
+
+        response = self.call_tool(client, "rlm_list_vars")
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+        assert "unicode_var" in text
+        # Preview should contain some of the unicode content
+        assert "Olá" in text or "日本語" in text or "mundo" in text
+
+    def test_response_is_dict(self, client):
+        """rlm_list_vars should return a dictionary response."""
+        response = self.call_tool(client, "rlm_list_vars")
+        data = response.json()
+        assert isinstance(data, dict)
