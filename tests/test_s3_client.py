@@ -584,3 +584,203 @@ class TestListObjects:
             # These should NOT match because they don't start with "data/"
             assert "data-backup/file.txt" not in names
             assert "dataset/file.txt" not in names
+
+
+class TestGetObject:
+    """Tests for S3Client.get_object() method."""
+
+    def test_returns_bytes(self, s3_client_with_mock):
+        """get_object returns bytes."""
+        result = s3_client_with_mock.get_object("test-bucket", "test.txt")
+        assert isinstance(result, bytes)
+
+    def test_returns_correct_content(self, s3_client_with_mock):
+        """get_object returns the correct file content."""
+        result = s3_client_with_mock.get_object("test-bucket", "test.txt")
+        assert result == b"Hello, World!"
+
+    def test_returns_json_content(self, s3_client_with_mock):
+        """get_object returns JSON file content as bytes."""
+        result = s3_client_with_mock.get_object("test-bucket", "data/file.json")
+        assert result == b'{"key": "value", "number": 42}'
+
+    def test_returns_binary_content(self, s3_client_with_mock):
+        """get_object returns binary file content (PNG)."""
+        result = s3_client_with_mock.get_object("test-bucket", "images/photo.png")
+        # Check PNG header magic bytes
+        assert result.startswith(b"\x89PNG\r\n\x1a\n")
+
+    def test_raises_runtime_error_for_nonexistent_object(self, s3_client_with_mock):
+        """get_object raises RuntimeError for nonexistent object."""
+        with pytest.raises(RuntimeError) as exc_info:
+            s3_client_with_mock.get_object("test-bucket", "nonexistent.txt")
+        assert "nonexistent.txt" in str(exc_info.value)
+
+    def test_raises_runtime_error_for_nonexistent_bucket(self, s3_client_with_mock):
+        """get_object raises RuntimeError for nonexistent bucket."""
+        with pytest.raises(RuntimeError) as exc_info:
+            s3_client_with_mock.get_object("nonexistent-bucket", "file.txt")
+        assert "nonexistent-bucket" in str(exc_info.value)
+
+    def test_raises_runtime_error_when_unconfigured(self, s3_client_unconfigured):
+        """get_object raises RuntimeError when client is not configured."""
+        with pytest.raises(RuntimeError) as exc_info:
+            s3_client_unconfigured.get_object("any-bucket", "any-file.txt")
+        assert "MINIO_ENDPOINT" in str(exc_info.value)
+
+    def test_empty_file_returns_empty_bytes(self, mock_minio_client):
+        """get_object returns empty bytes for empty file."""
+        mock_minio_client.add_bucket("empty-files")
+        mock_minio_client.add_object("empty-files", "empty.txt", b"")
+        with patch.dict(
+            os.environ,
+            {
+                "MINIO_ENDPOINT": "mock-minio:9000",
+                "MINIO_ACCESS_KEY": "mock-access-key",
+                "MINIO_SECRET_KEY": "mock-secret-key",
+            },
+            clear=True,
+        ):
+            client = S3Client()
+            client._client = mock_minio_client
+            result = client.get_object("empty-files", "empty.txt")
+            assert result == b""
+            assert len(result) == 0
+
+    def test_large_file(self, mock_minio_client):
+        """get_object handles large files (1MB+)."""
+        large_data = b"x" * (1024 * 1024)  # 1MB
+        mock_minio_client.add_bucket("large-bucket")
+        mock_minio_client.add_object("large-bucket", "large.bin", large_data)
+        with patch.dict(
+            os.environ,
+            {
+                "MINIO_ENDPOINT": "mock-minio:9000",
+                "MINIO_ACCESS_KEY": "mock-access-key",
+                "MINIO_SECRET_KEY": "mock-secret-key",
+            },
+            clear=True,
+        ):
+            client = S3Client()
+            client._client = mock_minio_client
+            result = client.get_object("large-bucket", "large.bin")
+            assert result == large_data
+            assert len(result) == 1024 * 1024
+
+    def test_utf8_content(self, mock_minio_client):
+        """get_object correctly retrieves UTF-8 encoded content."""
+        utf8_content = "Olá mundo! 日本語 한국어 العربية".encode("utf-8")
+        mock_minio_client.add_bucket("utf8-bucket")
+        mock_minio_client.add_object("utf8-bucket", "unicode.txt", utf8_content)
+        with patch.dict(
+            os.environ,
+            {
+                "MINIO_ENDPOINT": "mock-minio:9000",
+                "MINIO_ACCESS_KEY": "mock-access-key",
+                "MINIO_SECRET_KEY": "mock-secret-key",
+            },
+            clear=True,
+        ):
+            client = S3Client()
+            client._client = mock_minio_client
+            result = client.get_object("utf8-bucket", "unicode.txt")
+            assert result == utf8_content
+            assert result.decode("utf-8") == "Olá mundo! 日本語 한국어 العربية"
+
+    def test_nested_path_object(self, mock_minio_client):
+        """get_object retrieves objects from nested paths."""
+        mock_minio_client.add_bucket("nested")
+        mock_minio_client.add_object("nested", "a/b/c/deep.txt", b"deep content")
+        with patch.dict(
+            os.environ,
+            {
+                "MINIO_ENDPOINT": "mock-minio:9000",
+                "MINIO_ACCESS_KEY": "mock-access-key",
+                "MINIO_SECRET_KEY": "mock-secret-key",
+            },
+            clear=True,
+        ):
+            client = S3Client()
+            client._client = mock_minio_client
+            result = client.get_object("nested", "a/b/c/deep.txt")
+            assert result == b"deep content"
+
+    def test_special_characters_in_key(self, mock_minio_client):
+        """get_object handles special characters in object key."""
+        mock_minio_client.add_bucket("special")
+        mock_minio_client.add_object(
+            "special", "file with spaces.txt", b"content with spaces"
+        )
+        mock_minio_client.add_object(
+            "special", "file-with-hyphens_and_underscores.txt", b"content"
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "MINIO_ENDPOINT": "mock-minio:9000",
+                "MINIO_ACCESS_KEY": "mock-access-key",
+                "MINIO_SECRET_KEY": "mock-secret-key",
+            },
+            clear=True,
+        ):
+            client = S3Client()
+            client._client = mock_minio_client
+            result1 = client.get_object("special", "file with spaces.txt")
+            assert result1 == b"content with spaces"
+            result2 = client.get_object("special", "file-with-hyphens_and_underscores.txt")
+            assert result2 == b"content"
+
+    def test_get_object_is_read_only(self, s3_client_with_mock, mock_minio_client_with_data):
+        """get_object does not modify the stored object."""
+        result1 = s3_client_with_mock.get_object("test-bucket", "test.txt")
+        result2 = s3_client_with_mock.get_object("test-bucket", "test.txt")
+        assert result1 == result2
+        # Check underlying mock data unchanged
+        assert mock_minio_client_with_data.buckets["test-bucket"]["test.txt"] == b"Hello, World!"
+
+    def test_binary_data_with_null_bytes(self, mock_minio_client):
+        """get_object correctly handles binary data with null bytes."""
+        binary_data = b"\x00\x01\x02\x00\xff\xfe\x00"
+        mock_minio_client.add_bucket("binary")
+        mock_minio_client.add_object("binary", "nulls.bin", binary_data)
+        with patch.dict(
+            os.environ,
+            {
+                "MINIO_ENDPOINT": "mock-minio:9000",
+                "MINIO_ACCESS_KEY": "mock-access-key",
+                "MINIO_SECRET_KEY": "mock-secret-key",
+            },
+            clear=True,
+        ):
+            client = S3Client()
+            client._client = mock_minio_client
+            result = client.get_object("binary", "nulls.bin")
+            assert result == binary_data
+
+    def test_multiple_objects_retrieved_independently(self, s3_client_with_mock):
+        """get_object retrieves different objects correctly."""
+        txt = s3_client_with_mock.get_object("test-bucket", "test.txt")
+        json_data = s3_client_with_mock.get_object("test-bucket", "data/file.json")
+        png = s3_client_with_mock.get_object("test-bucket", "images/photo.png")
+
+        assert txt == b"Hello, World!"
+        assert json_data == b'{"key": "value", "number": 42}'
+        assert png.startswith(b"\x89PNG")
+
+    def test_object_key_with_dots(self, mock_minio_client):
+        """get_object handles object keys with multiple dots."""
+        mock_minio_client.add_bucket("dots")
+        mock_minio_client.add_object("dots", "file.backup.2024.01.txt", b"backup content")
+        with patch.dict(
+            os.environ,
+            {
+                "MINIO_ENDPOINT": "mock-minio:9000",
+                "MINIO_ACCESS_KEY": "mock-access-key",
+                "MINIO_SECRET_KEY": "mock-secret-key",
+            },
+            clear=True,
+        ):
+            client = S3Client()
+            client._client = mock_minio_client
+            result = client.get_object("dots", "file.backup.2024.01.txt")
+            assert result == b"backup content"
