@@ -90,7 +90,7 @@ src/rlm_mcp/
 
 - [x] Testar endpoint /health retorna 200
 - [x] Testar MCP initialize retorna capabilities
-- [ ] Testar MCP tools/list retorna todas as tools
+- [x] Testar MCP tools/list retorna todas as tools
 - [ ] Testar tool rlm_execute com código simples
 - [ ] Testar tool rlm_load_data carrega variável
 - [ ] Testar tool rlm_list_vars lista variáveis carregadas

@@ -1517,3 +1517,73 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 46 - Test MCP tools/list returns all tools
+
+- What was implemented:
+  - Added TestMcpToolsList class to tests/test_http_server.py
+  - 28 test cases covering:
+    - Returns 200 status code, JSON content-type, jsonrpc 2.0
+    - Returns same request id (int and string)
+    - Returns result dict with 'tools' key containing a list
+    - Returns non-empty tools list with 19 tools
+    - All expected tools present (rlm_execute, rlm_load_data, etc.)
+    - Each tool has name (string), description (string), inputSchema (dict)
+    - inputSchema has type='object' and 'properties' field for all tools
+    - Specific tools have correct required properties (rlm_execute: code, rlm_load_data: name/data)
+    - No error in response
+    - Works with string id
+    - Multiple requests return same tools
+    - Tools order is consistent
+    - Tools with optional params don't have them in 'required'
+    - All tool names follow 'rlm_' naming convention
+
+- Files changed:
+  - tests/test_http_server.py (added TestMcpToolsList class with 28 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - get_tools_list() returns 19 tools, not 17 (counted wrong initially)
+  - tools/list method returns {result: {tools: [...]}} format
+  - Each tool has: name (str), description (str), inputSchema (dict with type, properties, required)
+  - inputSchema always has type='object' and properties (can be empty dict)
+  - Tool naming convention is consistent: all start with 'rlm_'
+  - Tools without required params have no 'required' key or empty list
+
+---
+
+## Iteration 45 - Test MCP initialize returns capabilities
+
+- What was implemented:
+  - Added TestMcpInitialize class to tests/test_http_server.py
+  - Created helper method make_mcp_request() for JSON-RPC requests
+  - 19 test cases covering:
+    - Returns 200 status code
+    - Returns JSON content-type
+    - Returns jsonrpc version "2.0"
+    - Returns same request id (int, string, null)
+    - Returns result dict with protocolVersion, capabilities, serverInfo
+    - protocolVersion is "2024-11-05"
+    - capabilities has tools with listChanged=False
+    - serverInfo has name="rlm-mcp-server" and version="0.1.0"
+    - No error in response
+    - Works with params (clientInfo, ignored but valid)
+    - Multiple requests succeed
+    - Result has all required fields
+
+- Files changed:
+  - tests/test_http_server.py (added TestMcpInitialize class with 19 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - MCP requests use JSON-RPC 2.0 format: {jsonrpc, id, method, params}
+  - POST /mcp endpoint handles MCP protocol requests directly
+  - MCPResponse uses model_dump(exclude_none=True) - None values are excluded from response
+  - When request id is None, it's excluded from response (not present in JSON)
+  - handle_mcp_request returns MCPResponse for "initialize" with protocolVersion, capabilities, serverInfo
+  - capabilities.tools.listChanged=False means tool list doesn't change at runtime
+  - The /mcp endpoint requires authentication (verify_api_key) but TestClient works without API key when RLM_API_KEY env is not set
+
+---
+
