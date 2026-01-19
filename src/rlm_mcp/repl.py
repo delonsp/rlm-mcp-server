@@ -11,6 +11,7 @@ permitindo sub-chamadas a LLMs de dentro do código Python.
 import ast
 import sys
 import traceback
+import signal
 from io import StringIO
 from typing import Any, Optional
 from dataclasses import dataclass, field
@@ -85,6 +86,16 @@ class VariableInfo:
 class SecurityError(Exception):
     """Erro de segurança na execução"""
     pass
+
+
+class ExecutionTimeoutError(Exception):
+    """Erro de timeout na execução"""
+    pass
+
+
+def _timeout_handler(signum, frame):
+    """Handler para signal de timeout"""
+    raise ExecutionTimeoutError("Execution timed out")
 
 
 class SafeREPL:
@@ -263,7 +274,7 @@ class SafeREPL:
 
         Args:
             code: Código Python para executar
-            timeout_seconds: Timeout máximo (não implementado em versão básica)
+            timeout_seconds: Timeout máximo para execução (default: 30s)
 
         Returns:
             ExecutionResult com stdout, stderr e metadados
@@ -307,15 +318,36 @@ class SafeREPL:
 
         success = True
 
+        # Set up timeout using signal (Unix only, main thread only)
+        # signal.signal only works in the main thread, so we check before using it
+        import threading
+        is_main_thread = threading.current_thread() is threading.main_thread()
+        use_timeout = timeout_seconds > 0 and is_main_thread
+        old_handler = None
+
         try:
-            exec(code, namespace)
-        except SecurityError as e:
-            sys.stderr.write(f"SecurityError: {e}\n")
-            success = False
-        except Exception as e:
-            sys.stderr.write(f"{type(e).__name__}: {e}\n")
-            sys.stderr.write(traceback.format_exc())
-            success = False
+            if use_timeout:
+                old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+                # Use integer seconds (signal.alarm only supports integers)
+                signal.alarm(int(timeout_seconds) or 1)
+            try:
+                exec(code, namespace)
+            except ExecutionTimeoutError:
+                sys.stderr.write(f"ExecutionTimeoutError: Execution timed out after {timeout_seconds} seconds\n")
+                success = False
+            except SecurityError as e:
+                sys.stderr.write(f"SecurityError: {e}\n")
+                success = False
+            except Exception as e:
+                sys.stderr.write(f"{type(e).__name__}: {e}\n")
+                sys.stderr.write(traceback.format_exc())
+                success = False
+        finally:
+            # Always cancel the alarm and restore the old handler
+            if use_timeout:
+                signal.alarm(0)
+                if old_handler is not None:
+                    signal.signal(signal.SIGALRM, old_handler)
 
         # Captura outputs
         stdout = sys.stdout.getvalue()

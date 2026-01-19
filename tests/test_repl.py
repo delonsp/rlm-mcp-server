@@ -3166,3 +3166,214 @@ data = json.dumps({'key': 'value'})
         assert result2.success is True
         assert repl.variables.get("pi_value") == 3.141592653589793
         assert repl.variables.get("data") == '{"key": "value"}'
+
+
+class TestInfiniteLoopTimeout:
+    """Test that execute handles infinite loops with timeout."""
+
+    def test_simple_infinite_while_loop_times_out(self):
+        """Simple while True loop is stopped by timeout."""
+        repl = SafeREPL()
+        # Use 1 second timeout for quick test
+        result = repl.execute("while True: pass", timeout_seconds=1)
+
+        assert result.success is False
+        assert "ExecutionTimeoutError" in result.stderr
+        assert "timed out" in result.stderr
+
+    def test_infinite_for_loop_times_out(self):
+        """Infinite for loop using itertools.count is stopped by timeout."""
+        repl = SafeREPL()
+        code = """
+import itertools
+for i in itertools.count():
+    x = i
+"""
+        result = repl.execute(code, timeout_seconds=1)
+
+        assert result.success is False
+        assert "ExecutionTimeoutError" in result.stderr
+
+    def test_infinite_recursion_times_out_or_stack_overflow(self):
+        """Infinite recursion is stopped by timeout or RecursionError."""
+        repl = SafeREPL()
+        code = """
+def infinite():
+    return infinite()
+infinite()
+"""
+        result = repl.execute(code, timeout_seconds=2)
+
+        # Either timeout or RecursionError is acceptable
+        assert result.success is False
+        assert "ExecutionTimeoutError" in result.stderr or "RecursionError" in result.stderr
+
+    def test_timeout_error_message_includes_seconds(self):
+        """Timeout error message includes the timeout duration."""
+        repl = SafeREPL()
+        result = repl.execute("while True: pass", timeout_seconds=1)
+
+        assert result.success is False
+        assert "1" in result.stderr or "1.0" in result.stderr
+
+    def test_fast_code_completes_within_timeout(self):
+        """Fast code completes successfully within timeout."""
+        repl = SafeREPL()
+        result = repl.execute("x = 1 + 1", timeout_seconds=5)
+
+        assert result.success is True
+        assert repl.variables.get("x") == 2
+
+    def test_loop_that_finishes_completes_successfully(self):
+        """A loop that finishes before timeout completes successfully."""
+        repl = SafeREPL()
+        code = """
+total = 0
+for i in range(1000):
+    total += i
+"""
+        result = repl.execute(code, timeout_seconds=5)
+
+        assert result.success is True
+        assert repl.variables.get("total") == 499500
+
+    def test_timeout_does_not_affect_subsequent_executions(self):
+        """After a timeout, the REPL can still execute code normally."""
+        repl = SafeREPL()
+
+        # First execution times out
+        result1 = repl.execute("while True: pass", timeout_seconds=1)
+        assert result1.success is False
+        assert "ExecutionTimeoutError" in result1.stderr
+
+        # Second execution should work fine
+        result2 = repl.execute("y = 42", timeout_seconds=5)
+        assert result2.success is True
+        assert repl.variables.get("y") == 42
+
+    def test_variables_from_before_timeout_are_preserved(self):
+        """Variables set before timeout are preserved."""
+        repl = SafeREPL()
+
+        # First, set a variable
+        result1 = repl.execute("before_timeout = 'preserved'", timeout_seconds=5)
+        assert result1.success is True
+
+        # Second, execute code that times out
+        result2 = repl.execute("while True: pass", timeout_seconds=1)
+        assert result2.success is False
+
+        # Variable should still exist
+        assert repl.variables.get("before_timeout") == "preserved"
+
+    def test_timeout_zero_means_no_timeout(self):
+        """timeout_seconds=0 should skip timeout setup (fast code should work)."""
+        repl = SafeREPL()
+        # With timeout=0, no alarm is set, so fast code runs without timeout mechanism
+        result = repl.execute("x = 100", timeout_seconds=0)
+
+        assert result.success is True
+        assert repl.variables.get("x") == 100
+
+    def test_nested_loops_timeout(self):
+        """Nested infinite loops are stopped by timeout."""
+        repl = SafeREPL()
+        code = """
+while True:
+    while True:
+        pass
+"""
+        result = repl.execute(code, timeout_seconds=1)
+
+        assert result.success is False
+        assert "ExecutionTimeoutError" in result.stderr
+
+    def test_infinite_loop_with_sleep_times_out(self):
+        """Infinite loop with time.sleep is stopped by timeout."""
+        repl = SafeREPL()
+        code = """
+import time
+while True:
+    time.sleep(0.1)
+"""
+        result = repl.execute(code, timeout_seconds=1)
+
+        assert result.success is False
+        assert "ExecutionTimeoutError" in result.stderr
+
+    def test_long_computation_times_out(self):
+        """Long computation is stopped by timeout."""
+        repl = SafeREPL()
+        # Very expensive computation
+        code = """
+result = 0
+for i in range(10**9):
+    result += i * i
+"""
+        result = repl.execute(code, timeout_seconds=1)
+
+        assert result.success is False
+        assert "ExecutionTimeoutError" in result.stderr
+
+    def test_multiple_timeouts_in_sequence(self):
+        """Multiple timeouts in sequence don't break the REPL."""
+        repl = SafeREPL()
+
+        # First timeout
+        result1 = repl.execute("while True: pass", timeout_seconds=1)
+        assert result1.success is False
+
+        # Second timeout
+        result2 = repl.execute("while True: pass", timeout_seconds=1)
+        assert result2.success is False
+
+        # Third timeout
+        result3 = repl.execute("while True: pass", timeout_seconds=1)
+        assert result3.success is False
+
+        # Normal execution still works
+        result4 = repl.execute("final = 'ok'", timeout_seconds=5)
+        assert result4.success is True
+        assert repl.variables.get("final") == "ok"
+
+    def test_execution_time_reflects_timeout(self):
+        """Execution time in result should be close to timeout when timed out."""
+        repl = SafeREPL()
+        result = repl.execute("while True: pass", timeout_seconds=1)
+
+        assert result.success is False
+        # Execution time should be around 1 second (1000ms), with some tolerance
+        assert result.execution_time_ms >= 900  # At least 0.9 seconds
+        assert result.execution_time_ms < 3000  # Less than 3 seconds
+
+    def test_generator_infinite_loop_times_out(self):
+        """Infinite generator that's consumed times out."""
+        repl = SafeREPL()
+        code = """
+def infinite_gen():
+    i = 0
+    while True:
+        yield i
+        i += 1
+
+total = 0
+for x in infinite_gen():
+    total += x
+"""
+        result = repl.execute(code, timeout_seconds=1)
+
+        assert result.success is False
+        assert "ExecutionTimeoutError" in result.stderr
+
+    def test_list_comprehension_infinite_times_out(self):
+        """List comprehension with infinite iterator times out."""
+        repl = SafeREPL()
+        code = """
+import itertools
+# This would try to build an infinite list
+result = [x for x in itertools.count()]
+"""
+        result = repl.execute(code, timeout_seconds=1)
+
+        assert result.success is False
+        assert "ExecutionTimeoutError" in result.stderr
