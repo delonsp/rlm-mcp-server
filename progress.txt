@@ -1485,3 +1485,35 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 44 - Test endpoint /health returns 200
+
+- What was implemented:
+  - Created tests/test_http_server.py with TestHealthEndpoint class
+  - 12 test cases covering:
+    - Returns 200 status code
+    - Returns JSON content-type
+    - Returns status='healthy'
+    - Returns timestamp in ISO format
+    - Returns memory info with all expected keys (total_bytes, total_human, variable_count, max_allowed_mb, usage_percent)
+    - Returns version='0.1.0'
+    - No authentication required for health check
+    - Memory values have correct types (int, str, float)
+    - Response has all required fields
+    - Multiple requests succeed
+    - Response is a dictionary
+
+- Files changed:
+  - tests/test_http_server.py (new file)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - FastAPI TestClient from fastapi.testclient is the standard way to test FastAPI apps
+  - TestClient(app) creates a synchronous test client for the FastAPI app
+  - The /health endpoint does NOT require authentication (verify_api_key is only on /sse, /message, /mcp)
+  - Health response includes: status, timestamp, memory (dict with 5 keys), version
+  - datetime.fromisoformat() is useful for validating ISO timestamp strings
+  - Content-type header may include charset (e.g., "application/json; charset=utf-8"), so use startswith()
+
+---
+
