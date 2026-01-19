@@ -1044,3 +1044,73 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 32 - Test is_configured retorna False sem credenciais
+
+- What was implemented:
+  - Created tests/test_s3_client.py with TestIsConfigured class
+  - 18 test cases covering:
+    - Returns False when using s3_client_unconfigured fixture
+    - Returns False with empty endpoint
+    - Returns False with empty access_key
+    - Returns False with empty secret_key
+    - Returns False with all empty credentials
+    - Returns True with all credentials set
+    - Returns True with s3_client_with_mock fixture
+    - Returns False when MINIO_ENDPOINT env var not set at all
+    - Returns False with only endpoint (missing keys)
+    - Returns False with only access_key
+    - Returns False with only secret_key
+    - Returns False with endpoint + access_key only
+    - Returns False with endpoint + secret_key only
+    - Returns False with access + secret keys only
+    - Returns bool type (for both configured and unconfigured)
+    - Whitespace-only endpoint returns True (documents current behavior)
+    - Does not access client property (safe to call without triggering lazy init)
+
+- Files changed:
+  - tests/test_s3_client.py (new file)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - is_configured uses bool(self.endpoint and self.access_key and self.secret_key)
+  - Empty string is falsy in Python, so any missing credential returns False
+  - Whitespace-only strings are truthy - not trimmed (documented as current behavior)
+  - is_configured does NOT trigger lazy client initialization (safe to call)
+  - patch.dict(os.environ, {...}, clear=True) is effective for isolating env var tests
+
+---
+
+## Iteration 33 - Test list_buckets com mock retorna lista
+
+- What was implemented:
+  - Added TestListBuckets class to tests/test_s3_client.py
+  - 12 test cases covering:
+    - Returns a list
+    - Returns bucket names as strings
+    - Returns expected buckets from the mock (test-bucket, empty-bucket)
+    - Returns empty list when no buckets exist
+    - Returns single bucket
+    - Returns many buckets (10)
+    - Handles bucket names with special characters (hyphens, dots)
+    - Does not return objects in buckets (only bucket names)
+    - Raises RuntimeError when client is not configured
+    - Returns buckets in dict iteration order (insertion order)
+    - Handles empty bucket name (edge case)
+    - list_buckets is read-only (doesn't modify bucket list)
+
+- Files changed:
+  - tests/test_s3_client.py (added TestListBuckets class with 12 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - list_buckets uses self.client.list_buckets() which triggers lazy initialization
+  - If not configured, accessing client property raises RuntimeError
+  - list_buckets returns [b.name for b in buckets] - extracting name attribute
+  - MockMinioClient.list_buckets() returns [MockMinioBucket(name) for name in self.buckets.keys()]
+  - Python 3.7+ dicts preserve insertion order, so bucket order matches addition order
+  - Tests use s3_client_with_mock fixture for pre-configured mock, or mock_minio_client for empty mock
+
+---
+
