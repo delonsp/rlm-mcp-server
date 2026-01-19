@@ -1734,3 +1734,83 @@ Este arquivo registra o progresso do Ralph em cada iteração.
 
 ---
 
+## Iteration 51 - Test tool rlm_clear limpa namespace
+
+- What was implemented:
+  - Added TestMcpToolRlmClear class to tests/test_http_server.py
+  - 28 test cases covering:
+    - Returns 200 status code, JSON content-type, jsonrpc 2.0, same request id
+    - Returns result dict with 'content' key containing list of text items
+    - clear with all=True removes all variables and returns count
+    - clear with all=True on empty namespace returns 0
+    - clear with name removes only that variable
+    - clear with name leaves other variables intact
+    - clear nonexistent variable returns "não encontrada" message
+    - clear without parameters returns helpful message
+    - Variable can be recreated after clearing
+    - Variables created via execute can be cleared
+    - Cleared variable raises NameError on access
+    - Works with string request id
+    - Works with mixed variable types (text, json, csv, execute)
+    - Handles variable names with underscores
+    - Resets memory usage after clear_all
+    - Reduces memory after clearing single variable
+    - No error field in response for valid operations
+    - Multiple clear operations work consecutively
+    - all=False behaves same as no parameter
+
+- Files changed:
+  - tests/test_http_server.py (added TestMcpToolRlmClear class with 28 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - rlm_clear tool has two parameters: 'name' (string) and 'all' (boolean, default False)
+  - When all=True: clears all variables, returns "Todas as N variáveis foram removidas."
+  - When name provided: clears one variable, returns "Variável 'X' removida." or "Variável 'X' não encontrada."
+  - When neither: returns "Especifique 'name' ou 'all=true'."
+  - Variables from execute include llm_* functions (llm_query, llm_stats, llm_reset_counter)
+  - These llm_* functions count in clear_all count (7 instead of 4 in mixed types test)
+  - Test should use >= comparison or regex to extract count rather than exact match
+
+---
+
+## Iteration 52 - Test tool rlm_load_s3 com skip_if_exists=True pula se existe
+
+- What was implemented:
+  - Added TestMcpToolRlmLoadS3SkipIfExists class to tests/test_http_server.py
+  - 20 test cases covering:
+    - Returns 200 status code, JSON content-type, jsonrpc 2.0, same request id
+    - Returns result dict with 'content' key containing list of text items
+    - Loads text data successfully when variable doesn't exist
+    - skip_if_exists=True skips when variable already exists (shows "já existe" message)
+    - skip_if_exists defaults to True (skips without explicit parameter)
+    - Skip message includes variable info (chars count for strings, type name for others)
+    - Skip message suggests using skip_if_exists=False for force reload
+    - Works with JSON variable type (shows "dict" in skip message)
+    - Does NOT trigger S3 download when skipping (verified by counting get_object calls)
+    - Preserves original variable data when skipping (even if trying to load different file)
+    - Skip does not set isError flag (not an error, just informational)
+    - Works when variable was created via rlm_load_data
+    - Works when variable was created via rlm_execute
+    - No skip when variable doesn't exist (loads normally with skip_if_exists=True)
+    - Works with string request id
+    - Shows chars count for large string variables (10,000 chars)
+    - No error for nonexistent S3 file when variable already exists (skip happens first)
+
+- Files changed:
+  - tests/test_http_server.py (added TestMcpToolRlmLoadS3SkipIfExists class with 20 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - rlm_load_s3 checks `if skip_if_exists and var_name in repl.variables` BEFORE any S3 operations
+  - This means skip happens immediately if variable exists, no network call needed
+  - Skip message format: "Variável '{var_name}' já existe ({size_info}). Use skip_if_exists=False para forçar reload."
+  - For strings: size_info = "{len(existing):,} chars"
+  - For other types: size_info = type(existing).__name__
+  - Need to mock get_s3_client for http_server tests using patch("rlm_mcp.http_server.get_s3_client", return_value=mock_client)
+  - autouse fixtures can depend on other fixtures (mock_s3 depends on mock_minio_client_with_data)
+
+---
+

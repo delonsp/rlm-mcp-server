@@ -2158,3 +2158,441 @@ class TestMcpToolRlmClear:
 
         # Should ask for name or all
         assert "name" in text.lower() or "all" in text.lower()
+
+
+class TestMcpToolRlmLoadS3SkipIfExists:
+    """Tests for MCP tool rlm_load_s3 with skip_if_exists=True via POST /mcp endpoint."""
+
+    def call_tool(self, client, tool_name: str, arguments: dict = None, request_id: int = 1):
+        """Helper to call an MCP tool."""
+        payload = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "tools/call",
+            "params": {
+                "name": tool_name,
+                "arguments": arguments or {}
+            }
+        }
+        return client.post("/mcp", json=payload)
+
+    @pytest.fixture(autouse=True)
+    def reset_repl(self):
+        """Reset REPL state before each test to avoid cross-test pollution."""
+        from rlm_mcp.http_server import repl
+        repl.clear_all()
+        yield
+        repl.clear_all()
+
+    @pytest.fixture(autouse=True)
+    def mock_s3(self, mock_minio_client_with_data):
+        """Mock the S3 client for all tests in this class."""
+        from unittest.mock import patch
+        from rlm_mcp.s3_client import S3Client
+        import os
+
+        # Create mock S3Client with fake credentials
+        with patch.dict(os.environ, {
+            "MINIO_ENDPOINT": "mock-minio:9000",
+            "MINIO_ACCESS_KEY": "mock-access-key",
+            "MINIO_SECRET_KEY": "mock-secret-key",
+            "MINIO_SECURE": "false",
+        }):
+            mock_client = S3Client()
+            mock_client._client = mock_minio_client_with_data
+
+            # Patch get_s3_client to return our mock
+            with patch("rlm_mcp.http_server.get_s3_client", return_value=mock_client):
+                yield mock_client
+
+    def test_returns_200_status_code(self, client):
+        """rlm_load_s3 should return 200 OK."""
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket"
+        })
+        assert response.status_code == 200
+
+    def test_returns_json(self, client):
+        """rlm_load_s3 should return JSON content."""
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket"
+        })
+        assert response.headers["content-type"].startswith("application/json")
+
+    def test_returns_jsonrpc_version(self, client):
+        """rlm_load_s3 should return jsonrpc 2.0."""
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket"
+        })
+        data = response.json()
+        assert data["jsonrpc"] == "2.0"
+
+    def test_returns_same_id(self, client):
+        """rlm_load_s3 should return the same request id."""
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket"
+        }, request_id=42)
+        data = response.json()
+        assert data["id"] == 42
+
+    def test_returns_result_with_content(self, client):
+        """rlm_load_s3 should return result with content."""
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket"
+        })
+        data = response.json()
+        assert "result" in data
+        assert "content" in data["result"]
+        assert isinstance(data["result"]["content"], list)
+
+    def test_loads_text_data_successfully(self, client):
+        """rlm_load_s3 should load text data into variable."""
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_text",
+            "bucket": "test-bucket"
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        # Should confirm successful load
+        assert "my_text" in text
+        assert "carregada" in text.lower() or "loaded" in text.lower()
+
+    def test_skip_if_exists_true_skips_when_variable_exists(self, client):
+        """rlm_load_s3 with skip_if_exists=True should skip when variable already exists."""
+        # First load the variable
+        self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "existing_var",
+            "bucket": "test-bucket"
+        })
+
+        # Try to load again with skip_if_exists=True (default)
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "existing_var",
+            "bucket": "test-bucket",
+            "skip_if_exists": True
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        # Should indicate variable already exists
+        assert "existing_var" in text
+        assert "já existe" in text.lower() or "already exists" in text.lower()
+
+    def test_skip_if_exists_default_is_true(self, client):
+        """rlm_load_s3 should default to skip_if_exists=True."""
+        # First load the variable
+        self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "existing_var",
+            "bucket": "test-bucket"
+        })
+
+        # Try to load again WITHOUT specifying skip_if_exists (should default to True)
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "existing_var",
+            "bucket": "test-bucket"
+            # skip_if_exists not specified, should default to True
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        # Should indicate variable already exists
+        assert "existing_var" in text
+        assert "já existe" in text.lower() or "already exists" in text.lower()
+
+    def test_skip_message_includes_variable_info(self, client):
+        """Skip message should include info about the existing variable."""
+        # First load text
+        self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket"
+        })
+
+        # Try to load again
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket",
+            "skip_if_exists": True
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        # Should mention chars or type info
+        assert "char" in text.lower() or "str" in text.lower()
+
+    def test_skip_message_suggests_force_reload(self, client):
+        """Skip message should suggest using skip_if_exists=False for reload."""
+        # First load
+        self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket"
+        })
+
+        # Try to load again
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket",
+            "skip_if_exists": True
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        # Should suggest skip_if_exists=False
+        assert "skip_if_exists=False" in text or "skip_if_exists" in text.lower()
+
+    def test_skip_if_exists_works_with_json_variable(self, client):
+        """skip_if_exists should work when existing variable is JSON type."""
+        # First load JSON
+        self.call_tool(client, "rlm_load_s3", {
+            "key": "data/file.json",
+            "name": "json_var",
+            "bucket": "test-bucket",
+            "data_type": "json"
+        })
+
+        # Try to load again
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "data/file.json",
+            "name": "json_var",
+            "bucket": "test-bucket",
+            "data_type": "json",
+            "skip_if_exists": True
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        # Should indicate already exists with type info
+        assert "json_var" in text
+        assert "já existe" in text.lower() or "already exists" in text.lower()
+        # For non-string types, should show type name
+        assert "dict" in text.lower()
+
+    def test_skip_if_exists_does_not_trigger_s3_download(self, client, mock_minio_client_with_data):
+        """When variable exists and skip_if_exists=True, S3 should not be called."""
+        from unittest.mock import MagicMock
+
+        # First load
+        self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket"
+        })
+
+        # Record get_object calls
+        original_get_object = mock_minio_client_with_data.get_object
+        call_count = [0]
+        def counting_get_object(*args, **kwargs):
+            call_count[0] += 1
+            return original_get_object(*args, **kwargs)
+        mock_minio_client_with_data.get_object = counting_get_object
+
+        # Try to load again - should NOT call get_object
+        self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket",
+            "skip_if_exists": True
+        })
+
+        # Should not have downloaded again
+        assert call_count[0] == 0
+
+    def test_skip_if_exists_preserves_original_data(self, client):
+        """When skipping, original variable data should remain unchanged."""
+        from rlm_mcp.http_server import repl
+
+        # First load
+        self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket"
+        })
+
+        # Get original value
+        original_value = repl.variables["my_var"]
+
+        # Try to load a different file into same name
+        self.call_tool(client, "rlm_load_s3", {
+            "key": "data/file.json",  # Different file!
+            "name": "my_var",
+            "bucket": "test-bucket",
+            "skip_if_exists": True
+        })
+
+        # Value should be unchanged
+        assert repl.variables["my_var"] == original_value
+
+    def test_skip_does_not_return_error_field(self, client):
+        """Skip should not set isError flag."""
+        # First load
+        self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket"
+        })
+
+        # Try to load again
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket",
+            "skip_if_exists": True
+        })
+        data = response.json()
+
+        # Should not have error
+        assert data.get("error") is None
+        # isError should not be True (might not be present at all)
+        result = data.get("result", {})
+        assert result.get("isError") != True
+
+    def test_skip_with_variable_created_via_rlm_load_data(self, client):
+        """skip_if_exists should work when variable was created via rlm_load_data."""
+        # Create variable via rlm_load_data
+        self.call_tool(client, "rlm_load_data", {
+            "name": "my_var",
+            "data": "existing data"
+        })
+
+        # Try to load from S3 into same variable name
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket",
+            "skip_if_exists": True
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        # Should indicate variable already exists
+        assert "my_var" in text
+        assert "já existe" in text.lower() or "already exists" in text.lower()
+
+    def test_skip_with_variable_created_via_rlm_execute(self, client):
+        """skip_if_exists should work when variable was created via rlm_execute."""
+        # Create variable via rlm_execute
+        self.call_tool(client, "rlm_execute", {"code": "my_var = [1, 2, 3]"})
+
+        # Try to load from S3 into same variable name
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket",
+            "skip_if_exists": True
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        # Should indicate variable already exists
+        assert "my_var" in text
+        assert "já existe" in text.lower() or "already exists" in text.lower()
+
+    def test_no_skip_when_variable_does_not_exist(self, client):
+        """rlm_load_s3 should load normally when variable doesn't exist."""
+        from rlm_mcp.http_server import repl
+
+        # Make sure variable doesn't exist
+        assert "new_var" not in repl.variables
+
+        # Load with skip_if_exists=True (but variable doesn't exist)
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "new_var",
+            "bucket": "test-bucket",
+            "skip_if_exists": True
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        # Should load successfully (not skip)
+        assert "carregada" in text.lower() or "loaded" in text.lower()
+        assert "new_var" in repl.variables
+
+    def test_skip_if_exists_with_string_id(self, client):
+        """rlm_load_s3 should work with string request id."""
+        # First load
+        self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "my_var",
+            "bucket": "test-bucket"
+        })
+
+        # Try to load again with string id
+        payload = {
+            "jsonrpc": "2.0",
+            "id": "s3-load-test-123",
+            "method": "tools/call",
+            "params": {
+                "name": "rlm_load_s3",
+                "arguments": {
+                    "key": "test.txt",
+                    "name": "my_var",
+                    "bucket": "test-bucket",
+                    "skip_if_exists": True
+                }
+            }
+        }
+        response = client.post("/mcp", json=payload)
+        data = response.json()
+
+        assert data["id"] == "s3-load-test-123"
+        assert "já existe" in data["result"]["content"][0]["text"].lower()
+
+    def test_skip_if_exists_for_large_string_variable(self, client):
+        """skip_if_exists should show chars count for large string variables."""
+        from rlm_mcp.http_server import repl
+
+        # Create large variable via execute
+        self.call_tool(client, "rlm_execute", {"code": "large_var = 'x' * 10000"})
+
+        # Try to load into same name
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "test.txt",
+            "name": "large_var",
+            "bucket": "test-bucket",
+            "skip_if_exists": True
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        # Should show chars info
+        assert "10,000 chars" in text or "10000 char" in text
+
+    def test_no_error_for_nonexistent_file_when_variable_exists(self, client):
+        """When variable exists and skip_if_exists=True, nonexistent S3 file should still skip."""
+        # First create variable
+        self.call_tool(client, "rlm_load_data", {"name": "my_var", "data": "existing"})
+
+        # Try to load nonexistent S3 file into same variable name
+        response = self.call_tool(client, "rlm_load_s3", {
+            "key": "nonexistent/file.txt",  # This file doesn't exist
+            "name": "my_var",
+            "bucket": "test-bucket",
+            "skip_if_exists": True
+        })
+        data = response.json()
+        text = data["result"]["content"][0]["text"]
+
+        # Should skip (not error) because variable exists
+        assert "já existe" in text.lower() or "already exists" in text.lower()
+        # Should NOT have error about missing file
+        assert "não encontrado" not in text.lower() and "not found" not in text.lower()
