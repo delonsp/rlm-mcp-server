@@ -61,6 +61,75 @@ BLOCKED_BUILTINS = {
 }
 
 
+# ============================================================================
+# Helper Functions para o REPL
+# Funções pré-definidas disponíveis no namespace de execução
+# ============================================================================
+
+# Nomes de helper functions (excluídos do namespace de usuário)
+HELPER_FUNCTION_NAMES = {
+    'buscar',
+    'contar',
+    'extrair_secao',
+    'resumir_tamanho',
+}
+
+def _buscar(texto: str, termo: str) -> list[dict]:
+    """
+    Busca um termo em um texto e retorna todas as ocorrências com contexto.
+
+    Args:
+        texto: O texto onde buscar
+        termo: O termo a ser buscado (case-insensitive)
+
+    Returns:
+        Lista de dicts com: posicao, linha, contexto (50 chars antes e depois)
+
+    Example:
+        >>> buscar(meu_texto, "erro")
+        [{'posicao': 150, 'linha': 5, 'contexto': '...texto antes erro texto depois...'}]
+    """
+    import re
+
+    if not texto or not termo:
+        return []
+
+    resultados = []
+    texto_lower = texto.lower()
+    termo_lower = termo.lower()
+
+    # Encontra todas as ocorrências
+    start = 0
+    while True:
+        pos = texto_lower.find(termo_lower, start)
+        if pos == -1:
+            break
+
+        # Calcula número da linha
+        linha = texto[:pos].count('\n') + 1
+
+        # Extrai contexto (50 chars antes e depois)
+        ctx_start = max(0, pos - 50)
+        ctx_end = min(len(texto), pos + len(termo) + 50)
+        contexto = texto[ctx_start:ctx_end]
+
+        # Adiciona reticências se truncado
+        if ctx_start > 0:
+            contexto = "..." + contexto
+        if ctx_end < len(texto):
+            contexto = contexto + "..."
+
+        resultados.append({
+            'posicao': pos,
+            'linha': linha,
+            'contexto': contexto.replace('\n', ' ')  # Remove quebras de linha
+        })
+
+        start = pos + 1
+
+    return resultados
+
+
 @dataclass
 class ExecutionResult:
     """Resultado de uma execução no REPL"""
@@ -316,6 +385,9 @@ class SafeREPL:
         namespace['llm_stats'] = self.llm_client.get_stats
         namespace['llm_reset_counter'] = self.llm_client.reset_counter
 
+        # Injeta helper functions pré-definidas
+        namespace['buscar'] = _buscar
+
         success = True
 
         # Set up timeout using signal (Unix only, main thread only)
@@ -364,6 +436,9 @@ class SafeREPL:
             if name.startswith('_'):
                 continue
             if name in ('re', 'json', 'math', 'collections', 'datetime'):
+                continue
+            # Ignora helper functions pré-definidas
+            if name in HELPER_FUNCTION_NAMES:
                 continue
             if callable(value) and not isinstance(value, type):
                 # Permite funções definidas pelo usuário
