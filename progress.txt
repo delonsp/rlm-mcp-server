@@ -2985,3 +2985,65 @@ Conteudo", linha_inicio is 2 (position right after [START], still on that line)
   - Total tests: 1436 (no new tests added in this iteration - tests come next)
 
 ---
+
+## Iteration 69 - Return HTTP 429 status code when rate limit is exceeded
+
+- What was implemented:
+  - Created `RateLimitExceeded` exception class with attributes:
+    - `limit` - Maximum allowed requests in the window
+    - `window_seconds` - Time window in seconds
+    - `retry_after` - Seconds to wait before retrying
+    - `current_count` - Current request count
+    - `message` - Human-readable error message
+  - Modified `call_tool()` to raise `RateLimitExceeded` for upload rate limits (instead of returning MCP error)
+  - Updated `handle_mcp_request()` to re-raise `RateLimitExceeded` exceptions
+  - Added exception handlers in both `/message` and `/mcp` endpoints to:
+    - Return HTTP 429 status code
+    - Include JSON body with error, message, and retry_after fields
+    - Set `Retry-After` header with seconds to wait
+  - Added 10 comprehensive tests in `TestUploadRateLimiting429` class
+
+- Files changed:
+  - src/rlm_mcp/http_server.py (added RateLimitExceeded class, updated exception handling)
+  - tests/test_http_server.py (added TestUploadRateLimiting429 class with 10 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - Exception propagation: When raising custom exceptions inside nested function calls (call_tool -> handle_mcp_request -> endpoint), each layer that has a generic `except Exception` needs to explicitly re-raise the custom exception
+  - Pattern: `except RateLimitExceeded: raise` before `except Exception as e: ...`
+  - RateLimitResult dataclass is in rate_limiter.py and needs to be imported
+  - Both SSE rate limiting (session-level) and upload rate limiting (tool-level) now return HTTP 429
+  - Total tests increased from 1436 to 1446 (10 new tests)
+  - Next task in Fase 6: create rate limiting tests (final task of Fase 6)
+
+---
+
+## Iteration 70 - Create tests for rate limiting (Fase 6 complete)
+
+- What was implemented:
+  - Verified that comprehensive rate limiting tests already exist from previous iterations:
+    - 44 tests in tests/test_rate_limiter.py (unit tests for core classes)
+    - 13 tests in TestSseRateLimiting (SSE session rate limiting)
+    - 10 tests in TestUploadRateLimiting429 (upload rate limiting with HTTP 429)
+  - Total: 67 rate limiting tests covering:
+    - RateLimitConfig validation (5 tests)
+    - RateLimitResult dataclass (2 tests)
+    - SlidingWindowRateLimiter functionality (16 tests)
+    - MultiRateLimiter functionality (15 tests)
+    - Edge cases (6 tests)
+    - SSE rate limiting integration (13 tests)
+    - Upload rate limiting with 429 responses (10 tests)
+  - All 1446 tests pass
+
+- Files changed:
+  - PRD.md (marked task complete - Fase 6 now fully complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - Rate limiting tests were incrementally added in iterations 67 and 69
+  - The task "Criar testes para rate limiting" was essentially completed as part of the implementation iterations
+  - Fase 6 (Rate Limiting Básico) is now complete with all 5 subtasks done
+  - Next phase: Fase 7 - Melhorias de Logging e Observabilidade
+
+---

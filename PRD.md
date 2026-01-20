@@ -78,7 +78,7 @@ src/rlm_mcp/
 - [x] Adicionar rate limit de 100 requests/minuto por sessão SSE
 - [x] Adicionar rate limit de 10 uploads/minuto para rlm_upload_url
 - [x] Retornar erro 429 Too Many Requests quando limite excedido
-- [ ] Criar testes para rate limiting
+- [x] Criar testes para rate limiting
 
 ## Fase 7: Melhorias de Logging e Observabilidade
 
