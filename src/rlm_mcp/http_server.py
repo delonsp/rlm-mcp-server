@@ -2033,6 +2033,18 @@ async def sse_endpoint(request: Request, _: bool = Depends(verify_api_key)):
     logger.info(f"Nova sessão SSE: {session_id}")
 
     async def event_generator():
+        """
+        Async generator that yields SSE events for the MCP session.
+
+        Yields:
+            str: SSE-formatted events including:
+                - endpoint event with session_id for client to use in POST requests
+                - message events with JSON-encoded MCP responses
+                - ping comments to keep the connection alive
+
+        The generator runs until the client disconnects or the server closes.
+        On completion, it cleans up the session from sse_sessions and rate limiter.
+        """
         try:
             # Envia o session_id para o cliente usar no POST
             yield f"event: endpoint\ndata: /message?session_id={session_id}\n\n"

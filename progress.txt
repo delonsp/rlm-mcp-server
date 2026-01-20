@@ -3160,3 +3160,49 @@ Conteudo", linha_inicio is 2 (position right after [START], still on that line)
   - Next phase: Fase 8 - Documentação e Cleanup
 
 ---
+
+## Iteration 74 - Update CLAUDE.md with new features (Fase 8 task 1)
+
+- What was implemented:
+  - Updated CLAUDE.md with comprehensive documentation for new features:
+    - Pagination support: Added notes about offset/limit parameters in rlm_list_vars, rlm_list_s3, rlm_search_index, rlm_search_collection
+    - MCP Resources: New section documenting rlm://variables, rlm://memory, rlm://collections URIs
+    - Helper Functions: New section with detailed documentation for buscar(), contar(), extrair_secao(), resumir_tamanho()
+    - Rate Limiting: New section explaining 100 req/min for SSE and 10 uploads/min limits, plus env var configuration
+    - Observability: New section documenting /metrics endpoint, JSON logging (LOG_FORMAT=json), and X-Request-Id tracing
+
+- Files changed:
+  - CLAUDE.md (added ~170 lines of documentation)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - Documentation updates don't require test changes (tests already exist for the features)
+  - All 1514 tests continue to pass after documentation-only changes
+  - Next task in Fase 8: Add docstrings to all public functions that are missing them
+
+---
+
+## Iteration 75 - Add docstrings to all public functions (Fase 8 task 2)
+
+- What was implemented:
+  - Scanned all Python source files for public functions missing docstrings
+  - Found only one: `event_generator` nested function in http_server.py
+  - Added comprehensive docstring to `event_generator` explaining:
+    - It's an async generator yielding SSE events
+    - What types of events it yields (endpoint, message, ping)
+    - Cleanup behavior on completion
+
+- Files changed:
+  - src/rlm_mcp/http_server.py (added docstring to event_generator function)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - Used AST parsing to programmatically find missing docstrings
+  - Nested functions are technically public if they don't start with underscore
+  - The codebase was already well-documented; only 1 function needed a docstring
+  - All 1514 tests continue to pass
+  - Next task in Fase 8: Create CHANGELOG.md with version 0.2.0
+
+---
