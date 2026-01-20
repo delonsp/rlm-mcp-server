@@ -335,10 +335,21 @@ Tipos suportados:
         },
         {
             "name": "rlm_list_vars",
-            "description": "Lista todas as variáveis no REPL com metadados (nome, tipo, tamanho, preview).",
+            "description": "Lista todas as variáveis no REPL com metadados (nome, tipo, tamanho, preview). Suporta paginação via offset/limit.",
             "inputSchema": {
                 "type": "object",
-                "properties": {}
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "default": 50,
+                        "description": "Máximo de variáveis a retornar"
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "default": 0,
+                        "description": "Número de variáveis a pular (para paginação)"
+                    }
+                }
             }
         },
         {
@@ -816,12 +827,18 @@ Variável: {arguments["name"]}
                 }
 
         elif name == "rlm_list_vars":
+            limit = arguments.get("limit", 50)
+            offset = arguments.get("offset", 0)
             vars_list = repl.list_variables()
             if not vars_list:
                 text = "Nenhuma variável no REPL."
             else:
-                lines = ["Variáveis no REPL:", ""]
-                for v in vars_list:
+                total = len(vars_list)
+                paginated = vars_list[offset:offset + limit]
+                start_idx = offset + 1 if paginated else 0
+                end_idx = offset + len(paginated)
+                lines = [f"Variáveis no REPL ({total} total, mostrando {start_idx}-{end_idx}):", ""]
+                for v in paginated:
                     lines.append(f"  {v.name}: {v.type_name} ({v.size_human})")
                     lines.append(f"    Preview: {v.preview[:100]}...")
                     lines.append("")

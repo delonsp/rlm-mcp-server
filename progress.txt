@@ -2419,3 +2419,49 @@ Este arquivo registra o progresso do Ralph em cada iteração.
   - 1226 tests passed - all existing tests continue to work
 
 ---
+
+## Iteration 50 - Add offset parameter for pagination in rlm_search_collection
+
+- What was implemented:
+  - Added 'offset' parameter to rlm_search_collection inputSchema (default: 0, type: integer)
+  - Updated handler to read offset from arguments with default 0
+  - Modified pagination logic: `matches[offset:offset + limit]` replaces `matches[:limit]`
+  - Updated output format to show pagination range: "({total} ocorrências, mostrando {start}-{end})"
+
+- Files changed:
+  - src/rlm_mcp/http_server.py (inputSchema at line ~680, handler at lines ~1407-1443)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - rlm_search_collection iterates over multiple variables, each with multiple terms
+  - Pagination is applied at term level (per term within each variable)
+  - Pattern for pagination display: calculate start_idx = offset + 1 (if results exist, else 0), end_idx = offset + len(paginated)
+  - Same offset/limit pagination pattern used in rlm_search_index works here
+  - All 1226 tests passed - no changes needed to existing tests
+
+---
+
+## Iteration 51 - Add offset and limit parameters for pagination in rlm_list_vars
+
+- What was implemented:
+  - Added 'limit' parameter to rlm_list_vars inputSchema (default: 50, type: integer)
+  - Added 'offset' parameter to rlm_list_vars inputSchema (default: 0, type: integer)
+  - Updated handler to read limit and offset from arguments with defaults
+  - Applied pagination to vars_list: `vars_list[offset:offset + limit]`
+  - Updated output format to show pagination info: "({total} total, mostrando {start}-{end})"
+  - Updated description to mention pagination support
+
+- Files changed:
+  - src/rlm_mcp/http_server.py (inputSchema at line ~337, handler at lines ~829-845)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - Pattern for list pagination is simple: `items[offset:offset + limit]`
+  - Default limit of 50 is reasonable for variable listings (higher than search results)
+  - repl.list_variables() returns a list of VariableInfo objects
+  - All 1226 tests passed - no changes needed to existing tests
+  - Same pagination display format used: calculate start_idx = offset + 1 if paginated else 0
+
+---
