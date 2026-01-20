@@ -70,7 +70,7 @@ src/rlm_mcp/
 - [x] Criar resource "rlm://memory" que mostra uso de memória
 - [x] Criar resource "rlm://collections" que lista coleções
 - [x] Adicionar resources nas capabilities do initialize
-- [ ] Criar testes para cada resource
+- [x] Criar testes para cada resource
 
 ## Fase 6: Rate Limiting Básico
 
