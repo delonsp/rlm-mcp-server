@@ -562,6 +562,11 @@ Exemplo: rlm_search_index(var_name="scholten1", terms=["medo", "fracasso"])""",
                         "type": "integer",
                         "default": 20,
                         "description": "Máximo de resultados por termo"
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "default": 0,
+                        "description": "Número de resultados a pular (para paginação)"
                     }
                 },
                 "required": ["var_name", "terms"]
@@ -1183,6 +1188,7 @@ Próximo passo: rlm_load_s3(key="{output_key}", name="texto", data_type="text")"
             terms = arguments["terms"]
             require_all = arguments.get("require_all", False)
             limit = arguments.get("limit", 20)
+            offset = arguments.get("offset", 0)
 
             # Verificar se variável existe
             if var_name not in repl.variables:
@@ -1209,8 +1215,10 @@ Próximo passo: rlm_load_s3(key="{output_key}", name="texto", data_type="text")"
                     if not results:
                         text = f"Nenhuma linha encontrada com TODOS os termos: {', '.join(terms)}"
                     else:
-                        lines = [f"Linhas com todos os termos ({len(results)} encontradas):", ""]
-                        for linha, found_terms in sorted(results.items())[:limit]:
+                        total_results = len(results)
+                        paginated = sorted(results.items())[offset:offset + limit]
+                        lines = [f"Linhas com todos os termos ({total_results} encontradas, mostrando {offset + 1}-{offset + len(paginated)}):", ""]
+                        for linha, found_terms in paginated:
                             lines.append(f"  Linha {linha}: {found_terms}")
                         text = "\n".join(lines)
                 else:
@@ -1220,8 +1228,11 @@ Próximo passo: rlm_load_s3(key="{output_key}", name="texto", data_type="text")"
                     else:
                         lines = ["Resultados da busca:", ""]
                         for term, matches in results.items():
-                            lines.append(f"📌 '{term}' ({len(matches)} ocorrências):")
-                            for m in matches[:limit]:
+                            total_matches = len(matches)
+                            paginated_matches = matches[offset:offset + limit]
+                            showing = f"{offset + 1}-{offset + len(paginated_matches)}" if paginated_matches else "0"
+                            lines.append(f"📌 '{term}' ({total_matches} ocorrências, mostrando {showing}):")
+                            for m in paginated_matches:
                                 lines.append(f"    Linha {m['linha']}: {m['contexto'][:80]}...")
                             lines.append("")
                         text = "\n".join(lines)
