@@ -2221,3 +2221,24 @@ Este arquivo registra o progresso do Ralph em cada iteração.
   - Tests directory is in .gitignore, so test changes are local only
 
 ---
+
+## Iteration 42 - Add PRAGMA synchronous=NORMAL
+
+- What was implemented:
+  - Added PRAGMA synchronous=NORMAL in persistence.py _init_db() method
+  - This setting is safe with WAL mode and provides better write performance
+  - Added debug logging for the new PRAGMA setting
+
+- Files changed:
+  - src/rlm_mcp/persistence.py (added PRAGMA synchronous=NORMAL after WAL mode)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - PRAGMA synchronous has three levels: OFF, NORMAL, FULL (default)
+  - With WAL mode, NORMAL is safe because the write-ahead log provides durability
+  - NORMAL sync flushes at critical moments but not after every transaction
+  - Order matters: set journal_mode first, then synchronous setting
+  - Both settings should be executed immediately after connection is opened
+
+---

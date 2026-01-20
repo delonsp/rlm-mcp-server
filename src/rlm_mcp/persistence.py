@@ -54,6 +54,10 @@ class PersistenceManager:
             cursor.execute("PRAGMA synchronous=NORMAL")
             logger.debug("SQLite synchronous=NORMAL ativado")
 
+            # Cache de 64MB para melhor performance (valor negativo = kibibytes)
+            cursor.execute("PRAGMA cache_size=-64000")
+            logger.debug("SQLite cache_size=64MB ativado")
+
             # Tabela de variáveis
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS variables (

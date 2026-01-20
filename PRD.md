@@ -35,7 +35,7 @@ src/rlm_mcp/
 
 - [x] Adicionar PRAGMA journal_mode=WAL no _init_db() de persistence.py
 - [x] Adicionar PRAGMA synchronous=NORMAL para melhor performance
-- [ ] Adicionar PRAGMA cache_size=-64000 (64MB cache)
+- [x] Adicionar PRAGMA cache_size=-64000 (64MB cache)
 - [x] Criar teste para verificar que WAL mode está ativo
 - [ ] Criar teste de performance comparando antes/depois (opcional)
 
