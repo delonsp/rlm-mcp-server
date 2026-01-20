@@ -83,9 +83,9 @@ src/rlm_mcp/
 ## Fase 7: Melhorias de Logging e Observabilidade
 
 - [x] Adicionar logging estruturado (JSON) como opção
-- [ ] Criar endpoint /metrics com estatísticas básicas (requests, erros, latência)
+- [x] Criar endpoint /metrics com estatísticas básicas (requests, erros, latência)
 - [ ] Adicionar request_id em cada requisição para tracing
-- [ ] Criar teste para endpoint /metrics
+- [x] Criar teste para endpoint /metrics
 
 ## Fase 8: Documentação e Cleanup
 

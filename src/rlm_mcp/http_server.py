@@ -32,6 +32,129 @@ from .pdf_parser import extract_pdf
 from .persistence import get_persistence
 from .indexer import get_index, set_index, TextIndex, auto_index_if_large
 from .rate_limiter import SlidingWindowRateLimiter, RateLimitResult
+import time
+from collections import defaultdict
+from dataclasses import dataclass, field
+from threading import Lock
+
+
+@dataclass
+class MetricsSnapshot:
+    """Snapshot of collected metrics."""
+    total_requests: int = 0
+    total_errors: int = 0
+    requests_by_endpoint: dict = field(default_factory=dict)
+    errors_by_endpoint: dict = field(default_factory=dict)
+    latency_avg_ms: float = 0.0
+    latency_p50_ms: float = 0.0
+    latency_p95_ms: float = 0.0
+    latency_p99_ms: float = 0.0
+    latency_max_ms: float = 0.0
+    uptime_seconds: float = 0.0
+    tool_calls_by_name: dict = field(default_factory=dict)
+    rate_limit_rejections: int = 0
+
+
+class MetricsCollector:
+    """Collects and aggregates server metrics.
+
+    Thread-safe metrics collection for request counts, errors, and latency.
+    Maintains a rolling window of latency samples for percentile calculation.
+    """
+
+    MAX_LATENCY_SAMPLES = 10000  # Keep last N latency measurements
+
+    def __init__(self):
+        self._lock = Lock()
+        self._start_time = time.time()
+        self._total_requests = 0
+        self._total_errors = 0
+        self._requests_by_endpoint: dict[str, int] = defaultdict(int)
+        self._errors_by_endpoint: dict[str, int] = defaultdict(int)
+        self._latency_samples: list[float] = []
+        self._tool_calls_by_name: dict[str, int] = defaultdict(int)
+        self._rate_limit_rejections = 0
+
+    def record_request(self, endpoint: str, latency_ms: float, is_error: bool = False):
+        """Record a completed request.
+
+        Args:
+            endpoint: The endpoint path (e.g., "/message", "/mcp")
+            latency_ms: Request latency in milliseconds
+            is_error: Whether the request resulted in an error
+        """
+        with self._lock:
+            self._total_requests += 1
+            self._requests_by_endpoint[endpoint] += 1
+
+            if is_error:
+                self._total_errors += 1
+                self._errors_by_endpoint[endpoint] += 1
+
+            # Maintain rolling window of latency samples
+            self._latency_samples.append(latency_ms)
+            if len(self._latency_samples) > self.MAX_LATENCY_SAMPLES:
+                self._latency_samples = self._latency_samples[-self.MAX_LATENCY_SAMPLES:]
+
+    def record_tool_call(self, tool_name: str):
+        """Record a tool call."""
+        with self._lock:
+            self._tool_calls_by_name[tool_name] += 1
+
+    def record_rate_limit_rejection(self):
+        """Record a rate limit rejection."""
+        with self._lock:
+            self._rate_limit_rejections += 1
+
+    def get_snapshot(self) -> MetricsSnapshot:
+        """Get a snapshot of current metrics."""
+        with self._lock:
+            # Calculate latency percentiles
+            latency_avg = 0.0
+            latency_p50 = 0.0
+            latency_p95 = 0.0
+            latency_p99 = 0.0
+            latency_max = 0.0
+
+            if self._latency_samples:
+                sorted_latencies = sorted(self._latency_samples)
+                n = len(sorted_latencies)
+                latency_avg = sum(sorted_latencies) / n
+                latency_p50 = sorted_latencies[int(n * 0.5)]
+                latency_p95 = sorted_latencies[min(int(n * 0.95), n - 1)]
+                latency_p99 = sorted_latencies[min(int(n * 0.99), n - 1)]
+                latency_max = sorted_latencies[-1]
+
+            return MetricsSnapshot(
+                total_requests=self._total_requests,
+                total_errors=self._total_errors,
+                requests_by_endpoint=dict(self._requests_by_endpoint),
+                errors_by_endpoint=dict(self._errors_by_endpoint),
+                latency_avg_ms=round(latency_avg, 2),
+                latency_p50_ms=round(latency_p50, 2),
+                latency_p95_ms=round(latency_p95, 2),
+                latency_p99_ms=round(latency_p99, 2),
+                latency_max_ms=round(latency_max, 2),
+                uptime_seconds=round(time.time() - self._start_time, 2),
+                tool_calls_by_name=dict(self._tool_calls_by_name),
+                rate_limit_rejections=self._rate_limit_rejections
+            )
+
+    def reset(self):
+        """Reset all metrics (useful for testing)."""
+        with self._lock:
+            self._start_time = time.time()
+            self._total_requests = 0
+            self._total_errors = 0
+            self._requests_by_endpoint.clear()
+            self._errors_by_endpoint.clear()
+            self._latency_samples.clear()
+            self._tool_calls_by_name.clear()
+            self._rate_limit_rejections = 0
+
+
+# Global metrics collector instance
+metrics_collector = MetricsCollector()
 
 
 class RateLimitExceeded(Exception):
@@ -981,6 +1104,9 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
         arguments: Argumentos da tool
         client_id: Identificador do cliente para rate limiting (session_id ou IP)
     """
+    # Record tool call for metrics
+    metrics_collector.record_tool_call(name)
+
     try:
         if name == "rlm_execute":
             result = repl.execute(arguments["code"])
@@ -1829,6 +1955,52 @@ async def health_check():
     }
 
 
+@app.get("/metrics")
+async def metrics_endpoint():
+    """Returns server metrics including request counts, errors, and latency statistics.
+
+    Metrics include:
+    - total_requests: Total number of requests processed
+    - total_errors: Total number of error responses
+    - requests_by_endpoint: Request count per endpoint
+    - errors_by_endpoint: Error count per endpoint
+    - latency_avg_ms: Average latency in milliseconds
+    - latency_p50_ms: 50th percentile latency (median)
+    - latency_p95_ms: 95th percentile latency
+    - latency_p99_ms: 99th percentile latency
+    - latency_max_ms: Maximum latency
+    - uptime_seconds: Server uptime in seconds
+    - tool_calls_by_name: Count of tool calls by tool name
+    - rate_limit_rejections: Count of rate limit rejections
+    """
+    snapshot = metrics_collector.get_snapshot()
+    return {
+        "timestamp": datetime.now().isoformat(),
+        "uptime_seconds": snapshot.uptime_seconds,
+        "requests": {
+            "total": snapshot.total_requests,
+            "by_endpoint": snapshot.requests_by_endpoint
+        },
+        "errors": {
+            "total": snapshot.total_errors,
+            "by_endpoint": snapshot.errors_by_endpoint
+        },
+        "latency_ms": {
+            "avg": snapshot.latency_avg_ms,
+            "p50": snapshot.latency_p50_ms,
+            "p95": snapshot.latency_p95_ms,
+            "p99": snapshot.latency_p99_ms,
+            "max": snapshot.latency_max_ms
+        },
+        "tools": {
+            "calls_by_name": snapshot.tool_calls_by_name
+        },
+        "rate_limiting": {
+            "rejections": snapshot.rate_limit_rejections
+        }
+    }
+
+
 @app.get("/sse")
 async def sse_endpoint(request: Request, _: bool = Depends(verify_api_key)):
     """
@@ -1885,11 +2057,17 @@ async def message_endpoint(
 
     Rate limiting: 100 requests/minute per SSE session.
     """
+    start_time = time.time()
+    is_error = False
+
     # Rate limiting for SSE sessions
     if session_id and session_id in sse_sessions:
         rate_result = sse_rate_limiter.check_and_record(session_id)
         if not rate_result.allowed:
             logger.warning(f"Rate limit exceeded for session {session_id}: {rate_result.current_count}/{rate_result.limit}")
+            metrics_collector.record_rate_limit_rejection()
+            latency_ms = (time.time() - start_time) * 1000
+            metrics_collector.record_request("/message", latency_ms, is_error=True)
             return JSONResponse(
                 {
                     "error": "Too Many Requests",
@@ -1910,20 +2088,33 @@ async def message_endpoint(
 
         if response is None:
             # Notificação, não precisa responder
+            latency_ms = (time.time() - start_time) * 1000
+            metrics_collector.record_request("/message", latency_ms, is_error=False)
             return Response(status_code=202)
 
         response_dict = response.model_dump(exclude_none=True)
 
+        # Check if response has error
+        if response.error:
+            is_error = True
+
         # Se tem sessão SSE, envia por lá
         if session_id and session_id in sse_sessions:
             await sse_sessions[session_id].put(response_dict)
+            latency_ms = (time.time() - start_time) * 1000
+            metrics_collector.record_request("/message", latency_ms, is_error=is_error)
             return Response(status_code=202)
 
         # Senão, responde diretamente
+        latency_ms = (time.time() - start_time) * 1000
+        metrics_collector.record_request("/message", latency_ms, is_error=is_error)
         return JSONResponse(response_dict)
 
     except RateLimitExceeded as e:
         logger.warning(f"Rate limit exceeded: {e.message}")
+        metrics_collector.record_rate_limit_rejection()
+        latency_ms = (time.time() - start_time) * 1000
+        metrics_collector.record_request("/message", latency_ms, is_error=True)
         return JSONResponse(
             {
                 "error": "Too Many Requests",
@@ -1936,6 +2127,8 @@ async def message_endpoint(
 
     except Exception as e:
         logger.exception("Erro ao processar mensagem")
+        latency_ms = (time.time() - start_time) * 1000
+        metrics_collector.record_request("/message", latency_ms, is_error=True)
         return JSONResponse(
             {"error": str(e)},
             status_code=500
@@ -1951,6 +2144,9 @@ async def mcp_direct_endpoint(
     Endpoint direto para MCP (sem SSE).
     Útil para clientes que preferem request/response simples.
     """
+    start_time = time.time()
+    is_error = False
+
     try:
         body = await request.json()
         mcp_request = MCPRequest(**body)
@@ -1959,12 +2155,23 @@ async def mcp_direct_endpoint(
         response = handle_mcp_request(mcp_request, client_id=client_id)
 
         if response is None:
+            latency_ms = (time.time() - start_time) * 1000
+            metrics_collector.record_request("/mcp", latency_ms, is_error=False)
             return Response(status_code=202)
 
+        # Check if response has error
+        if response.error:
+            is_error = True
+
+        latency_ms = (time.time() - start_time) * 1000
+        metrics_collector.record_request("/mcp", latency_ms, is_error=is_error)
         return JSONResponse(response.model_dump(exclude_none=True))
 
     except RateLimitExceeded as e:
         logger.warning(f"Rate limit exceeded: {e.message}")
+        metrics_collector.record_rate_limit_rejection()
+        latency_ms = (time.time() - start_time) * 1000
+        metrics_collector.record_request("/mcp", latency_ms, is_error=True)
         return JSONResponse(
             {
                 "error": "Too Many Requests",
@@ -1977,6 +2184,8 @@ async def mcp_direct_endpoint(
 
     except Exception as e:
         logger.exception("Erro ao processar MCP request")
+        latency_ms = (time.time() - start_time) * 1000
+        metrics_collector.record_request("/mcp", latency_ms, is_error=True)
         return JSONResponse(
             {"jsonrpc": "2.0", "error": {"code": -32603, "message": str(e)}},
             status_code=500

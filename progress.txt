@@ -3047,3 +3047,79 @@ Conteudo", linha_inicio is 2 (position right after [START], still on that line)
   - Next phase: Fase 7 - Melhorias de Logging e Observabilidade
 
 ---
+
+## Iteration 71 - Add structured JSON logging as an option (Fase 7 task 1)
+
+- What was implemented:
+  - Created `JsonFormatter` class extending `logging.Formatter` that produces JSON log lines
+  - JSON format includes: timestamp (ISO 8601 with Z suffix), level, logger name, message
+  - Supports exception info (formatted traceback in JSON)
+  - Supports extra fields (any custom attributes added to LogRecord)
+  - Created `setup_logging(log_format, log_level)` function to configure logging
+  - Added environment variables:
+    - `RLM_LOG_FORMAT`: "text" (default) or "json"
+    - `RLM_LOG_LEVEL`: DEBUG, INFO (default), WARNING, ERROR, CRITICAL
+  - Added 14 comprehensive tests in TestJsonLogging class
+
+- Files changed:
+  - src/rlm_mcp/http_server.py (added JsonFormatter, setup_logging, LOG_FORMAT, LOG_LEVEL)
+  - tests/test_http_server.py (added TestJsonLogging class with 14 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - Tests folder is in .gitignore (not version controlled)
+  - JsonFormatter must handle non-serializable objects with `default=str`
+  - Standard LogRecord attributes must be excluded when adding extra fields
+  - `datetime.utcnow()` is deprecated but still works (warning in tests)
+  - Total tests: 1460 (14 new JSON logging tests)
+  - Next task in Fase 7: Create /metrics endpoint with basic statistics
+
+---
+
+## Iteration 72 - Create /metrics endpoint with statistics (requests, errors, latency)
+
+- What was implemented:
+  - Created `MetricsSnapshot` dataclass to hold metrics data:
+    - total_requests, total_errors
+    - requests_by_endpoint, errors_by_endpoint (dict tracking per-endpoint)
+    - latency_avg_ms, latency_p50_ms, latency_p95_ms, latency_p99_ms, latency_max_ms
+    - uptime_seconds, tool_calls_by_name, rate_limit_rejections
+  - Created `MetricsCollector` class with thread-safe metrics collection:
+    - `record_request(endpoint, latency_ms, is_error)` - records request stats
+    - `record_tool_call(tool_name)` - tracks tool usage
+    - `record_rate_limit_rejection()` - counts rate limit hits
+    - `get_snapshot()` - returns current metrics snapshot
+    - `reset()` - clears all metrics (for testing)
+    - Rolling window of MAX_LATENCY_SAMPLES for percentile calculations
+  - Created `/metrics` endpoint returning JSON with:
+    - timestamp, uptime_seconds
+    - requests (total, by_endpoint)
+    - errors (total, by_endpoint)
+    - latency_ms (avg, p50, p95, p99, max)
+    - tools (calls_by_name)
+    - rate_limiting (rejections)
+  - Instrumented `/message` and `/mcp` endpoints to record metrics
+  - Added tool call tracking in `call_tool()` function
+  - Added 34 comprehensive tests across 4 test classes:
+    - TestMetricsEndpoint (15 tests) - endpoint response format
+    - TestMetricsCollector (12 tests) - collector class unit tests
+    - TestMetricsIntegration (5 tests) - end-to-end metrics recording
+    - TestMetricsSnapshot (2 tests) - dataclass behavior
+
+- Files changed:
+  - src/rlm_mcp/http_server.py (added MetricsSnapshot, MetricsCollector, /metrics endpoint, instrumentation)
+  - tests/test_http_server.py (added 4 new test classes with 34 tests)
+  - PRD.md (marked tasks complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - Use `dataclasses.field(default_factory=dict)` for mutable default values
+  - Threading lock is needed for thread-safe metrics collection
+  - Percentile calculation: sort samples, then index at position n * percentile
+  - MCP protocol errors (unknown method) have `error` field in response; tool content errors use `isError: true`
+  - `/metrics` endpoint does not require authentication (like `/health`)
+  - Total tests increased from 1460 to 1494 (34 new metrics tests)
+  - Next task in Fase 7: Add request_id to each request for tracing
+
+---
