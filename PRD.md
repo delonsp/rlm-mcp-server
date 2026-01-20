@@ -68,7 +68,7 @@ src/rlm_mcp/
 - [x] Adicionar suporte a resources/list no handle_mcp_request
 - [x] Criar resource "rlm://variables" que lista variáveis persistidas
 - [x] Criar resource "rlm://memory" que mostra uso de memória
-- [ ] Criar resource "rlm://collections" que lista coleções
+- [x] Criar resource "rlm://collections" que lista coleções
 - [ ] Adicionar resources nas capabilities do initialize
 - [ ] Criar testes para cada resource
 

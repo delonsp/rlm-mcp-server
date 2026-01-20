@@ -316,7 +316,25 @@ def read_resource(uri: str) -> dict | None:
             "text": json.dumps(memory_data, indent=2)
         }
 
-    # Resources não implementados ainda retornam None
+    if uri == "rlm://collections":
+        # Lista todas as coleções de variáveis
+        persistence = get_persistence()
+        collections_list = persistence.list_collections()
+        collections = []
+        for c in collections_list:
+            collections.append({
+                "name": c["name"],
+                "description": c["description"],
+                "variable_count": c["var_count"],
+                "created_at": c["created_at"]
+            })
+        return {
+            "uri": uri,
+            "mimeType": "application/json",
+            "text": json.dumps({"collections": collections, "count": len(collections)}, indent=2)
+        }
+
+    # Resources não implementados retornam None
     return None
 
 
