@@ -3233,3 +3233,39 @@ Conteudo", linha_inicio is 2 (position right after [START], still on that line)
   - Next task in Fase 8: Update version in http_server.py to 0.2.0
 
 ---
+
+## Iteration 77 - Update version to 0.2.0 (Fase 8 task 4 - FINAL)
+
+- What was implemented:
+  - Updated version from "0.1.0" to "0.2.0" in three locations:
+    1. FastAPI app definition (line 347)
+    2. MCP initialize serverInfo response (line 405)
+    3. /health endpoint response (line 1965)
+  - Updated two test assertions that expected "0.1.0":
+    - TestHealthEndpoint.test_returns_version
+    - TestMcpInitialize.test_server_info_has_version
+
+- Files changed:
+  - src/rlm_mcp/http_server.py (3 version strings updated)
+  - tests/test_http_server.py (2 test assertions updated)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - When changing version numbers, remember to update both the code AND the tests
+  - Used replace_all=true for efficient multi-location updates of identical strings
+  - All 1514 tests pass after version bump
+
+## PRD COMPLETE - All Fase 8 tasks done
+
+All tasks in PRD.md are now marked [x]. The 0.2.0 release includes:
+- Fase 1: SQLite Performance (WAL mode)
+- Fase 2: Erros Visíveis ao Usuário
+- Fase 3: Pagination para Grandes Resultados
+- Fase 4: Helper Functions Pré-definidas no REPL
+- Fase 5: MCP Resources (Spec Compliance)
+- Fase 6: Rate Limiting Básico
+- Fase 7: Melhorias de Logging e Observabilidade
+- Fase 8: Documentação e Cleanup
+
+---
