@@ -1,10 +1,16 @@
-# PRD: RLM MCP Server Test Suite
+# PRD: RLM MCP Server - Melhorias Best Practices
 
 ## Objetivo
 
-Adicionar cobertura de testes ao RLM MCP Server para garantir confiabilidade e permitir refatorações seguras.
+Implementar melhorias baseadas nas best practices de MCP (Model Context Protocol) e SQLite para aumentar performance, segurança e compliance com a especificação oficial.
 
-## Arquitetura do Projeto
+## Referências
+
+- [MCP Specification 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25)
+- [Anthropic - Code Execution with MCP](https://www.anthropic.com/engineering/code-execution-with-mcp)
+- [Going Fast with SQLite and Python](https://charlesleifer.com/blog/going-fast-with-sqlite-and-python/)
+
+## Arquitetura Atual
 
 ```
 src/rlm_mcp/
@@ -19,97 +25,74 @@ src/rlm_mcp/
 
 ## Critério de Sucesso
 
-- Cada tarefa marcada [x] significa que `pytest` passa sem erros
-- Cobertura mínima: funções críticas testadas
-- Mocks para dependências externas (MinIO, Mistral API)
+- Cada tarefa marcada [x] significa que `pytest tests/ -v` passa sem erros
+- Melhorias não quebram funcionalidade existente
+- Performance de SQLite melhorada com WAL mode
 
 ---
 
-## Fase 1: Setup de Testes
+## Fase 1: SQLite Performance (WAL Mode)
 
-- [x] Adicionar pytest e pytest-asyncio ao pyproject.toml (dev dependencies)
-- [x] Criar diretório tests/ com __init__.py
-- [x] Criar tests/conftest.py com fixtures: temp_db (SQLite em memória), sample_text (texto de 200k chars para indexação)
+- [x] Adicionar PRAGMA journal_mode=WAL no _init_db() de persistence.py
+- [ ] Adicionar PRAGMA synchronous=NORMAL para melhor performance
+- [ ] Adicionar PRAGMA cache_size=-64000 (64MB cache)
+- [x] Criar teste para verificar que WAL mode está ativo
+- [ ] Criar teste de performance comparando antes/depois (opcional)
 
-## Fase 2: Testes do Módulo persistence.py
+## Fase 2: Erros Visíveis ao Usuário
 
-- [x] Testar save_variable e load_variable (roundtrip de string, dict, list)
-- [x] Testar delete_variable remove do banco
-- [x] Testar list_variables retorna metadados corretos
-- [x] Testar save_index e load_index (roundtrip de índice semântico)
-- [x] Testar clear_all remove todas as variáveis
-- [x] Testar get_stats retorna contagens corretas
-- [x] Testar create_collection e list_collections
-- [x] Testar add_to_collection e get_collection_vars
-- [x] Testar delete_collection remove associações mas não variáveis
+- [ ] Em http_server.py, modificar rlm_load_s3 para mostrar erros de persistência no output
+- [ ] Em http_server.py, modificar rlm_load_data para mostrar erros de persistência no output
+- [ ] Criar constante SHOW_PERSISTENCE_ERRORS=True para controlar comportamento
+- [ ] Criar teste que verifica que erros de persistência aparecem no output
 
-## Fase 3: Testes do Módulo indexer.py
+## Fase 3: Pagination para Grandes Resultados
 
-- [x] Testar create_index gera índice com termos padrão
-- [x] Testar create_index com additional_terms indexa termos customizados
-- [x] Testar TextIndex.search retorna matches corretos
-- [x] Testar TextIndex.search_multiple com require_all=False (OR)
-- [x] Testar TextIndex.search_multiple com require_all=True (AND)
-- [x] Testar auto_index_if_large indexa apenas textos >= 100k chars
-- [x] Testar _detect_structure detecta headers markdown
-- [x] Testar TextIndex.to_dict e from_dict (serialização)
+- [ ] Adicionar parâmetros offset e limit em rlm_search_index
+- [ ] Adicionar parâmetros offset e limit em rlm_search_collection
+- [ ] Adicionar parâmetros offset e limit em rlm_list_vars
+- [ ] Adicionar parâmetros offset e limit em rlm_list_s3
+- [ ] Criar testes para pagination em cada endpoint modificado
 
-## Fase 4: Testes do Módulo repl.py
+## Fase 4: Helper Functions Pré-definidas no REPL
 
-- [x] Testar execute com código simples (print, atribuição)
-- [x] Testar execute preserva variáveis entre execuções
-- [x] Testar execute bloqueia imports perigosos (os, subprocess, socket)
-- [x] Testar execute permite imports seguros (re, json, math, collections)
-- [x] Testar load_data com data_type="text"
-- [x] Testar load_data com data_type="json"
-- [x] Testar load_data com data_type="csv"
-- [x] Testar load_data com data_type="lines"
-- [x] Testar get_memory_usage retorna valores razoáveis
-- [x] Testar clear_namespace limpa variáveis
+- [ ] Criar função buscar(texto, termo) no namespace inicial do REPL
+- [ ] Criar função contar(texto, termo) no namespace inicial do REPL
+- [ ] Criar função extrair_secao(texto, inicio, fim) no namespace inicial do REPL
+- [ ] Criar função resumir_tamanho(bytes) que retorna string humanizada
+- [ ] Documentar helpers na description do rlm_execute
+- [ ] Criar testes para cada helper function
 
-## Fase 5: Testes do Módulo s3_client.py (com mocks)
+## Fase 5: MCP Resources (Spec Compliance)
 
-- [x] Criar mock do MinIO client em conftest.py
-- [x] Testar is_configured retorna False sem credenciais
-- [x] Testar list_buckets com mock retorna lista
-- [x] Testar list_objects com mock retorna objetos
-- [x] Testar get_object com mock retorna bytes
-- [x] Testar get_object_info com mock retorna metadados
-- [x] Testar object_exists com mock retorna True/False
+- [ ] Adicionar suporte a resources/list no handle_mcp_request
+- [ ] Criar resource "rlm://variables" que lista variáveis persistidas
+- [ ] Criar resource "rlm://memory" que mostra uso de memória
+- [ ] Criar resource "rlm://collections" que lista coleções
+- [ ] Adicionar resources nas capabilities do initialize
+- [ ] Criar testes para cada resource
 
-## Fase 6: Testes do Módulo pdf_parser.py (com mocks)
+## Fase 6: Rate Limiting Básico
 
-- [x] Testar extract_with_pdfplumber com PDF machine readable (criar fixture)
-- [x] Testar extract_with_pdfplumber retorna erro se arquivo não existe
-- [x] Testar extract_pdf com method="auto" usa pdfplumber primeiro
-- [x] Testar extract_pdf faz fallback para OCR se pdfplumber extrai pouco
-- [x] Testar split_pdf_into_chunks divide corretamente
-- [x] Mockar Mistral API para testar extract_with_mistral_ocr
+- [ ] Criar classe RateLimiter com sliding window algorithm
+- [ ] Adicionar rate limit de 100 requests/minuto por sessão SSE
+- [ ] Adicionar rate limit de 10 uploads/minuto para rlm_upload_url
+- [ ] Retornar erro 429 Too Many Requests quando limite excedido
+- [ ] Criar testes para rate limiting
 
-## Fase 7: Testes de Integração HTTP (FastAPI TestClient)
+## Fase 7: Melhorias de Logging e Observabilidade
 
-- [x] Testar endpoint /health retorna 200
-- [x] Testar MCP initialize retorna capabilities
-- [x] Testar MCP tools/list retorna todas as tools
-- [x] Testar tool rlm_execute com código simples
-- [x] Testar tool rlm_load_data carrega variável
-- [x] Testar tool rlm_list_vars lista variáveis carregadas
-- [x] Testar tool rlm_var_info retorna info da variável
-- [x] Testar tool rlm_clear limpa namespace
-- [x] Testar tool rlm_load_s3 com skip_if_exists=True pula se existe
-- [x] Testar tool rlm_load_s3 com skip_if_exists=False força reload
-- [x] Testar tool rlm_search_index busca termos
-- [x] Testar tool rlm_persistence_stats retorna estatísticas
+- [ ] Adicionar logging estruturado (JSON) como opção
+- [ ] Criar endpoint /metrics com estatísticas básicas (requests, erros, latência)
+- [ ] Adicionar request_id em cada requisição para tracing
+- [ ] Criar teste para endpoint /metrics
 
-## Fase 8: Testes de Edge Cases e Segurança
+## Fase 8: Documentação e Cleanup
 
-- [x] Testar persistence.py com caracteres especiais em nomes de variáveis
-- [x] Testar indexer.py com texto vazio
-- [x] Testar indexer.py com texto None (deve tratar gracefully)
-- [x] Testar repl.py com código malicioso (eval, exec em string)
-- [x] Testar repl.py com loop infinito (timeout)
-- [x] Testar SQLite não vulnerável a injection (usar parâmetros)
-- [x] Testar http_server.py valida inputs obrigatórios
+- [ ] Atualizar CLAUDE.md com novas features (pagination, resources, helpers)
+- [ ] Adicionar docstrings em todas as funções públicas que faltam
+- [ ] Criar arquivo CHANGELOG.md com versão 0.2.0
+- [ ] Atualizar version em http_server.py para 0.2.0
 
 ---
 
@@ -123,34 +106,11 @@ pytest tests/ -v
 ### Estrutura de um teste
 ```python
 # tests/test_persistence.py
-import pytest
-from rlm_mcp.persistence import PersistenceManager
-
-def test_save_and_load_variable(temp_db):
+def test_wal_mode_enabled(temp_db):
     pm = PersistenceManager(db_path=temp_db)
-    pm.save_variable("test", "hello world")
-    result = pm.load_variable("test")
-    assert result == "hello world"
-```
-
-### Fixtures úteis (criar em conftest.py)
-```python
-import pytest
-import tempfile
-import os
-
-@pytest.fixture
-def temp_db():
-    """SQLite em arquivo temporário"""
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    yield path
-    os.unlink(path)
-
-@pytest.fixture
-def sample_text():
-    """Texto grande para testar indexação"""
-    return "medo ansiedade trabalho família " * 25000  # ~200k chars
+    with sqlite3.connect(temp_db) as conn:
+        result = conn.execute("PRAGMA journal_mode").fetchone()
+        assert result[0] == "wal"
 ```
 
 ### Padrões do projeto
@@ -158,3 +118,10 @@ def sample_text():
 - Imports no topo do arquivo
 - Type hints em funções públicas
 - Docstrings em funções públicas
+- Testes em tests/ com pytest
+
+### Ordem de execução
+1. Fase 1 e 2 são prioritárias (alta prioridade, baixo esforço)
+2. Fase 3 e 4 melhoram UX
+3. Fase 5, 6 e 7 são compliance e segurança
+4. Fase 8 é documentação final

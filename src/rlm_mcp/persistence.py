@@ -46,6 +46,10 @@ class PersistenceManager:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
 
+            # Ativar WAL mode para melhor performance concorrente
+            cursor.execute("PRAGMA journal_mode=WAL")
+            logger.debug("SQLite WAL mode ativado")
+
             # Tabela de variáveis
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS variables (
