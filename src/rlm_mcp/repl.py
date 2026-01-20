@@ -229,6 +229,38 @@ def _extrair_secao(texto: str, inicio: str, fim: str) -> list[dict]:
     return resultados
 
 
+def _resumir_tamanho(bytes_val: int) -> str:
+    """
+    Converte um valor em bytes para uma string humanizada.
+
+    Args:
+        bytes_val: Valor em bytes (int)
+
+    Returns:
+        String formatada com unidade apropriada (B, KB, MB, GB, TB)
+
+    Example:
+        >>> resumir_tamanho(1024)
+        '1.0 KB'
+        >>> resumir_tamanho(1536)
+        '1.5 KB'
+        >>> resumir_tamanho(1048576)
+        '1.0 MB'
+    """
+    if not isinstance(bytes_val, (int, float)):
+        return f"<valor inválido: {type(bytes_val).__name__}>"
+
+    if bytes_val < 0:
+        return f"<valor negativo: {bytes_val}>"
+
+    size = float(bytes_val)
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if size < 1024:
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
+
+
 @dataclass
 class ExecutionResult:
     """Resultado de uma execução no REPL"""
@@ -488,6 +520,7 @@ class SafeREPL:
         namespace['buscar'] = _buscar
         namespace['contar'] = _contar
         namespace['extrair_secao'] = _extrair_secao
+        namespace['resumir_tamanho'] = _resumir_tamanho
 
         success = True
 

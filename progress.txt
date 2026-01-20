@@ -2586,3 +2586,39 @@ Este arquivo registra o progresso do Ralph em cada iteração.
   - Be careful with test assertions: "gatos" contains "gato" as substring!
 
 ---
+
+## Iteration 56 - Create extrair_secao(texto, inicio, fim) helper function in REPL namespace
+
+- What was implemented:
+  - Created `_extrair_secao(texto, inicio, fim)` helper function in `repl.py`
+  - Function extracts text sections between start and end markers (case-insensitive)
+  - Returns a list of dicts with: conteudo, posicao_inicio, posicao_fim, linha_inicio, linha_fim
+  - Added `namespace["extrair_secao"] = _extrair_secao` in execute() method to inject into REPL namespace
+  - extrair_secao was already in HELPER_FUNCTION_NAMES (added in advance by previous iteration)
+  - Added 13 tests in `TestHelperFunctionExtrairSecao` class covering:
+    - Function availability in namespace
+    - Single/multiple section extraction
+    - Empty result handling for no matches
+    - Case-insensitive marker matching
+    - Position and line number tracking
+    - Empty text/markers handling
+    - Return structure validation
+    - Missing start/end marker handling
+    - Not saved as user variable
+
+- Files changed:
+  - src/rlm_mcp/repl.py (added _extrair_secao function at line ~170, namespace injection at line ~490)
+  - tests/test_repl.py (added TestHelperFunctionExtrairSecao class with 13 tests) - Note: tests/ is gitignored
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - Line number calculation: linha_inicio counts newlines in texto[:content_start], not after the content starts
+  - For "Linha 1
+[START]
+Conteudo", linha_inicio is 2 (position right after [START], still on that line)
+  - Total tests increased from 1268 to 1281 (13 new tests)
+  - Follow same pattern as _buscar and _contar for helper functions
+  - Always test both found and not-found cases for extraction functions
+
+---
