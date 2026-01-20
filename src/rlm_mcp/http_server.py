@@ -44,6 +44,7 @@ API_KEY = os.getenv("RLM_API_KEY", "")
 MAX_MEMORY_MB = int(os.getenv("RLM_MAX_MEMORY_MB", "1024"))
 CLEANUP_THRESHOLD = float(os.getenv("RLM_CLEANUP_THRESHOLD", "80.0"))  # Quando iniciar limpeza (%)
 CLEANUP_TARGET = float(os.getenv("RLM_CLEANUP_TARGET", "60.0"))  # Até quanto limpar (%)
+SHOW_PERSISTENCE_ERRORS = os.getenv("RLM_SHOW_PERSISTENCE_ERRORS", "true").lower() in ("true", "1", "yes")
 
 # Instância global do REPL com auto-cleanup
 repl = SafeREPL(
@@ -721,7 +722,8 @@ def call_tool(name: str, arguments: dict) -> dict:
 
             output = format_execution_result(result)
             extras = f"\n\n{persist_msg} {index_msg}".strip() if (persist_msg or index_msg) else ""
-            extras += persist_error
+            if SHOW_PERSISTENCE_ERRORS:
+                extras += persist_error
             if extras:
                 output += extras
 
@@ -934,7 +936,8 @@ Uso: {mem['usage_percent']:.1f}%"""
                             persist_error = f"\n⚠️ Erro de persistência: {e}"
 
                         extras = f"\n{persist_msg} {index_msg}".strip() if (persist_msg or index_msg) else ""
-                        extras += persist_error
+                        if SHOW_PERSISTENCE_ERRORS:
+                            extras += persist_error
 
                         text = f"""✅ PDF extraído do Minio:
 Bucket: {bucket}
@@ -977,7 +980,8 @@ Variável: {var_name}{extras}
                     persist_error = f"\n⚠️ Erro de persistência: {e}"
 
                 extras = f"\n{persist_msg} {index_msg}".strip() if (persist_msg or index_msg) else ""
-                extras += persist_error
+                if SHOW_PERSISTENCE_ERRORS:
+                    extras += persist_error
 
                 text = f"""✅ Carregado do Minio:
 Bucket: {bucket}

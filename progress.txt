@@ -2316,3 +2316,26 @@ Este arquivo registra o progresso do Ralph em cada iteração.
   - 1212 tests passed without modification - the change is backward compatible
 
 ---
+
+## Iteration 46 - Show persistence errors in rlm_load_data output
+
+- What was implemented:
+  - Modified rlm_load_data in http_server.py to show persistence errors in the output
+  - Added `persist_error` variable to capture persistence exceptions
+  - Added `persist_error` to the `extras` string so it shows in the response text
+  - Error format: "⚠️ Erro de persistência: {error_message}"
+  - Still logs warning for monitoring but now user also sees the error
+
+- Files changed:
+  - src/rlm_mcp/http_server.py (lines ~699-728, rlm_load_data handler)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - rlm_load_data is simpler than rlm_load_s3 (single code path, no PDF handling)
+  - Pattern for showing persistence errors: capture error → log it → add to extras string
+  - The `extras` variable accumulates status messages and is appended to output
+  - Same pattern applies to rlm_load_data, rlm_load_s3, and rlm_load_file
+  - 1212 tests passed - the change is backward compatible
+
+---
