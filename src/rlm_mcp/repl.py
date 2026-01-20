@@ -130,6 +130,43 @@ def _buscar(texto: str, termo: str) -> list[dict]:
     return resultados
 
 
+def _contar(texto: str, termo: str) -> dict:
+    """
+    Conta ocorrências de um termo em um texto.
+
+    Args:
+        texto: O texto onde contar
+        termo: O termo a ser contado (case-insensitive)
+
+    Returns:
+        Dict com: total (contagem total), por_linha (dict de linha -> contagem)
+
+    Example:
+        >>> contar(meu_texto, "erro")
+        {'total': 5, 'por_linha': {1: 2, 5: 1, 10: 2}}
+    """
+    if not texto or not termo:
+        return {'total': 0, 'por_linha': {}}
+
+    texto_lower = texto.lower()
+    termo_lower = termo.lower()
+
+    total = 0
+    por_linha: dict[int, int] = {}
+
+    # Divide o texto em linhas
+    linhas = texto.split('\n')
+
+    for linha_num, linha in enumerate(linhas, start=1):
+        linha_lower = linha.lower()
+        count = linha_lower.count(termo_lower)
+        if count > 0:
+            por_linha[linha_num] = count
+            total += count
+
+    return {'total': total, 'por_linha': por_linha}
+
+
 @dataclass
 class ExecutionResult:
     """Resultado de uma execução no REPL"""
@@ -387,6 +424,7 @@ class SafeREPL:
 
         # Injeta helper functions pré-definidas
         namespace['buscar'] = _buscar
+        namespace['contar'] = _contar
 
         success = True
 

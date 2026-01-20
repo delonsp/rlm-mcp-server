@@ -57,7 +57,7 @@ src/rlm_mcp/
 ## Fase 4: Helper Functions Pré-definidas no REPL
 
 - [x] Criar função buscar(texto, termo) no namespace inicial do REPL
-- [ ] Criar função contar(texto, termo) no namespace inicial do REPL
+- [x] Criar função contar(texto, termo) no namespace inicial do REPL
 - [ ] Criar função extrair_secao(texto, inicio, fim) no namespace inicial do REPL
 - [ ] Criar função resumir_tamanho(bytes) que retorna string humanizada
 - [ ] Documentar helpers na description do rlm_execute
