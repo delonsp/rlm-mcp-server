@@ -84,7 +84,7 @@ src/rlm_mcp/
 
 - [x] Adicionar logging estruturado (JSON) como opção
 - [x] Criar endpoint /metrics com estatísticas básicas (requests, erros, latência)
-- [ ] Adicionar request_id em cada requisição para tracing
+- [x] Adicionar request_id em cada requisição para tracing
 - [x] Criar teste para endpoint /metrics
 
 ## Fase 8: Documentação e Cleanup

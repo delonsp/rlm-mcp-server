@@ -1943,16 +1943,30 @@ def format_execution_result(result: ExecutionResult) -> str:
 # HTTP Endpoints
 # =============================================================================
 
+def generate_request_id() -> str:
+    """Generate a unique request ID for tracing.
+
+    Returns:
+        A UUID4 string to uniquely identify the request.
+    """
+    return str(uuid.uuid4())
+
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
+    request_id = generate_request_id()
     mem = repl.get_memory_usage()
-    return {
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "memory": mem,
-        "version": "0.1.0"
-    }
+    return JSONResponse(
+        content={
+            "status": "healthy",
+            "timestamp": datetime.now().isoformat(),
+            "memory": mem,
+            "version": "0.1.0",
+            "request_id": request_id
+        },
+        headers={"X-Request-Id": request_id}
+    )
 
 
 @app.get("/metrics")
@@ -1973,32 +1987,37 @@ async def metrics_endpoint():
     - tool_calls_by_name: Count of tool calls by tool name
     - rate_limit_rejections: Count of rate limit rejections
     """
+    request_id = generate_request_id()
     snapshot = metrics_collector.get_snapshot()
-    return {
-        "timestamp": datetime.now().isoformat(),
-        "uptime_seconds": snapshot.uptime_seconds,
-        "requests": {
-            "total": snapshot.total_requests,
-            "by_endpoint": snapshot.requests_by_endpoint
+    return JSONResponse(
+        content={
+            "timestamp": datetime.now().isoformat(),
+            "uptime_seconds": snapshot.uptime_seconds,
+            "requests": {
+                "total": snapshot.total_requests,
+                "by_endpoint": snapshot.requests_by_endpoint
+            },
+            "errors": {
+                "total": snapshot.total_errors,
+                "by_endpoint": snapshot.errors_by_endpoint
+            },
+            "latency_ms": {
+                "avg": snapshot.latency_avg_ms,
+                "p50": snapshot.latency_p50_ms,
+                "p95": snapshot.latency_p95_ms,
+                "p99": snapshot.latency_p99_ms,
+                "max": snapshot.latency_max_ms
+            },
+            "tools": {
+                "calls_by_name": snapshot.tool_calls_by_name
+            },
+            "rate_limiting": {
+                "rejections": snapshot.rate_limit_rejections
+            },
+            "request_id": request_id
         },
-        "errors": {
-            "total": snapshot.total_errors,
-            "by_endpoint": snapshot.errors_by_endpoint
-        },
-        "latency_ms": {
-            "avg": snapshot.latency_avg_ms,
-            "p50": snapshot.latency_p50_ms,
-            "p95": snapshot.latency_p95_ms,
-            "p99": snapshot.latency_p99_ms,
-            "max": snapshot.latency_max_ms
-        },
-        "tools": {
-            "calls_by_name": snapshot.tool_calls_by_name
-        },
-        "rate_limiting": {
-            "rejections": snapshot.rate_limit_rejections
-        }
-    }
+        headers={"X-Request-Id": request_id}
+    )
 
 
 @app.get("/sse")
@@ -2057,14 +2076,17 @@ async def message_endpoint(
 
     Rate limiting: 100 requests/minute per SSE session.
     """
+    request_id = generate_request_id()
     start_time = time.time()
     is_error = False
+
+    logger.info(f"Processing /message request", extra={"request_id": request_id, "session_id": session_id})
 
     # Rate limiting for SSE sessions
     if session_id and session_id in sse_sessions:
         rate_result = sse_rate_limiter.check_and_record(session_id)
         if not rate_result.allowed:
-            logger.warning(f"Rate limit exceeded for session {session_id}: {rate_result.current_count}/{rate_result.limit}")
+            logger.warning(f"Rate limit exceeded for session {session_id}: {rate_result.current_count}/{rate_result.limit}", extra={"request_id": request_id})
             metrics_collector.record_rate_limit_rejection()
             latency_ms = (time.time() - start_time) * 1000
             metrics_collector.record_request("/message", latency_ms, is_error=True)
@@ -2072,15 +2094,18 @@ async def message_endpoint(
                 {
                     "error": "Too Many Requests",
                     "message": f"Rate limit exceeded: {rate_result.limit} requests per {rate_result.window_seconds} seconds",
-                    "retry_after": rate_result.retry_after
+                    "retry_after": rate_result.retry_after,
+                    "request_id": request_id
                 },
                 status_code=429,
-                headers={"Retry-After": str(int(rate_result.retry_after or 1))}
+                headers={"Retry-After": str(int(rate_result.retry_after or 1)), "X-Request-Id": request_id}
             )
 
     try:
         body = await request.json()
         mcp_request = MCPRequest(**body)
+
+        logger.debug(f"MCP method: {mcp_request.method}", extra={"request_id": request_id})
 
         # Use session_id as client_id for rate limiting, fallback to client IP
         client_id = session_id if session_id else request.client.host if request.client else "anonymous"
@@ -2090,28 +2115,32 @@ async def message_endpoint(
             # Notificação, não precisa responder
             latency_ms = (time.time() - start_time) * 1000
             metrics_collector.record_request("/message", latency_ms, is_error=False)
-            return Response(status_code=202)
+            logger.debug(f"Notification processed", extra={"request_id": request_id, "latency_ms": latency_ms})
+            return Response(status_code=202, headers={"X-Request-Id": request_id})
 
         response_dict = response.model_dump(exclude_none=True)
 
         # Check if response has error
         if response.error:
             is_error = True
+            logger.warning(f"MCP error response: {response.error}", extra={"request_id": request_id})
 
         # Se tem sessão SSE, envia por lá
         if session_id and session_id in sse_sessions:
             await sse_sessions[session_id].put(response_dict)
             latency_ms = (time.time() - start_time) * 1000
             metrics_collector.record_request("/message", latency_ms, is_error=is_error)
-            return Response(status_code=202)
+            logger.debug(f"Response sent via SSE", extra={"request_id": request_id, "latency_ms": latency_ms})
+            return Response(status_code=202, headers={"X-Request-Id": request_id})
 
         # Senão, responde diretamente
         latency_ms = (time.time() - start_time) * 1000
         metrics_collector.record_request("/message", latency_ms, is_error=is_error)
-        return JSONResponse(response_dict)
+        logger.debug(f"Response sent directly", extra={"request_id": request_id, "latency_ms": latency_ms})
+        return JSONResponse(response_dict, headers={"X-Request-Id": request_id})
 
     except RateLimitExceeded as e:
-        logger.warning(f"Rate limit exceeded: {e.message}")
+        logger.warning(f"Rate limit exceeded: {e.message}", extra={"request_id": request_id})
         metrics_collector.record_rate_limit_rejection()
         latency_ms = (time.time() - start_time) * 1000
         metrics_collector.record_request("/message", latency_ms, is_error=True)
@@ -2119,19 +2148,21 @@ async def message_endpoint(
             {
                 "error": "Too Many Requests",
                 "message": e.message,
-                "retry_after": e.retry_after
+                "retry_after": e.retry_after,
+                "request_id": request_id
             },
             status_code=429,
-            headers={"Retry-After": str(int(e.retry_after))}
+            headers={"Retry-After": str(int(e.retry_after)), "X-Request-Id": request_id}
         )
 
     except Exception as e:
-        logger.exception("Erro ao processar mensagem")
+        logger.exception("Erro ao processar mensagem", extra={"request_id": request_id})
         latency_ms = (time.time() - start_time) * 1000
         metrics_collector.record_request("/message", latency_ms, is_error=True)
         return JSONResponse(
-            {"error": str(e)},
-            status_code=500
+            {"error": str(e), "request_id": request_id},
+            status_code=500,
+            headers={"X-Request-Id": request_id}
         )
 
 
@@ -2144,12 +2175,18 @@ async def mcp_direct_endpoint(
     Endpoint direto para MCP (sem SSE).
     Útil para clientes que preferem request/response simples.
     """
+    request_id = generate_request_id()
     start_time = time.time()
     is_error = False
+
+    logger.info(f"Processing /mcp request", extra={"request_id": request_id})
 
     try:
         body = await request.json()
         mcp_request = MCPRequest(**body)
+
+        logger.debug(f"MCP method: {mcp_request.method}", extra={"request_id": request_id})
+
         # Use client IP for rate limiting
         client_id = request.client.host if request.client else "anonymous"
         response = handle_mcp_request(mcp_request, client_id=client_id)
@@ -2157,18 +2194,21 @@ async def mcp_direct_endpoint(
         if response is None:
             latency_ms = (time.time() - start_time) * 1000
             metrics_collector.record_request("/mcp", latency_ms, is_error=False)
-            return Response(status_code=202)
+            logger.debug(f"Notification processed", extra={"request_id": request_id, "latency_ms": latency_ms})
+            return Response(status_code=202, headers={"X-Request-Id": request_id})
 
         # Check if response has error
         if response.error:
             is_error = True
+            logger.warning(f"MCP error response: {response.error}", extra={"request_id": request_id})
 
         latency_ms = (time.time() - start_time) * 1000
         metrics_collector.record_request("/mcp", latency_ms, is_error=is_error)
-        return JSONResponse(response.model_dump(exclude_none=True))
+        logger.debug(f"Response sent", extra={"request_id": request_id, "latency_ms": latency_ms})
+        return JSONResponse(response.model_dump(exclude_none=True), headers={"X-Request-Id": request_id})
 
     except RateLimitExceeded as e:
-        logger.warning(f"Rate limit exceeded: {e.message}")
+        logger.warning(f"Rate limit exceeded: {e.message}", extra={"request_id": request_id})
         metrics_collector.record_rate_limit_rejection()
         latency_ms = (time.time() - start_time) * 1000
         metrics_collector.record_request("/mcp", latency_ms, is_error=True)
@@ -2176,19 +2216,21 @@ async def mcp_direct_endpoint(
             {
                 "error": "Too Many Requests",
                 "message": e.message,
-                "retry_after": e.retry_after
+                "retry_after": e.retry_after,
+                "request_id": request_id
             },
             status_code=429,
-            headers={"Retry-After": str(int(e.retry_after))}
+            headers={"Retry-After": str(int(e.retry_after)), "X-Request-Id": request_id}
         )
 
     except Exception as e:
-        logger.exception("Erro ao processar MCP request")
+        logger.exception("Erro ao processar MCP request", extra={"request_id": request_id})
         latency_ms = (time.time() - start_time) * 1000
         metrics_collector.record_request("/mcp", latency_ms, is_error=True)
         return JSONResponse(
-            {"jsonrpc": "2.0", "error": {"code": -32603, "message": str(e)}},
-            status_code=500
+            {"jsonrpc": "2.0", "error": {"code": -32603, "message": str(e)}, "request_id": request_id},
+            status_code=500,
+            headers={"X-Request-Id": request_id}
         )
 
 
