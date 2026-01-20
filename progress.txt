@@ -2796,3 +2796,58 @@ Conteudo", linha_inicio is 2 (position right after [START], still on that line)
   - Next task: implement rlm://collections resource
 
 ---
+
+## Iteration 63 - Create resource rlm://collections that lists collections
+
+- What was implemented:
+  - Added `rlm://collections` resource handling in `read_resource()` function
+  - Resource returns JSON with collections data:
+    - `collections`: list of collection objects with name, description, variable_count, created_at
+    - `count`: total number of collections
+  - Uses `get_persistence().list_collections()` to fetch data from SQLite
+  - Added 21 tests in TestMcpResourceReadCollections class covering:
+    - Basic MCP protocol compliance (status, JSON-RPC version, id)
+    - Resource structure (contents array, uri, mimeType, text fields)
+    - Collection data fields (all 4 fields present and correct types)
+    - Empty state (count=0 when no collections)
+    - Dynamic behavior (creates collections via rlm_collection_create tool)
+
+- Files changed:
+  - src/rlm_mcp/http_server.py (added rlm://collections handler in read_resource() at line ~319)
+  - tests/test_http_server.py (added TestMcpResourceReadCollections class with 21 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - `persistence` is obtained via `get_persistence()` function, not a module-level variable
+  - When mocking persistence in tests, use `monkeypatch.setattr("rlm_mcp.http_server.get_persistence", lambda: test_persistence)`
+  - Collection data from `persistence.list_collections()` uses "var_count" key which maps to "variable_count" in output
+  - Total tests increased from 1356 to 1377 (21 new tests)
+  - This is the fourth task in Fase 5 (MCP Resources Spec Compliance)
+  - Next task: add resources to capabilities in initialize response
+
+---
+
+## Iteration 64 - Add resources to capabilities in initialize response
+
+- What was implemented:
+  - Added `"resources": {"listChanged": False}` to the capabilities dict in the initialize response
+  - This advertises that the server supports MCP resources as per the spec
+  - Added 2 tests in TestMcpInitialize class:
+    - test_capabilities_has_resources: verifies "resources" key exists in capabilities and is a dict
+    - test_resources_list_changed_is_false: verifies resources.listChanged is False
+
+- Files changed:
+  - src/rlm_mcp/http_server.py (line ~167: added resources capability)
+  - tests/test_http_server.py (added 2 tests after test_tools_list_changed_is_false)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - MCP capabilities follow pattern: {"capability_name": {"listChanged": bool}}
+  - listChanged indicates whether resources can change dynamically (False = static list)
+  - Total tests increased from 1377 to 1379 (2 new tests)
+  - This is the fifth task in Fase 5 (MCP Resources Spec Compliance)
+  - Next task: Create tests for each MCP resource (rlm://variables, rlm://memory, rlm://collections)
+
+---

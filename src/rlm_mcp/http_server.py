@@ -165,6 +165,7 @@ def handle_mcp_request(request: MCPRequest) -> MCPResponse:
                     "protocolVersion": "2024-11-05",
                     "capabilities": {
                         "tools": {"listChanged": False},
+                        "resources": {"listChanged": False},
                     },
                     "serverInfo": {
                         "name": "rlm-mcp-server",
