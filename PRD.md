@@ -42,7 +42,7 @@ src/rlm_mcp/
 ## Fase 2: Erros Visíveis ao Usuário
 
 - [x] Em http_server.py, modificar rlm_load_s3 para mostrar erros de persistência no output
-- [ ] Em http_server.py, modificar rlm_load_data para mostrar erros de persistência no output
+- [x] Em http_server.py, modificar rlm_load_data para mostrar erros de persistência no output
 - [ ] Criar constante SHOW_PERSISTENCE_ERRORS=True para controlar comportamento
 - [ ] Criar teste que verifica que erros de persistência aparecem no output
 

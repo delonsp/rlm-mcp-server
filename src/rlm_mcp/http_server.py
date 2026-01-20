@@ -699,6 +699,7 @@ def call_tool(name: str, arguments: dict) -> dict:
             # Auto-persistência e indexação
             persist_msg = ""
             index_msg = ""
+            persist_error = ""
             try:
                 # Persistir variável
                 persistence = get_persistence()
@@ -716,10 +717,13 @@ def call_tool(name: str, arguments: dict) -> dict:
                             index_msg = f"📑 Indexado ({idx.get_stats()['indexed_terms']} termos)"
             except Exception as e:
                 logger.warning(f"Erro ao persistir/indexar {var_name}: {e}")
+                persist_error = f"\n⚠️ Erro de persistência: {e}"
 
             output = format_execution_result(result)
-            if persist_msg or index_msg:
-                output += f"\n\n{persist_msg} {index_msg}".strip()
+            extras = f"\n\n{persist_msg} {index_msg}".strip() if (persist_msg or index_msg) else ""
+            extras += persist_error
+            if extras:
+                output += extras
 
             return {"content": [{"type": "text", "text": output}]}
 
