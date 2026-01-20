@@ -74,6 +74,13 @@ HELPER_FUNCTION_NAMES = {
     'resumir_tamanho',
 }
 
+# Funções internas do REPL (excluídos da listagem de variáveis do usuário)
+INTERNAL_FUNCTION_NAMES = HELPER_FUNCTION_NAMES | {
+    'llm_query',
+    'llm_stats',
+    'llm_reset_counter',
+}
+
 def _buscar(texto: str, termo: str) -> list[dict]:
     """
     Busca um termo em um texto e retorna todas as ocorrências com contexto.

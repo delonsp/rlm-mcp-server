@@ -26,7 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
 
-from .repl import SafeREPL, ExecutionResult
+from .repl import SafeREPL, ExecutionResult, INTERNAL_FUNCTION_NAMES
 from .s3_client import get_s3_client
 from .pdf_parser import extract_pdf
 from .persistence import get_persistence
@@ -193,6 +193,24 @@ def handle_mcp_request(request: MCPRequest) -> MCPResponse:
                 }
             )
 
+        elif method == "resources/read":
+            uri = params.get("uri", "")
+            content = read_resource(uri)
+            if content is None:
+                return MCPResponse(
+                    id=request.id,
+                    error={
+                        "code": -32602,
+                        "message": f"Resource not found: {uri}"
+                    }
+                )
+            return MCPResponse(
+                id=request.id,
+                result={
+                    "contents": [content]
+                }
+            )
+
         elif method == "tools/call":
             tool_name = params.get("name", "")
             tool_args = params.get("arguments", {})
@@ -248,6 +266,42 @@ def get_resources_list() -> list[dict]:
             "mimeType": "application/json"
         }
     ]
+
+
+def read_resource(uri: str) -> dict | None:
+    """Lê o conteúdo de um resource MCP.
+
+    Args:
+        uri: URI do resource (ex: rlm://variables)
+
+    Returns:
+        Dict com uri, mimeType e text (conteúdo JSON), ou None se não encontrado
+    """
+    if uri == "rlm://variables":
+        # Lista todas as variáveis persistidas (excluindo funções internas)
+        vars_list = repl.list_variables()
+        variables = []
+        for v in vars_list:
+            # Filtra funções internas do REPL
+            if v.name in INTERNAL_FUNCTION_NAMES:
+                continue
+            variables.append({
+                "name": v.name,
+                "type": v.type_name,
+                "size_bytes": v.size_bytes,
+                "size_human": v.size_human,
+                "preview": v.preview,
+                "created_at": v.created_at.isoformat(),
+                "last_accessed": v.last_accessed.isoformat()
+            })
+        return {
+            "uri": uri,
+            "mimeType": "application/json",
+            "text": json.dumps({"variables": variables, "count": len(variables)}, indent=2)
+        }
+
+    # Resources não implementados ainda retornam None
+    return None
 
 
 def get_tools_list() -> list[dict]:

@@ -2705,3 +2705,31 @@ Conteudo", linha_inicio is 2 (position right after [START], still on that line)
   - Fase 4 is now complete - moving to Fase 5: MCP Resources
 
 ---
+
+## Iteration 60 - Add MCP resources/list support in handle_mcp_request
+
+- What was implemented:
+  - Added `resources/list` method handler in `handle_mcp_request` function
+  - Created `get_resources_list()` function in http_server.py that returns 3 resources:
+    - rlm://variables - Lists persisted variables in the REPL
+    - rlm://memory - Shows current memory usage of the REPL
+    - rlm://collections - Lists variable collections
+  - Each resource has uri, name, description, and mimeType fields per MCP spec
+  - Added 22 tests in TestMcpResourcesList class covering all resource properties
+
+- Files changed:
+  - src/rlm_mcp/http_server.py (added resources/list handler at line ~192, get_resources_list() at line ~225)
+  - tests/test_http_server.py (added TestMcpResourcesList class with 22 tests) - Note: tests/ is gitignored
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - MCP resources use URI format like "rlm://resource-name"
+  - Resources should have: uri (required), name, description, mimeType
+  - The handle_mcp_request function at line ~155 handles all MCP methods
+  - Follow existing test patterns in TestMcpToolsList for resource tests
+  - Total tests increased from 1292 to 1314 (22 new tests)
+  - This is the first task in Fase 5 (MCP Resources Spec Compliance)
+  - Next tasks: implement resources/read for each resource URI
+
+---
