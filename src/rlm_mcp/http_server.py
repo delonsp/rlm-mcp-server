@@ -300,6 +300,22 @@ def read_resource(uri: str) -> dict | None:
             "text": json.dumps({"variables": variables, "count": len(variables)}, indent=2)
         }
 
+    if uri == "rlm://memory":
+        # Retorna estatísticas de uso de memória do REPL
+        mem = repl.get_memory_usage()
+        memory_data = {
+            "total_bytes": mem["total_bytes"],
+            "total_human": mem["total_human"],
+            "variable_count": mem["variable_count"],
+            "max_allowed_mb": mem["max_allowed_mb"],
+            "usage_percent": round(mem["usage_percent"], 2)
+        }
+        return {
+            "uri": uri,
+            "mimeType": "application/json",
+            "text": json.dumps(memory_data, indent=2)
+        }
+
     # Resources não implementados ainda retornam None
     return None
 

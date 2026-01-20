@@ -2733,3 +2733,66 @@ Conteudo", linha_inicio is 2 (position right after [START], still on that line)
   - Next tasks: implement resources/read for each resource URI
 
 ---
+
+## Iteration 61 - Create resource rlm://variables that lists persisted variables
+
+- What was implemented:
+  - Added `resources/read` method handler in `handle_mcp_request` function
+  - Created `read_resource(uri)` function that routes URI to appropriate handler
+  - Implemented `rlm://variables` resource that returns JSON with:
+    - `variables`: list of variable objects with name, type, size_bytes, size_human, preview, created_at, last_accessed
+    - `count`: total number of user variables
+  - Filters out internal functions (buscar, contar, extrair_secao, resumir_tamanho, llm_query, llm_stats, llm_reset_counter)
+  - Added `INTERNAL_FUNCTION_NAMES` constant to repl.py combining HELPER_FUNCTION_NAMES + llm functions
+  - Returns error -32602 for unknown URIs
+
+- Files changed:
+  - src/rlm_mcp/http_server.py (added resources/read handler at line ~196, read_resource() at line ~271, import INTERNAL_FUNCTION_NAMES)
+  - src/rlm_mcp/repl.py (added INTERNAL_FUNCTION_NAMES constant at line ~77)
+  - tests/test_http_server.py (added TestMcpResourceReadVariables class with 20 tests) - Note: tests/ is gitignored
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - MCP resources/read returns `contents` array with objects having uri, mimeType, text fields
+  - Internal functions (helper + llm_*) are tracked in variable_metadata but should not be shown to users
+  - INTERNAL_FUNCTION_NAMES = HELPER_FUNCTION_NAMES | {'llm_query', 'llm_stats', 'llm_reset_counter'}
+  - Total tests increased from 1314 to 1334 (20 new tests)
+  - resources/read for unknown URIs should return error code -32602 (Invalid params)
+  - This is the second task in Fase 5 (MCP Resources Spec Compliance)
+  - Next task: implement rlm://memory resource
+
+---
+
+## Iteration 62 - Create resource rlm://memory that shows memory usage
+
+- What was implemented:
+  - Added `rlm://memory` resource handling in `read_resource()` function
+  - Resource returns JSON with memory statistics:
+    - `total_bytes`: total memory used by all variables
+    - `total_human`: human-readable size (e.g., "1.5 MB")
+    - `variable_count`: number of variables in REPL
+    - `max_allowed_mb`: maximum allowed memory in MB
+    - `usage_percent`: percentage of memory used (rounded to 2 decimal places)
+  - Added 22 tests in TestMcpResourceReadMemory class covering:
+    - Basic MCP protocol compliance (status, JSON-RPC version, id)
+    - Resource structure (contents array, uri, mimeType, text fields)
+    - Memory data fields (all 5 fields present and correct types)
+    - Dynamic behavior (memory increases with data, variable count increases)
+    - Usage percent is between 0 and 100
+
+- Files changed:
+  - src/rlm_mcp/http_server.py (added rlm://memory handler in read_resource() at line ~303)
+  - tests/test_http_server.py (added TestMcpResourceReadMemory class with 22 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - The `repl.get_memory_usage()` method returns memory stats as a dict
+  - variable_count in memory includes internal helper functions (buscar, contar, etc.)
+  - When testing dynamic changes, use > comparison instead of exact +1 due to internal state
+  - Total tests increased from 1334 to 1356 (22 new tests)
+  - This is the third task in Fase 5 (MCP Resources Spec Compliance)
+  - Next task: implement rlm://collections resource
+
+---
