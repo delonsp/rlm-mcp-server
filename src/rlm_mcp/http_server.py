@@ -50,11 +50,19 @@ SHOW_PERSISTENCE_ERRORS = os.getenv("RLM_SHOW_PERSISTENCE_ERRORS", "true").lower
 # Rate limiting configuration
 SSE_RATE_LIMIT_REQUESTS = int(os.getenv("RLM_SSE_RATE_LIMIT", "100"))
 SSE_RATE_LIMIT_WINDOW = int(os.getenv("RLM_SSE_RATE_WINDOW", "60"))  # seconds
+UPLOAD_RATE_LIMIT_REQUESTS = int(os.getenv("RLM_UPLOAD_RATE_LIMIT", "10"))
+UPLOAD_RATE_LIMIT_WINDOW = int(os.getenv("RLM_UPLOAD_RATE_WINDOW", "60"))  # seconds
 
 # Rate limiter for SSE sessions (100 requests per minute by default)
 sse_rate_limiter = SlidingWindowRateLimiter(
     max_requests=SSE_RATE_LIMIT_REQUESTS,
     window_seconds=SSE_RATE_LIMIT_WINDOW
+)
+
+# Rate limiter for uploads (10 uploads per minute by default)
+upload_rate_limiter = SlidingWindowRateLimiter(
+    max_requests=UPLOAD_RATE_LIMIT_REQUESTS,
+    window_seconds=UPLOAD_RATE_LIMIT_WINDOW
 )
 
 # Instância global do REPL com auto-cleanup
@@ -163,8 +171,13 @@ class MCPResponse(BaseModel):
 # MCP Protocol Implementation
 # =============================================================================
 
-def handle_mcp_request(request: MCPRequest) -> MCPResponse:
-    """Processa uma requisição MCP"""
+def handle_mcp_request(request: MCPRequest, client_id: str | None = None) -> MCPResponse:
+    """Processa uma requisição MCP.
+
+    Args:
+        request: Requisição MCP
+        client_id: Identificador do cliente para rate limiting (session_id ou IP)
+    """
     try:
         method = request.method
         params = request.params or {}
@@ -226,7 +239,7 @@ def handle_mcp_request(request: MCPRequest) -> MCPResponse:
         elif method == "tools/call":
             tool_name = params.get("name", "")
             tool_args = params.get("arguments", {})
-            result = call_tool(tool_name, tool_args)
+            result = call_tool(tool_name, tool_args, client_id=client_id)
             return MCPResponse(
                 id=request.id,
                 result=result
@@ -871,8 +884,14 @@ Exemplo: rlm_search_collection(collection="homeopatia", terms=["medo", "ansiedad
     ]
 
 
-def call_tool(name: str, arguments: dict) -> dict:
-    """Executa uma tool e retorna resultado"""
+def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
+    """Executa uma tool e retorna resultado.
+
+    Args:
+        name: Nome da tool a ser executada
+        arguments: Argumentos da tool
+        client_id: Identificador do cliente para rate limiting (session_id ou IP)
+    """
     try:
         if name == "rlm_execute":
             result = repl.execute(arguments["code"])
@@ -1263,6 +1282,20 @@ Variável: {var_name} (tipo: {data_type}){extras}
                 }
 
         elif name == "rlm_upload_url":
+            # Rate limit check for uploads
+            rate_id = client_id or "anonymous"
+            rate_result = upload_rate_limiter.check(rate_id)
+            if not rate_result.allowed:
+                logger.warning(f"Upload rate limit exceeded for {rate_id}: {rate_result.current_count}/{rate_result.limit}")
+                return {
+                    "content": [
+                        {"type": "text", "text": f"⚠️ Rate limit exceeded: {rate_result.limit} uploads per {rate_result.window_seconds} seconds. Please wait {int(rate_result.retry_after or 1)} seconds."}
+                    ],
+                    "isError": True,
+                    "_rate_limited": True,
+                    "_retry_after": rate_result.retry_after
+                }
+
             s3 = get_s3_client()
             if not s3.is_configured():
                 return {
@@ -1278,6 +1311,8 @@ Variável: {var_name} (tipo: {data_type}){extras}
 
             try:
                 result = s3.upload_from_url(url, bucket, key)
+                # Record successful upload for rate limiting
+                upload_rate_limiter.record(rate_id)
                 text = f"""✅ Upload concluído:
 URL: {url}
 Bucket: {result['bucket']}
@@ -1781,7 +1816,9 @@ async def message_endpoint(
         body = await request.json()
         mcp_request = MCPRequest(**body)
 
-        response = handle_mcp_request(mcp_request)
+        # Use session_id as client_id for rate limiting, fallback to client IP
+        client_id = session_id if session_id else request.client.host if request.client else "anonymous"
+        response = handle_mcp_request(mcp_request, client_id=client_id)
 
         if response is None:
             # Notificação, não precisa responder
@@ -1817,7 +1854,9 @@ async def mcp_direct_endpoint(
     try:
         body = await request.json()
         mcp_request = MCPRequest(**body)
-        response = handle_mcp_request(mcp_request)
+        # Use client IP for rate limiting
+        client_id = request.client.host if request.client else "anonymous"
+        response = handle_mcp_request(mcp_request, client_id=client_id)
 
         if response is None:
             return Response(status_code=202)
