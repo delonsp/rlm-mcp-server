@@ -2954,3 +2954,34 @@ Conteudo", linha_inicio is 2 (position right after [START], still on that line)
   - Next tasks in Fase 6: rate limit uploads, create combined rate limiting tests
 
 ---
+
+## Iteration 68 - Add rate limit of 10 uploads/minute for rlm_upload_url
+
+- What was implemented:
+  - Added `UPLOAD_RATE_LIMIT_REQUESTS` (default 10) and `UPLOAD_RATE_LIMIT_WINDOW` (default 60s) config constants
+  - Created `upload_rate_limiter` instance for rate limiting uploads
+  - Modified `call_tool()` to accept optional `client_id` parameter for rate limiting
+  - Modified `handle_mcp_request()` to accept and pass `client_id`
+  - Updated `/message` endpoint to pass session_id or client IP as client_id
+  - Updated `/mcp` endpoint to pass client IP as client_id
+  - Added rate limit check in `rlm_upload_url` handler:
+    - Checks rate limit before processing upload
+    - Returns isError response with retry_after info when limit exceeded
+    - Only records successful uploads (not attempts)
+  - Rate limiting uses the same `SlidingWindowRateLimiter` class from Iteration 66
+
+- Files changed:
+  - src/rlm_mcp/http_server.py (added upload rate limiter, updated call_tool/handle_mcp_request signatures)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - MCP tool responses use `isError: true` instead of HTTP 429 status codes
+  - `client_id` flows: endpoint -> handle_mcp_request -> call_tool
+  - For SSE sessions, use session_id; for direct /mcp requests, use client IP
+  - Rate limit is checked before upload attempt, recorded only on success
+  - `_rate_limited` and `_retry_after` fields added to response for downstream handling
+  - Next tasks: implement 429 HTTP response for rate limiting, create rate limiting tests
+  - Total tests: 1436 (no new tests added in this iteration - tests come next)
+
+---

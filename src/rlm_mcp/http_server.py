@@ -31,7 +31,26 @@ from .s3_client import get_s3_client
 from .pdf_parser import extract_pdf
 from .persistence import get_persistence
 from .indexer import get_index, set_index, TextIndex, auto_index_if_large
-from .rate_limiter import SlidingWindowRateLimiter
+from .rate_limiter import SlidingWindowRateLimiter, RateLimitResult
+
+
+class RateLimitExceeded(Exception):
+    """Exception raised when a rate limit is exceeded.
+
+    Attributes:
+        limit: Maximum allowed requests in the window
+        window_seconds: Time window in seconds
+        retry_after: Seconds to wait before retrying
+        message: Human-readable error message
+    """
+    def __init__(self, result: RateLimitResult, message: str = None):
+        self.limit = result.limit
+        self.window_seconds = result.window_seconds
+        self.retry_after = result.retry_after or 1
+        self.current_count = result.current_count
+        self.message = message or f"Rate limit exceeded: {result.limit} requests per {result.window_seconds} seconds"
+        super().__init__(self.message)
+
 
 # Configuração
 logging.basicConfig(
@@ -254,6 +273,9 @@ def handle_mcp_request(request: MCPRequest, client_id: str | None = None) -> MCP
                 }
             )
 
+    except RateLimitExceeded:
+        # Re-raise rate limit exceptions to be handled by HTTP endpoint
+        raise
     except Exception as e:
         logger.exception(f"Erro ao processar request MCP: {e}")
         return MCPResponse(
@@ -1287,14 +1309,10 @@ Variável: {var_name} (tipo: {data_type}){extras}
             rate_result = upload_rate_limiter.check(rate_id)
             if not rate_result.allowed:
                 logger.warning(f"Upload rate limit exceeded for {rate_id}: {rate_result.current_count}/{rate_result.limit}")
-                return {
-                    "content": [
-                        {"type": "text", "text": f"⚠️ Rate limit exceeded: {rate_result.limit} uploads per {rate_result.window_seconds} seconds. Please wait {int(rate_result.retry_after or 1)} seconds."}
-                    ],
-                    "isError": True,
-                    "_rate_limited": True,
-                    "_retry_after": rate_result.retry_after
-                }
+                raise RateLimitExceeded(
+                    result=rate_result,
+                    message=f"Upload rate limit exceeded: {rate_result.limit} uploads per {rate_result.window_seconds} seconds"
+                )
 
             s3 = get_s3_client()
             if not s3.is_configured():
@@ -1697,6 +1715,9 @@ Próximo passo: rlm_load_s3(key="{output_key}", name="texto", data_type="text")"
                 "isError": True
             }
 
+    except RateLimitExceeded:
+        # Re-raise rate limit exceptions to be handled by HTTP endpoint
+        raise
     except Exception as e:
         logger.exception(f"Erro ao executar tool {name}")
         return {
@@ -1834,6 +1855,18 @@ async def message_endpoint(
         # Senão, responde diretamente
         return JSONResponse(response_dict)
 
+    except RateLimitExceeded as e:
+        logger.warning(f"Rate limit exceeded: {e.message}")
+        return JSONResponse(
+            {
+                "error": "Too Many Requests",
+                "message": e.message,
+                "retry_after": e.retry_after
+            },
+            status_code=429,
+            headers={"Retry-After": str(int(e.retry_after))}
+        )
+
     except Exception as e:
         logger.exception("Erro ao processar mensagem")
         return JSONResponse(
@@ -1862,6 +1895,18 @@ async def mcp_direct_endpoint(
             return Response(status_code=202)
 
         return JSONResponse(response.model_dump(exclude_none=True))
+
+    except RateLimitExceeded as e:
+        logger.warning(f"Rate limit exceeded: {e.message}")
+        return JSONResponse(
+            {
+                "error": "Too Many Requests",
+                "message": e.message,
+                "retry_after": e.retry_after
+            },
+            status_code=429,
+            headers={"Retry-After": str(int(e.retry_after))}
+        )
 
     except Exception as e:
         logger.exception("Erro ao processar MCP request")
