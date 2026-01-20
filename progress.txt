@@ -3123,3 +3123,40 @@ Conteudo", linha_inicio is 2 (position right after [START], still on that line)
   - Next task in Fase 7: Add request_id to each request for tracing
 
 ---
+
+## Iteration 73 - Add request_id to each request for tracing (Fase 7 task 3)
+
+- What was implemented:
+  - Created `generate_request_id()` function that returns UUID4 strings
+  - Added `X-Request-Id` header to all HTTP responses:
+    - GET /health
+    - GET /metrics
+    - POST /message (including 202 responses for SSE and notifications)
+    - POST /mcp
+  - Included request_id in response body for:
+    - /health endpoint (request_id field)
+    - /metrics endpoint (request_id field)
+    - Error responses (request_id field in JSON error bodies)
+    - Rate limit exceeded responses (429 status code)
+  - Added request_id to log messages via `extra={"request_id": request_id}` parameter
+    - This works with both text and JSON logging formats
+    - JSON formatter automatically includes extra fields in output
+  - Changed /health and /metrics to use JSONResponse to include headers
+  - Added 20 comprehensive tests across 2 test classes:
+    - TestRequestId (15 tests) - endpoint integration tests
+    - TestRequestIdFunction (5 tests) - unit tests for generate_request_id
+
+- Files changed:
+  - src/rlm_mcp/http_server.py (added generate_request_id, modified all endpoints)
+  - tests/test_http_server.py (added 20 new tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - Use JSONResponse instead of dict return when headers are needed
+  - The `extra` parameter in logger calls adds fields to JSON log output automatically
+  - All 1514 tests pass after implementation
+  - Fase 7 (Melhorias de Logging e Observabilidade) is now complete with all 4 subtasks done
+  - Next phase: Fase 8 - Documentação e Cleanup
+
+---

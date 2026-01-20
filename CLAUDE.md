@@ -110,18 +110,18 @@ scp arquivo.pdf user@vps:/caminho/para/rlm-data/
 - `rlm_execute` - Código Python no REPL
 
 ### Gerenciamento
-- `rlm_list_vars` - Lista variáveis
+- `rlm_list_vars` - Lista variáveis (suporta paginação: `offset`, `limit`)
 - `rlm_var_info` - Info de uma variável
 - `rlm_clear` - Limpa variáveis
 - `rlm_memory` - Uso de memória
 
 ### S3/Minio
 - `rlm_list_buckets` - Lista buckets
-- `rlm_list_s3` - Lista objetos
-- `rlm_upload_url` - Upload de URL para bucket
+- `rlm_list_s3` - Lista objetos (suporta paginação: `offset`, `limit`)
+- `rlm_upload_url` - Upload de URL para bucket (rate limited: 10/min)
 
 ### Busca e Persistência
-- `rlm_search_index` - Busca termos no índice semântico (criado auto para textos >= 100k chars)
+- `rlm_search_index` - Busca termos no índice semântico (suporta paginação: `offset`, `limit`)
 - `rlm_persistence_stats` - Estatísticas de variáveis/índices persistidos
 
 ### Coleções (Multi-assunto)
@@ -129,7 +129,7 @@ scp arquivo.pdf user@vps:/caminho/para/rlm-data/
 - `rlm_collection_add` - Adiciona variáveis a uma coleção
 - `rlm_collection_list` - Lista todas as coleções
 - `rlm_collection_info` - Info detalhada de uma coleção
-- `rlm_search_collection` - Busca em TODAS as variáveis de uma coleção
+- `rlm_search_collection` - Busca em TODAS as variáveis de uma coleção (suporta paginação: `offset`, `limit`)
 
 ### Processamento de PDF (duas etapas)
 - `rlm_process_pdf` - Extrai texto de PDF e salva .txt no bucket (não bloqueia)
@@ -140,6 +140,77 @@ scp arquivo.pdf user@vps:/caminho/para/rlm-data/
   # Etapa 2: Carregar texto rápido para análise
   rlm_load_s3(key="pdfs/livro.txt", name="texto", data_type="text")
   ```
+
+## Paginação
+
+Endpoints que retornam listas grandes suportam paginação via `offset` e `limit`:
+
+```python
+# Listar variáveis (primeiras 10)
+rlm_list_vars(offset=0, limit=10)
+
+# Listar mais variáveis (próximas 10)
+rlm_list_vars(offset=10, limit=10)
+
+# Busca com paginação
+rlm_search_index(var_name="texto", terms=["erro"], offset=0, limit=20)
+
+# Listar objetos S3 com paginação
+rlm_list_s3(bucket="claude-code", prefix="data/", offset=0, limit=50)
+
+# Busca em coleção com paginação
+rlm_search_collection(collection="docs", terms=["termo"], offset=0, limit=10)
+```
+
+## MCP Resources
+
+O servidor expõe resources conforme a especificação MCP:
+
+| Resource URI | Descrição |
+|--------------|-----------|
+| `rlm://variables` | Lista variáveis persistidas com metadados |
+| `rlm://memory` | Uso de memória do REPL (total, usada, livre) |
+| `rlm://collections` | Lista de coleções com contagem de variáveis |
+
+Resources são acessíveis via `resources/list` e `resources/read` no protocolo MCP.
+
+## Helper Functions no REPL
+
+O REPL Python inclui funções auxiliares pré-definidas para facilitar análise de textos:
+
+### `buscar(texto, termo)` → list[dict]
+Busca um termo no texto (case-insensitive).
+```python
+# Retorna: [{'posicao': int, 'linha': int, 'contexto': str}]
+resultados = buscar(meu_texto, "erro")
+for r in resultados:
+    print(f"Linha {r['linha']}: {r['contexto']}")
+```
+
+### `contar(texto, termo)` → dict
+Conta ocorrências de um termo (case-insensitive).
+```python
+# Retorna: {'total': int, 'por_linha': {linha: count}}
+stats = contar(meu_texto, "warning")
+print(f"Total: {stats['total']}")
+```
+
+### `extrair_secao(texto, inicio, fim)` → list[dict]
+Extrai seções entre marcadores (case-insensitive).
+```python
+# Retorna: [{'conteudo': str, 'posicao_inicio': int, 'posicao_fim': int, 'linha_inicio': int, 'linha_fim': int}]
+secoes = extrair_secao(doc, "## Introdução", "## Conclusão")
+for s in secoes:
+    print(s['conteudo'][:200])
+```
+
+### `resumir_tamanho(bytes)` → str
+Converte bytes para formato humanizado.
+```python
+# Retorna: string como "1.5 MB", "256 KB"
+print(resumir_tamanho(1048576))  # → "1.0 MB"
+print(resumir_tamanho(1536))     # → "1.5 KB"
+```
 
 ## Estrutura do Código
 
@@ -198,6 +269,69 @@ Você pode ter múltiplas coleções no mesmo servidor:
 - `homeopatia`: scholten, kent, banerji, matéria médica
 - `nutrição`: protocolos, suplementos, dietas
 - `fitoterapia`: plantas, formulações
+
+## Rate Limiting
+
+O servidor implementa rate limiting para proteger contra sobrecarga:
+
+| Endpoint | Limite | Janela |
+|----------|--------|--------|
+| SSE/MCP requests | 100 requests | 1 minuto |
+| `rlm_upload_url` | 10 uploads | 1 minuto |
+
+Quando o limite é excedido, o servidor retorna HTTP 429 (Too Many Requests).
+
+Configuração via variáveis de ambiente:
+- `RLM_SSE_RATE_LIMIT`: requests por minuto (padrão: 100)
+- `RLM_SSE_RATE_WINDOW`: janela em segundos (padrão: 60)
+- `RLM_UPLOAD_RATE_LIMIT`: uploads por minuto (padrão: 10)
+- `RLM_UPLOAD_RATE_WINDOW`: janela em segundos (padrão: 60)
+
+## Observabilidade
+
+### Endpoint `/metrics`
+
+Retorna métricas do servidor em JSON:
+
+```json
+{
+  "timestamp": "2024-01-15T10:30:00Z",
+  "uptime_seconds": 3600,
+  "requests": {
+    "total": 1500,
+    "by_endpoint": {"/message": 1200, "/mcp": 300}
+  },
+  "errors": {
+    "total": 5,
+    "by_endpoint": {"/message": 3, "/mcp": 2}
+  },
+  "latency_ms": {
+    "avg": 45.2,
+    "p50": 30,
+    "p95": 120,
+    "p99": 250,
+    "max": 500
+  },
+  "tools": {
+    "calls_by_name": {"rlm_execute": 500, "rlm_load_s3": 200}
+  },
+  "rate_limiting": {
+    "rejections": 3
+  }
+}
+```
+
+### Logging estruturado (JSON)
+
+Ative logging JSON via variável de ambiente:
+```bash
+LOG_FORMAT=json  # ou LOG_FORMAT=text (padrão)
+LOG_LEVEL=INFO   # DEBUG, INFO, WARNING, ERROR
+```
+
+### Request ID
+
+Cada requisição inclui um `X-Request-Id` header para tracing. O ID também aparece nos logs e nas respostas de erro.
 
 ## Notas Importantes
 
