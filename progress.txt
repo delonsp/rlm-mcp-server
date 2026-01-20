@@ -2851,3 +2851,65 @@ Conteudo", linha_inicio is 2 (position right after [START], still on that line)
   - Next task: Create tests for each MCP resource (rlm://variables, rlm://memory, rlm://collections)
 
 ---
+
+## Iteration 65 - Create tests for each MCP resource
+
+- What was implemented:
+  - Verified that comprehensive tests already exist for all MCP resources
+  - Tests were created during each resource implementation in previous iterations
+  - Total MCP resource tests: 85 tests across 4 test classes:
+    - TestMcpResourcesList: 22 tests (resources/list endpoint)
+    - TestMcpResourceReadVariables: 20 tests (rlm://variables resource)
+    - TestMcpResourceReadMemory: 22 tests (rlm://memory resource)
+    - TestMcpResourceReadCollections: 21 tests (rlm://collections resource)
+
+- Files changed:
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - Tests were created along with each feature implementation (best practice)
+  - All 1379 tests pass
+  - Fase 5 (MCP Resources Spec Compliance) is now fully complete
+  - Next phase: Fase 6 (Rate Limiting Básico)
+  - First task: Create RateLimiter class with sliding window algorithm
+
+---
+
+## Iteration 66 - Create RateLimiter class with sliding window algorithm
+
+- What was implemented:
+  - Created `src/rlm_mcp/rate_limiter.py` with complete rate limiting implementation
+  - `RateLimitConfig` dataclass for validation of config params
+  - `RateLimitResult` dataclass for check results (allowed, current_count, limit, retry_after)
+  - `SlidingWindowRateLimiter` class:
+    - Sliding window algorithm with bucket interpolation
+    - `check()` - verify if request is allowed (read-only)
+    - `record()` - register a request
+    - `check_and_record()` - combined operation
+    - `reset()` - clear records for an identifier
+    - `get_stats()` - get usage statistics
+  - `MultiRateLimiter` class for managing multiple limits (e.g., requests + uploads)
+  - 44 comprehensive tests covering:
+    - Config validation
+    - Basic check/record functionality
+    - Sliding window expiration
+    - Independent identifiers
+    - Multi-limiter functionality
+    - Edge cases (short/long windows, high rates, single-request limits)
+
+- Files changed:
+  - src/rlm_mcp/rate_limiter.py (new file - 275 lines)
+  - tests/test_rate_limiter.py (new file - 44 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - Sliding window algorithm uses bucket interpolation for memory efficiency
+  - Bucket size is window_seconds / 10 (minimum 1 second)
+  - Interpolation means exact counts may vary slightly at bucket boundaries
+  - RateLimitConfig uses `max_requests` not `limit` as attribute name
+  - Next tasks in Fase 6: integrate rate limiter into http_server.py (100 req/min for SSE, 10 uploads/min)
+  - Total tests increased from 1379 to 1423 (44 new tests)
+
+---
