@@ -52,11 +52,78 @@ class RateLimitExceeded(Exception):
         super().__init__(self.message)
 
 
-# Configuração
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+class JsonFormatter(logging.Formatter):
+    """JSON formatter for structured logging.
+
+    Produces JSON log lines with consistent fields:
+    - timestamp: ISO 8601 format
+    - level: Log level (INFO, ERROR, etc.)
+    - logger: Logger name
+    - message: Log message
+    - Additional fields from extra dict
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        """Format a log record as JSON."""
+        log_entry = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+
+        # Add exception info if present
+        if record.exc_info:
+            log_entry["exception"] = self.formatException(record.exc_info)
+
+        # Add extra fields (excluding standard LogRecord attributes)
+        standard_attrs = {
+            "name", "msg", "args", "created", "filename", "funcName",
+            "levelname", "levelno", "lineno", "module", "msecs",
+            "pathname", "process", "processName", "relativeCreated",
+            "stack_info", "exc_info", "exc_text", "thread", "threadName",
+            "taskName", "message"
+        }
+        for key, value in record.__dict__.items():
+            if key not in standard_attrs and not key.startswith("_"):
+                log_entry[key] = value
+
+        return json.dumps(log_entry, default=str)
+
+
+def setup_logging(log_format: str = "text", log_level: str = "INFO") -> None:
+    """Configure logging based on format preference.
+
+    Args:
+        log_format: "json" for structured JSON logging, "text" for traditional format
+        log_level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+    """
+    root_logger = logging.getLogger()
+    root_logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+
+    # Remove existing handlers
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+
+    handler = logging.StreamHandler()
+    handler.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+
+    if log_format.lower() == "json":
+        handler.setFormatter(JsonFormatter())
+    else:
+        handler.setFormatter(logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        ))
+
+    root_logger.addHandler(handler)
+
+
+# Logging configuration
+LOG_FORMAT = os.getenv("RLM_LOG_FORMAT", "text")  # "text" or "json"
+LOG_LEVEL = os.getenv("RLM_LOG_LEVEL", "INFO")
+
+# Configure logging
+setup_logging(LOG_FORMAT, LOG_LEVEL)
 logger = logging.getLogger("rlm-http")
 
 # API Key para autenticação
