@@ -2339,3 +2339,56 @@ Este arquivo registra o progresso do Ralph em cada iteração.
   - 1212 tests passed - the change is backward compatible
 
 ---
+
+## Iteration 47 - Add SHOW_PERSISTENCE_ERRORS constant
+
+- What was implemented:
+  - Added SHOW_PERSISTENCE_ERRORS constant in http_server.py (line 47)
+  - Constant is configurable via RLM_SHOW_PERSISTENCE_ERRORS environment variable
+  - Default is "true" (shows persistence errors in output)
+  - Modified all 3 locations where persist_error is added to extras to be conditional
+    - rlm_load_data (line 725-726)
+    - rlm_load_s3 PDF path (line 939-940)
+    - rlm_load_s3 regular file path (line 983-984)
+
+- Files changed:
+  - src/rlm_mcp/http_server.py (4 edits: constant + 3 conditional checks)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - Environment variable parsing pattern: `os.getenv("VAR", "default").lower() in ("true", "1", "yes")`
+  - Constants are defined at module level (lines 42-47) before the REPL instance
+  - There are 3 locations that handle persistence errors: rlm_load_data and 2 paths in rlm_load_s3
+  - The pattern `if SHOW_PERSISTENCE_ERRORS: extras += persist_error` preserves backward compatibility
+  - 1212 tests passed - no changes needed to tests for this configuration change
+
+---
+
+## Iteration 48 - Create test for persistence error visibility in output
+
+- What was implemented:
+  - Added TestPersistenceErrorsInOutput class to tests/test_http_server.py with 8 tests:
+    - test_rlm_load_data_shows_persistence_error_when_enabled: Verifies error appears when SHOW_PERSISTENCE_ERRORS=True
+    - test_rlm_load_data_hides_persistence_error_when_disabled: Verifies error is hidden when SHOW_PERSISTENCE_ERRORS=False
+    - test_rlm_load_data_still_loads_variable_despite_persistence_error: Verifies variable loads even with persistence failure
+    - test_rlm_load_data_error_message_format: Verifies error format includes ⚠️ emoji and message
+    - test_rlm_load_s3_shows_persistence_error_when_enabled: Same test for rlm_load_s3 tool
+    - test_rlm_load_s3_hides_persistence_error_when_disabled: Same test for rlm_load_s3 tool
+    - test_constant_defaults_to_true: Verifies SHOW_PERSISTENCE_ERRORS defaults to True via source inspection
+    - test_constant_can_be_disabled_via_env_var: Verifies env var parsing pattern
+
+- Files changed:
+  - tests/test_http_server.py (added TestPersistenceErrorsInOutput class with 8 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - Use unittest.mock.patch to mock get_persistence() returning a MagicMock
+  - Use MagicMock().save_variable.side_effect = Exception("error message") to simulate errors
+  - Use monkeypatch.setattr to modify module-level constants like SHOW_PERSISTENCE_ERRORS
+  - For rlm_load_s3 tests, need to mock both get_s3_client and get_persistence
+  - Source inspection with inspect.getsource() is useful for verifying constant definitions
+  - Fase 2 (Erros Visíveis ao Usuário) is now complete with all 4 tasks done
+
+---
