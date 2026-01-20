@@ -51,7 +51,7 @@ src/rlm_mcp/
 - [x] Adicionar parâmetros offset e limit em rlm_search_index
 - [x] Adicionar parâmetros offset e limit em rlm_search_collection
 - [x] Adicionar parâmetros offset e limit em rlm_list_vars
-- [ ] Adicionar parâmetros offset e limit em rlm_list_s3
+- [x] Adicionar parâmetros offset e limit em rlm_list_s3
 - [ ] Criar testes para pagination em cada endpoint modificado
 
 ## Fase 4: Helper Functions Pré-definidas no REPL

@@ -450,6 +450,7 @@ Use para descobrir quais buckets existem antes de carregar arquivos.""",
             "description": """Lista objetos em um bucket do Minio.
 
 Retorna nome, tamanho e data de modificação dos arquivos.
+Suporta paginação via offset e limit.
 
 Exemplo: rlm_list_s3() para listar bucket padrão, ou rlm_list_s3(prefix="logs/") para filtrar""",
             "inputSchema": {
@@ -464,6 +465,16 @@ Exemplo: rlm_list_s3() para listar bucket padrão, ou rlm_list_s3(prefix="logs/"
                         "type": "string",
                         "default": "",
                         "description": "Prefixo para filtrar (opcional)"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 50,
+                        "description": "Máximo de objetos a retornar (padrão: 50)"
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "default": 0,
+                        "description": "Número de objetos a pular para paginação (padrão: 0)"
                     }
                 }
             }
@@ -1064,17 +1075,23 @@ Variável: {var_name} (tipo: {data_type}){extras}
 
             bucket = arguments.get("bucket", "claude-code")
             prefix = arguments.get("prefix", "")
+            limit = arguments.get("limit", 50)
+            offset = arguments.get("offset", 0)
 
             try:
                 objects = s3.list_objects(bucket, prefix)
+                total = len(objects)
                 if not objects:
                     text = f"Nenhum objeto encontrado em {bucket}/{prefix}"
                 else:
-                    lines = [f"Objetos em {bucket}/{prefix}:", ""]
-                    for obj in objects[:50]:
+                    # Apply pagination
+                    paginated = objects[offset:offset + limit]
+                    start_idx = offset + 1 if paginated else 0
+                    end_idx = offset + len(paginated)
+
+                    lines = [f"Objetos em {bucket}/{prefix} ({total} total, mostrando {start_idx}-{end_idx}):", ""]
+                    for obj in paginated:
                         lines.append(f"  {obj['name']} ({obj['size_human']})")
-                    if len(objects) > 50:
-                        lines.append(f"  ... e mais {len(objects) - 50} objetos")
                     text = "\n".join(lines)
                 return {"content": [{"type": "text", "text": text}]}
             except Exception as e:
