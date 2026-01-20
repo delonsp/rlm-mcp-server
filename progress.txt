@@ -2465,3 +2465,27 @@ Este arquivo registra o progresso do Ralph em cada iteração.
   - Same pagination display format used: calculate start_idx = offset + 1 if paginated else 0
 
 ---
+
+## Iteration 52 - Add offset and limit parameters for pagination in rlm_list_s3
+
+- What was implemented:
+  - Added 'limit' parameter to rlm_list_s3 inputSchema (default: 50, type: integer)
+  - Added 'offset' parameter to rlm_list_s3 inputSchema (default: 0, type: integer)
+  - Updated handler to read limit and offset from arguments with defaults
+  - Applied pagination to objects list: `objects[offset:offset + limit]`
+  - Updated output format to show pagination info: "({total} total, mostrando {start}-{end})"
+  - Updated description to mention pagination support
+
+- Files changed:
+  - src/rlm_mcp/http_server.py (inputSchema at line ~469-478, handler at lines ~1078-1095)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - Pattern for list pagination: `items[offset:offset + limit]`
+  - Default limit of 50 matches the previous hardcoded limit
+  - Replaced old "... e mais X objetos" message with clear pagination info
+  - All 1226 tests passed - no changes needed to existing tests
+  - Same pagination display format used: calculate start_idx = offset + 1 if paginated else 0
+
+---
