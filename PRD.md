@@ -37,7 +37,7 @@ src/rlm_mcp/
 - [x] Adicionar PRAGMA synchronous=NORMAL para melhor performance
 - [x] Adicionar PRAGMA cache_size=-64000 (64MB cache)
 - [x] Criar teste para verificar que WAL mode está ativo
-- [ ] Criar teste de performance comparando antes/depois (opcional)
+- [x] Criar teste de performance comparando antes/depois (opcional)
 
 ## Fase 2: Erros Visíveis ao Usuário
 

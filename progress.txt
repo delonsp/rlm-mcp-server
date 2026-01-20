@@ -2242,3 +2242,25 @@ Este arquivo registra o progresso do Ralph em cada iteração.
   - Both settings should be executed immediately after connection is opened
 
 ---
+
+## Iteration 43 - Add PRAGMA cache_size=-64000 (64MB cache)
+
+- What was implemented:
+  - Added PRAGMA cache_size=-64000 in persistence.py _init_db() method
+  - Negative value means cache size is specified in kibibytes (64000 KiB = ~64MB)
+  - Added debug logging for the new PRAGMA setting
+  - All 1205 tests pass
+
+- Files changed:
+  - src/rlm_mcp/persistence.py (added PRAGMA cache_size=-64000)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - PRAGMA cache_size accepts both positive (pages) and negative (kibibytes) values
+  - Negative values like -64000 mean "approximately 64MB of memory for cache"
+  - Default SQLite page size is 4096 bytes, so -64000 KiB ≈ 16000 pages
+  - Larger cache improves read performance for repeated queries on the same data
+  - Order of PRAGMAs: journal_mode → synchronous → cache_size
+
+---
