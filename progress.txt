@@ -2554,3 +2554,35 @@ Este arquivo registra o progresso do Ralph em cada iteração.
   - Total tests increased from 1244 to 1257 (13 new tests, 14 new - 1 fixed earlier failing test)
 
 ---
+
+## Iteration 55 - Create contar(texto, termo) helper function in REPL namespace
+
+- What was implemented:
+  - Created `_contar(texto, termo)` helper function in `repl.py` that counts term occurrences
+  - Function returns a dict with: total (total count), por_linha (dict of line number -> count)
+  - Search is case-insensitive
+  - Added `namespace['contar'] = _contar` in execute() method to inject into REPL namespace
+  - Added 11 tests in `TestHelperFunctionContar` class covering:
+    - Function availability in namespace
+    - Single/multiple occurrence counting
+    - Zero result handling
+    - Case-insensitive search
+    - Per-line counting
+    - Empty text/term handling
+    - Return structure (dict with 'total' and 'por_linha' keys)
+    - Not saved as user variable
+
+- Files changed:
+  - src/rlm_mcp/repl.py (added _contar function at line ~133, namespace injection at line ~427)
+  - tests/test_repl.py (added TestHelperFunctionContar class with 11 tests) - Note: tests/ is gitignored
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - Follow same pattern as _buscar for helper functions
+  - Remember that tests/ folder is gitignored - changes are local only
+  - contar was already in HELPER_FUNCTION_NAMES (added in advance by previous iteration)
+  - Total tests increased from 1257 to 1268 (11 new tests)
+  - Be careful with test assertions: "gatos" contains "gato" as substring!
+
+---

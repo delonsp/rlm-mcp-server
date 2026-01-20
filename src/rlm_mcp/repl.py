@@ -167,6 +167,68 @@ def _contar(texto: str, termo: str) -> dict:
     return {'total': total, 'por_linha': por_linha}
 
 
+def _extrair_secao(texto: str, inicio: str, fim: str) -> list[dict]:
+    """
+    Extrai seções de texto entre marcadores de início e fim.
+
+    Args:
+        texto: O texto de onde extrair
+        inicio: Marcador de início da seção (case-insensitive)
+        fim: Marcador de fim da seção (case-insensitive)
+
+    Returns:
+        Lista de dicts com: conteudo (texto extraído), posicao_inicio, posicao_fim, linha_inicio, linha_fim
+
+    Example:
+        >>> extrair_secao(meu_texto, "## Introdução", "## Conclusão")
+        [{'conteudo': 'texto entre os marcadores...', 'posicao_inicio': 100, 'posicao_fim': 500, 'linha_inicio': 10, 'linha_fim': 50}]
+    """
+    if not texto or not inicio or not fim:
+        return []
+
+    resultados = []
+    texto_lower = texto.lower()
+    inicio_lower = inicio.lower()
+    fim_lower = fim.lower()
+
+    pos = 0
+    while True:
+        # Encontra o marcador de início
+        start_pos = texto_lower.find(inicio_lower, pos)
+        if start_pos == -1:
+            break
+
+        # Posição após o marcador de início
+        content_start = start_pos + len(inicio)
+
+        # Encontra o marcador de fim
+        end_pos = texto_lower.find(fim_lower, content_start)
+        if end_pos == -1:
+            break
+
+        # Extrai o conteúdo entre os marcadores
+        conteudo = texto[content_start:end_pos].strip()
+
+        # Calcula linha inicial (após o marcador de início)
+        linha_inicio = texto[:content_start].count('\n') + 1
+
+        # Calcula linha final (antes do marcador de fim)
+        linha_fim = texto[:end_pos].count('\n') + 1
+
+        resultados.append({
+            'conteudo': conteudo,
+            'posicao_inicio': start_pos,
+            'posicao_fim': end_pos + len(fim),
+            'linha_inicio': linha_inicio,
+            'linha_fim': linha_fim,
+        })
+
+        # Continua a busca após este marcador de fim
+        pos = end_pos + len(fim)
+
+    return resultados
+
+
 @dataclass
 class ExecutionResult:
     """Resultado de uma execução no REPL"""
@@ -425,6 +487,7 @@ class SafeREPL:
         # Injeta helper functions pré-definidas
         namespace['buscar'] = _buscar
         namespace['contar'] = _contar
+        namespace['extrair_secao'] = _extrair_secao
 
         success = True
 
