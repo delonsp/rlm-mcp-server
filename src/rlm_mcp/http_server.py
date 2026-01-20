@@ -344,7 +344,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="RLM MCP Server",
     description="Recursive Language Model via MCP over HTTP/SSE",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan
 )
 
@@ -402,7 +402,7 @@ def handle_mcp_request(request: MCPRequest, client_id: str | None = None) -> MCP
                     },
                     "serverInfo": {
                         "name": "rlm-mcp-server",
-                        "version": "0.1.0"
+                        "version": "0.2.0"
                     }
                 }
             )
@@ -1962,7 +1962,7 @@ async def health_check():
             "status": "healthy",
             "timestamp": datetime.now().isoformat(),
             "memory": mem,
-            "version": "0.1.0",
+            "version": "0.2.0",
             "request_id": request_id
         },
         headers={"X-Request-Id": request_id}

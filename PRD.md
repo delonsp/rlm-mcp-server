@@ -92,7 +92,7 @@ src/rlm_mcp/
 - [x] Atualizar CLAUDE.md com novas features (pagination, resources, helpers)
 - [x] Adicionar docstrings em todas as funções públicas que faltam
 - [x] Criar arquivo CHANGELOG.md com versão 0.2.0
-- [ ] Atualizar version em http_server.py para 0.2.0
+- [x] Atualizar version em http_server.py para 0.2.0
 
 ---
 

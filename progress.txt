@@ -3206,3 +3206,30 @@ Conteudo", linha_inicio is 2 (position right after [START], still on that line)
   - Next task in Fase 8: Create CHANGELOG.md with version 0.2.0
 
 ---
+
+## Iteration 76 - Create CHANGELOG.md with version 0.2.0 (Fase 8 task 3)
+
+- What was implemented:
+  - Created CHANGELOG.md following Keep a Changelog format
+  - Documented all changes from 0.1.0 to 0.2.0:
+    - SQLite Performance: WAL mode, synchronous=NORMAL, cache_size=64MB
+    - Persistence Error Visibility: SHOW_PERSISTENCE_ERRORS constant
+    - Pagination: offset/limit for search_index, search_collection, list_vars, list_s3
+    - REPL Helpers: buscar, contar, extrair_secao, resumir_tamanho
+    - MCP Resources: rlm://variables, rlm://memory, rlm://collections
+    - Rate Limiting: RateLimiter class, 100 req/min SSE, 10 uploads/min
+    - Observability: JSON logging, /metrics endpoint, X-Request-Id header
+  - Also documented initial 0.1.0 release features
+
+- Files changed:
+  - CHANGELOG.md (created, 91 lines)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - Use Keep a Changelog format (keepachangelog.com)
+  - Group changes by category: Added, Changed, Deprecated, Removed, Fixed, Security
+  - All 1514 tests continue to pass
+  - Next task in Fase 8: Update version in http_server.py to 0.2.0
+
+---
