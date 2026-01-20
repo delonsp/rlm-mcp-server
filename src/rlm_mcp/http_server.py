@@ -185,6 +185,14 @@ def handle_mcp_request(request: MCPRequest) -> MCPResponse:
                 }
             )
 
+        elif method == "resources/list":
+            return MCPResponse(
+                id=request.id,
+                result={
+                    "resources": get_resources_list()
+                }
+            )
+
         elif method == "tools/call":
             tool_name = params.get("name", "")
             tool_args = params.get("arguments", {})
@@ -212,6 +220,34 @@ def handle_mcp_request(request: MCPRequest) -> MCPResponse:
                 "message": str(e)
             }
         )
+
+
+def get_resources_list() -> list[dict]:
+    """Retorna lista de resources disponíveis no MCP.
+
+    Resources são endpoints read-only para dados estáticos ou semi-estáticos
+    que podem ser lidos por clientes MCP usando resources/read.
+    """
+    return [
+        {
+            "uri": "rlm://variables",
+            "name": "Variables",
+            "description": "Lista de variáveis persistidas no REPL",
+            "mimeType": "application/json"
+        },
+        {
+            "uri": "rlm://memory",
+            "name": "Memory Usage",
+            "description": "Uso de memória atual do REPL",
+            "mimeType": "application/json"
+        },
+        {
+            "uri": "rlm://collections",
+            "name": "Collections",
+            "description": "Lista de coleções de variáveis",
+            "mimeType": "application/json"
+        }
+    ]
 
 
 def get_tools_list() -> list[dict]:

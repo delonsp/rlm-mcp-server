@@ -65,7 +65,7 @@ src/rlm_mcp/
 
 ## Fase 5: MCP Resources (Spec Compliance)
 
-- [ ] Adicionar suporte a resources/list no handle_mcp_request
+- [x] Adicionar suporte a resources/list no handle_mcp_request
 - [ ] Criar resource "rlm://variables" que lista variáveis persistidas
 - [ ] Criar resource "rlm://memory" que mostra uso de memória
 - [ ] Criar resource "rlm://collections" que lista coleções
