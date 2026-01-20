@@ -2913,3 +2913,44 @@ Conteudo", linha_inicio is 2 (position right after [START], still on that line)
   - Total tests increased from 1379 to 1423 (44 new tests)
 
 ---
+
+## Iteration 67 - Add rate limit of 100 requests/minute per SSE session
+
+- What was implemented:
+  - Imported SlidingWindowRateLimiter in http_server.py
+  - Added SSE_RATE_LIMIT_REQUESTS (default 100) and SSE_RATE_LIMIT_WINDOW (default 60s) config constants
+  - Created sse_rate_limiter instance for rate limiting SSE sessions
+  - Updated /message endpoint to check and record rate limits for active SSE sessions
+  - Returns 429 Too Many Requests with JSON error body when limit exceeded
+  - Includes Retry-After header in 429 responses
+  - Rate limiter state is cleaned up when SSE session ends (in finally block)
+  - Added 13 comprehensive tests in TestSseRateLimiting class:
+    - test_rate_limiter_import
+    - test_rate_limiter_config
+    - test_message_without_session_not_rate_limited
+    - test_message_with_invalid_session_not_rate_limited
+    - test_rate_limit_exceeded_returns_429
+    - test_rate_limit_error_response_format
+    - test_rate_limit_includes_retry_after_header
+    - test_different_sessions_independent_rate_limits
+    - test_rate_limit_message_includes_limit_info
+    - test_rate_limit_allows_requests_after_window
+    - test_rate_limiter_cleaned_on_session_end
+    - test_env_var_config_sse_rate_limit
+    - test_requests_within_limit_succeed
+
+- Files changed:
+  - src/rlm_mcp/http_server.py (added rate limiter import, config, and /message rate limiting)
+  - tests/test_http_server.py (added TestSseRateLimiting class with 13 tests)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - Rate limiting only applies when session_id is in sse_sessions dict (active sessions)
+  - Requests without valid session_id are not rate limited
+  - Use monkeypatch to replace sse_rate_limiter with custom limiter for testing
+  - Simulate active sessions by adding to http_server.sse_sessions dict
+  - Total tests increased from 1423 to 1436 (13 new tests)
+  - Next tasks in Fase 6: rate limit uploads, create combined rate limiting tests
+
+---

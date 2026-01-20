@@ -75,7 +75,7 @@ src/rlm_mcp/
 ## Fase 6: Rate Limiting Básico
 
 - [x] Criar classe RateLimiter com sliding window algorithm
-- [ ] Adicionar rate limit de 100 requests/minuto por sessão SSE
+- [x] Adicionar rate limit de 100 requests/minuto por sessão SSE
 - [ ] Adicionar rate limit de 10 uploads/minuto para rlm_upload_url
 - [ ] Retornar erro 429 Too Many Requests quando limite excedido
 - [ ] Criar testes para rate limiting

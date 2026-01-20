@@ -31,6 +31,7 @@ from .s3_client import get_s3_client
 from .pdf_parser import extract_pdf
 from .persistence import get_persistence
 from .indexer import get_index, set_index, TextIndex, auto_index_if_large
+from .rate_limiter import SlidingWindowRateLimiter
 
 # Configuração
 logging.basicConfig(
@@ -45,6 +46,16 @@ MAX_MEMORY_MB = int(os.getenv("RLM_MAX_MEMORY_MB", "1024"))
 CLEANUP_THRESHOLD = float(os.getenv("RLM_CLEANUP_THRESHOLD", "80.0"))  # Quando iniciar limpeza (%)
 CLEANUP_TARGET = float(os.getenv("RLM_CLEANUP_TARGET", "60.0"))  # Até quanto limpar (%)
 SHOW_PERSISTENCE_ERRORS = os.getenv("RLM_SHOW_PERSISTENCE_ERRORS", "true").lower() in ("true", "1", "yes")
+
+# Rate limiting configuration
+SSE_RATE_LIMIT_REQUESTS = int(os.getenv("RLM_SSE_RATE_LIMIT", "100"))
+SSE_RATE_LIMIT_WINDOW = int(os.getenv("RLM_SSE_RATE_WINDOW", "60"))  # seconds
+
+# Rate limiter for SSE sessions (100 requests per minute by default)
+sse_rate_limiter = SlidingWindowRateLimiter(
+    max_requests=SSE_RATE_LIMIT_REQUESTS,
+    window_seconds=SSE_RATE_LIMIT_WINDOW
+)
 
 # Instância global do REPL com auto-cleanup
 repl = SafeREPL(
@@ -1724,6 +1735,7 @@ async def sse_endpoint(request: Request, _: bool = Depends(verify_api_key)):
                     break
         finally:
             sse_sessions.pop(session_id, None)
+            sse_rate_limiter.reset(session_id)  # Clean up rate limiter state
             logger.info(f"Sessão SSE encerrada: {session_id}")
 
     return StreamingResponse(
@@ -1747,7 +1759,24 @@ async def message_endpoint(
     Endpoint para enviar mensagens MCP.
     Se session_id for fornecido, resposta vai via SSE.
     Caso contrário, resposta direta no POST.
+
+    Rate limiting: 100 requests/minute per SSE session.
     """
+    # Rate limiting for SSE sessions
+    if session_id and session_id in sse_sessions:
+        rate_result = sse_rate_limiter.check_and_record(session_id)
+        if not rate_result.allowed:
+            logger.warning(f"Rate limit exceeded for session {session_id}: {rate_result.current_count}/{rate_result.limit}")
+            return JSONResponse(
+                {
+                    "error": "Too Many Requests",
+                    "message": f"Rate limit exceeded: {rate_result.limit} requests per {rate_result.window_seconds} seconds",
+                    "retry_after": rate_result.retry_after
+                },
+                status_code=429,
+                headers={"Retry-After": str(int(rate_result.retry_after or 1))}
+            )
+
     try:
         body = await request.json()
         mcp_request = MCPRequest(**body)
