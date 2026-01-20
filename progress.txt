@@ -2264,3 +2264,55 @@ Este arquivo registra o progresso do Ralph em cada iteração.
   - Order of PRAGMAs: journal_mode → synchronous → cache_size
 
 ---
+
+## Iteration 44 - Add SQLite performance comparison tests
+
+- What was implemented:
+  - Added TestSQLitePerformanceOptimizations class to tests/test_persistence.py with 7 tests:
+    - test_wal_mode_enabled_and_persists: Verifies WAL mode persists across connections
+    - test_synchronous_normal_is_configured: Verifies PRAGMA synchronous=NORMAL in source code
+    - test_cache_size_is_configured: Verifies PRAGMA cache_size=-64000 in source code
+    - test_performance_comparison_batch_inserts: Compares insert performance (optimized vs non-optimized)
+    - test_performance_comparison_batch_reads: Compares read performance (1000 reads)
+    - test_persistence_manager_wal_mode_persists: Verifies PersistenceManager's WAL persists
+    - test_all_optimizations_in_init_db: Verifies all 3 PRAGMAs are in _init_db method
+
+- Files changed:
+  - tests/test_persistence.py (added TestSQLitePerformanceOptimizations class)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - SQLite PRAGMA settings have different persistence behaviors:
+    - journal_mode=WAL PERSISTS in the database file (survives connections)
+    - synchronous is PER-CONNECTION (resets to default on new connection)
+    - cache_size is PER-CONNECTION (resets to default on new connection)
+  - For per-connection settings, verify they're in the source code using inspect.getsource()
+  - Performance tests should allow some margin (1.5x-2x) because test environments vary
+  - Tests directory is in .gitignore, so test changes don't appear in git status
+
+---
+
+## Iteration 45 - Show persistence errors in rlm_load_s3 output
+
+- What was implemented:
+  - Modified rlm_load_s3 in http_server.py to show persistence errors in the output
+  - Added `persist_error` variable to capture persistence exceptions
+  - Added `persist_error` to the `extras` string so it shows in the response text
+  - Both PDF and regular file handling paths now display persistence errors with ⚠️ icon
+  - Error format: "⚠️ Erro de persistência: {error_message}"
+  - Still logs warning for monitoring but now user also sees the error
+
+- Files changed:
+  - src/rlm_mcp/http_server.py (lines ~912-935 for PDF path, lines ~954-975 for regular path)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - rlm_load_s3 has TWO separate code paths: one for PDFs (data_type in pdf/pdf_ocr) and one for regular files
+  - Both paths have identical persistence/indexing logic that needs to be modified together
+  - The `extras` variable accumulates persistence status messages and is appended to the response
+  - Pattern: capture error, log it, AND add to output string for user visibility
+  - 1212 tests passed without modification - the change is backward compatible
+
+---

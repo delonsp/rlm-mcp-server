@@ -911,6 +911,7 @@ Uso: {mem['usage_percent']:.1f}%"""
                         # Auto-persistência e indexação
                         persist_msg = ""
                         index_msg = ""
+                        persist_error = ""
                         try:
                             persistence = get_persistence()
                             value = repl.variables.get(var_name)
@@ -926,8 +927,10 @@ Uso: {mem['usage_percent']:.1f}%"""
                                         index_msg = f"📑 Indexado ({idx.get_stats()['indexed_terms']} termos)"
                         except Exception as e:
                             logger.warning(f"Erro ao persistir/indexar {var_name}: {e}")
+                            persist_error = f"\n⚠️ Erro de persistência: {e}"
 
                         extras = f"\n{persist_msg} {index_msg}".strip() if (persist_msg or index_msg) else ""
+                        extras += persist_error
 
                         text = f"""✅ PDF extraído do Minio:
 Bucket: {bucket}
@@ -951,6 +954,7 @@ Variável: {var_name}{extras}
                 # Auto-persistência e indexação
                 persist_msg = ""
                 index_msg = ""
+                persist_error = ""
                 try:
                     persistence = get_persistence()
                     value = repl.variables.get(var_name)
@@ -966,8 +970,10 @@ Variável: {var_name}{extras}
                                 index_msg = f"📑 Indexado ({idx.get_stats()['indexed_terms']} termos)"
                 except Exception as e:
                     logger.warning(f"Erro ao persistir/indexar {var_name}: {e}")
+                    persist_error = f"\n⚠️ Erro de persistência: {e}"
 
                 extras = f"\n{persist_msg} {index_msg}".strip() if (persist_msg or index_msg) else ""
+                extras += persist_error
 
                 text = f"""✅ Carregado do Minio:
 Bucket: {bucket}
