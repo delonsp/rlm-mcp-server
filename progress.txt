@@ -2197,3 +2197,27 @@ Este arquivo registra o progresso do Ralph em cada iteração.
   - For S3/bucket tools, missing required params return error before S3 config is even checked
 
 ---
+
+## Iteration 41 - Add SQLite WAL mode
+
+- What was implemented:
+  - Added PRAGMA journal_mode=WAL in persistence.py _init_db() method
+  - WAL mode enables better concurrent access and performance for SQLite
+  - Created TestWALMode class in tests/test_persistence.py with 3 tests:
+    - test_wal_mode_is_enabled: Verifies WAL mode is active after DB init
+    - test_wal_mode_persists_after_operations: Verifies WAL stays active after operations
+    - test_wal_files_created: Checks that -wal and -shm files are created
+
+- Files changed:
+  - src/rlm_mcp/persistence.py (added PRAGMA journal_mode=WAL)
+  - tests/test_persistence.py (added TestWALMode class with 3 tests)
+  - PRD.md (marked 2 tasks complete: WAL mode + WAL test)
+
+- Learnings for future iterations:
+  - PRAGMA journal_mode=WAL should be executed immediately after connection is opened
+  - WAL mode creates auxiliary files: .db-wal and .db-shm alongside the main database
+  - WAL mode is persistent - once set, it remains for subsequent connections
+  - Tests can verify journal_mode by running "PRAGMA journal_mode" and checking result
+  - Tests directory is in .gitignore, so test changes are local only
+
+---

@@ -50,6 +50,10 @@ class PersistenceManager:
             cursor.execute("PRAGMA journal_mode=WAL")
             logger.debug("SQLite WAL mode ativado")
 
+            # NORMAL sync é seguro com WAL e mais rápido que FULL
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            logger.debug("SQLite synchronous=NORMAL ativado")
+
             # Tabela de variáveis
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS variables (
