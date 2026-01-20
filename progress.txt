@@ -2392,3 +2392,30 @@ Este arquivo registra o progresso do Ralph em cada iteração.
   - Fase 2 (Erros Visíveis ao Usuário) is now complete with all 4 tasks done
 
 ---
+
+## Iteration 49 - Add offset parameter for pagination in rlm_search_index
+
+- What was implemented:
+  - Added 'offset' parameter to rlm_search_index inputSchema (default: 0, type: integer)
+  - Updated handler to read offset from arguments with default 0
+  - Modified require_all=True (AND mode) to use offset: `sorted(results.items())[offset:offset + limit]`
+  - Modified require_all=False (OR mode) to use offset: `matches[offset:offset + limit]`
+  - Updated output to show "mostrando X-Y" for both modes indicating pagination range
+
+- Files changed:
+  - src/rlm_mcp/http_server.py (inputSchema at line ~566, handler at lines ~1186-1238)
+  - tests/test_http_server.py (added 7 tests, but tests/ is in .gitignore)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - The rlm_search_index already had a `limit` parameter (max results per term)
+  - The `offset` parameter was added to enable proper pagination (skip N results)
+  - For AND mode (require_all=True): results is a dict, sorted by line number
+  - For OR mode (require_all=False): results is dict[term, list[matches]]
+  - Pagination format: `[offset:offset + limit]` to get correct slice
+  - Output shows "mostrando X-Y" to indicate which items are being shown
+  - tests/ folder is in .gitignore - tests are not committed to git
+  - 1226 tests passed - all existing tests continue to work
+
+---

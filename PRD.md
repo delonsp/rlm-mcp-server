@@ -49,7 +49,7 @@ src/rlm_mcp/
 ## Fase 3: Pagination para Grandes Resultados
 
 - [x] Adicionar parâmetros offset e limit em rlm_search_index
-- [ ] Adicionar parâmetros offset e limit em rlm_search_collection
+- [x] Adicionar parâmetros offset e limit em rlm_search_collection
 - [ ] Adicionar parâmetros offset e limit em rlm_list_vars
 - [ ] Adicionar parâmetros offset e limit em rlm_list_s3
 - [ ] Criar testes para pagination em cada endpoint modificado

@@ -676,6 +676,11 @@ Exemplo: rlm_search_collection(collection="homeopatia", terms=["medo", "ansiedad
                         "type": "integer",
                         "default": 10,
                         "description": "Máximo de resultados por documento/termo"
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "default": 0,
+                        "description": "Número de resultados a pular (para paginação)"
                     }
                 },
                 "required": ["collection", "terms"]
@@ -1400,6 +1405,7 @@ Próximo passo: rlm_load_s3(key="{output_key}", name="texto", data_type="text")"
                 coll_name = arguments["collection"]
                 terms = arguments["terms"]
                 limit = arguments.get("limit", 10)
+                offset = arguments.get("offset", 0)
 
                 # Obter variáveis da coleção
                 var_names = persistence.get_collection_vars(coll_name)
@@ -1428,8 +1434,12 @@ Próximo passo: rlm_load_s3(key="{output_key}", name="texto", data_type="text")"
                     for var_name, results in all_results.items():
                         lines.append(f"📄 {var_name}:")
                         for term, matches in results.items():
-                            lines.append(f"  📌 '{term}' ({len(matches)} ocorrências)")
-                            for m in matches[:limit]:
+                            total_term = len(matches)
+                            paginated = matches[offset:offset + limit]
+                            start_idx = offset + 1 if paginated else 0
+                            end_idx = offset + len(paginated)
+                            lines.append(f"  📌 '{term}' ({total_term} ocorrências, mostrando {start_idx}-{end_idx})")
+                            for m in paginated:
                                 lines.append(f"      L{m['linha']}: {m['contexto'][:60]}...")
                         lines.append("")
 
