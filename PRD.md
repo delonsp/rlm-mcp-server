@@ -60,7 +60,7 @@ src/rlm_mcp/
 - [x] Criar função contar(texto, termo) no namespace inicial do REPL
 - [x] Criar função extrair_secao(texto, inicio, fim) no namespace inicial do REPL
 - [x] Criar função resumir_tamanho(bytes) que retorna string humanizada
-- [ ] Documentar helpers na description do rlm_execute
+- [x] Documentar helpers na description do rlm_execute
 - [ ] Criar testes para cada helper function
 
 ## Fase 5: MCP Resources (Spec Compliance)

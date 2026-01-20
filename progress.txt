@@ -2622,3 +2622,60 @@ Conteudo", linha_inicio is 2 (position right after [START], still on that line)
   - Always test both found and not-found cases for extraction functions
 
 ---
+
+## Iteration 57 - Create resumir_tamanho(bytes) helper function in REPL namespace
+
+- What was implemented:
+  - Created `_resumir_tamanho(bytes_val)` helper function in `repl.py`
+  - Function converts bytes to human-readable string (B, KB, MB, GB, TB)
+  - Returns formatted string with 1 decimal place (e.g., "1.5 MB")
+  - Handles edge cases: negative values return "<valor negativo: X>", invalid types return "<valor inválido: type>"
+  - Added `namespace['resumir_tamanho'] = _resumir_tamanho` in execute() method
+  - `resumir_tamanho` was already in HELPER_FUNCTION_NAMES (added in advance)
+  - Added 11 tests in `TestHelperFunctionResumirTamanho` class covering:
+    - Function availability in namespace
+    - Conversions for B, KB, MB, GB, TB ranges
+    - Float input handling
+    - Negative value handling
+    - Invalid type handling
+    - Zero handling
+    - Not saved as user variable
+
+- Files changed:
+  - src/rlm_mcp/repl.py (added _resumir_tamanho function at line ~232, namespace injection at line ~523)
+  - tests/test_repl.py (added TestHelperFunctionResumirTamanho class with 11 tests) - Note: tests/ is gitignored
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - Follow same pattern as _buscar, _contar, _extrair_secao for helper functions
+  - Function signature: `_resumir_tamanho(bytes_val: int) -> str`
+  - Algorithm: divide by 1024 iteratively until < 1024, using unit list ['B', 'KB', 'MB', 'GB', 'TB']
+  - Total tests increased from 1281 to 1292 (11 new tests)
+  - This function mirrors the existing `_human_size` method in SafeREPL class but is user-facing
+
+---
+
+## Iteration 58 - Document helper functions in rlm_execute description
+
+- What was implemented:
+  - Updated the `rlm_execute` tool description in `http_server.py` to document the 4 pre-defined helper functions
+  - Added new section "=== FUNÇÕES AUXILIARES PRÉ-DEFINIDAS ===" with documentation for:
+    - buscar(texto, termo) - search term in text, returns positions with context
+    - contar(texto, termo) - count occurrences, returns total and per-line counts
+    - extrair_secao(texto, inicio, fim) - extract sections between markers
+    - resumir_tamanho(bytes) - convert bytes to human-readable format
+  - Each function documented with: signature, return type, brief description, and example
+
+- Files changed:
+  - src/rlm_mcp/http_server.py (updated rlm_execute tool description, added ~20 lines of documentation)
+  - PRD.md (marked task complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - Tool descriptions are in `get_tools_list()` function in http_server.py starting at line 217
+  - Descriptions use triple-quoted strings with multi-line formatting
+  - All 1292 tests continue to pass after documentation-only changes
+  - This was a documentation-only task, no functional changes needed
+
+---

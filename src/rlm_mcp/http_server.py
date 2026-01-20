@@ -258,6 +258,30 @@ NÃO use apenas regex simples. Use estas estratégias:
 
 4. FUNÇÕES REUTILIZÁVEIS - definir helpers que persistem entre chamadas
 
+=== FUNÇÕES AUXILIARES PRÉ-DEFINIDAS ===
+
+O REPL já inclui estas funções prontas para uso:
+
+1. buscar(texto, termo) -> list[dict]
+   Busca um termo no texto (case-insensitive).
+   Retorna: [{'posicao': int, 'linha': int, 'contexto': str}]
+   Exemplo: buscar(meu_texto, "erro")
+
+2. contar(texto, termo) -> dict
+   Conta ocorrências de um termo (case-insensitive).
+   Retorna: {'total': int, 'por_linha': {linha: count}}
+   Exemplo: contar(meu_texto, "warning")
+
+3. extrair_secao(texto, inicio, fim) -> list[dict]
+   Extrai seções entre marcadores (case-insensitive).
+   Retorna: [{'conteudo': str, 'posicao_inicio': int, 'posicao_fim': int, 'linha_inicio': int, 'linha_fim': int}]
+   Exemplo: extrair_secao(doc, "## Intro", "## Conclusão")
+
+4. resumir_tamanho(bytes) -> str
+   Converte bytes para formato humanizado.
+   Retorna: string como "1.5 MB", "256 KB"
+   Exemplo: resumir_tamanho(1048576) -> "1.0 MB"
+
 LEMBRE-SE: Você tem acesso a MILHÕES de caracteres. Use Python para
 fazer análises que RAG não consegue - cruzamento, agregação, lógica condicional.""",
             "inputSchema": {
