@@ -1767,8 +1767,54 @@ Próximo passo: rlm_load_s3(key="{output_key}", name="texto", data_type="text")"
 
                 added = persistence.add_to_collection(coll_name, var_names)
 
+                # === OPÇÃO C: Criar índice combinado da coleção ===
+                # Obter TODAS as variáveis da coleção (não só as novas)
+                all_vars = persistence.get_collection_vars(coll_name)
+
+                # Concatenar todas as variáveis com separadores claros
+                combined_parts = []
+                var_mapping = {}  # Mapeia linha -> (var_name, linha_original)
+                current_line = 1
+
+                for var_name in all_vars:
+                    if var_name in repl.variables:
+                        value = repl.variables[var_name]
+                        if isinstance(value, str):
+                            # Adicionar header identificador
+                            header = f"\n{'='*60}\n=== VARIÁVEL: {var_name} ===\n{'='*60}\n"
+                            combined_parts.append(header)
+
+                            # Registrar mapeamento de linhas
+                            header_lines = header.count('\n')
+                            current_line += header_lines
+
+                            # Adicionar conteúdo e mapear linhas
+                            content_lines = value.split('\n')
+                            for i, _ in enumerate(content_lines):
+                                var_mapping[current_line + i] = (var_name, i + 1)
+
+                            combined_parts.append(value)
+                            current_line += len(content_lines)
+
+                if combined_parts:
+                    combined_text = "\n".join(combined_parts)
+                    combined_var_name = f"_coll_{coll_name}_combined"
+
+                    # Salvar variável combinada no REPL
+                    repl.variables[combined_var_name] = combined_text
+
+                    # Forçar criação de índice (min_chars=0)
+                    from .indexer import create_index, set_index
+                    combined_index = create_index(combined_text, combined_var_name)
+                    set_index(combined_var_name, combined_index)
+
+                    # Salvar mapeamento como metadado
+                    repl.variables[f"_coll_{coll_name}_mapping"] = var_mapping
+
                 text = f"✅ {added} variável(is) adicionada(s) à coleção '{coll_name}'"
                 text += f"\nVariáveis: {', '.join(var_names)}"
+                text += f"\n\n🔍 Índice combinado atualizado: {len(combined_text):,} chars indexados"
+                text += f"\n   Variáveis no índice: {len(all_vars)}"
 
                 return {"content": [{"type": "text", "text": text}]}
 
@@ -1857,19 +1903,55 @@ Próximo passo: rlm_load_s3(key="{output_key}", name="texto", data_type="text")"
                         "isError": True
                     }
 
-                # Buscar em cada variável que tem índice
+                # === OPÇÃO C: Tentar usar índice combinado primeiro ===
+                combined_var_name = f"_coll_{coll_name}_combined"
+                combined_index = get_index(combined_var_name)
+                mapping_var = f"_coll_{coll_name}_mapping"
+
                 all_results = {}
-                for var_name in var_names:
-                    index = get_index(var_name)
-                    if index:
-                        results = index.search_multiple(terms, require_all=False)
-                        if results:
-                            all_results[var_name] = results
+
+                if combined_index and mapping_var in repl.variables:
+                    # Usar índice combinado (FUNCIONA SEMPRE!)
+                    var_mapping = repl.variables[mapping_var]
+                    results = combined_index.search_multiple(terms, require_all=False)
+
+                    if results:
+                        # Agrupar resultados por variável original
+                        for term, matches in results.items():
+                            for m in matches:
+                                linha_combined = m['linha']
+                                # Encontrar variável original usando mapeamento
+                                if linha_combined in var_mapping:
+                                    orig_var, orig_linha = var_mapping[linha_combined]
+                                    if orig_var not in all_results:
+                                        all_results[orig_var] = {}
+                                    if term not in all_results[orig_var]:
+                                        all_results[orig_var][term] = []
+                                    all_results[orig_var][term].append({
+                                        'linha': orig_linha,
+                                        'contexto': m['contexto']
+                                    })
+                else:
+                    # Fallback: buscar em índices individuais (vars > 100k)
+                    for var_name in var_names:
+                        index = get_index(var_name)
+                        if index:
+                            results = index.search_multiple(terms, require_all=False)
+                            if results:
+                                all_results[var_name] = results
 
                 if not all_results:
-                    text = f"Nenhum resultado para {terms} na coleção '{coll_name}'"
+                    # Última tentativa: busca direta via Python
+                    text = f"Nenhum resultado indexado para {terms} na coleção '{coll_name}'\n"
+                    text += f"\n💡 Dica: Use rlm_execute com Python para busca direta:\n"
+                    text += f"   for var in {var_names[:3]}...:\n"
+                    text += f"       print(buscar(var, '{terms[0]}'))"
                 else:
                     lines = [f"🔍 Busca em '{coll_name}': {', '.join(terms)}", ""]
+                    used_combined = combined_index is not None
+                    if used_combined:
+                        lines.append(f"✅ Usando índice combinado ({len(var_names)} vars)")
+                        lines.append("")
 
                     for var_name, results in all_results.items():
                         lines.append(f"📄 {var_name}:")
