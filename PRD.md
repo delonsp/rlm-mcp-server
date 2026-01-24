@@ -59,7 +59,7 @@ def require_s3_configured():
 ---
 
 ### Tarefa 3: Criar tools/base.py
-- [ ] Criar arquivo com funções `text_response()` e `error_response()`
+- [x] Criar arquivo com funções `text_response()` e `error_response()`
 
 ```python
 def text_response(text: str) -> dict:

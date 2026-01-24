@@ -3289,3 +3289,23 @@ All tasks in PRD.md are now marked [x]. The 0.2.0 release includes:
   - Empty __init__.py files are sufficient to make directories Python packages
   - All 1514 tests still pass after creating new packages (no import conflicts)
 
+
+---
+
+## Iteration [Refactor 2] - Create services/s3_guard.py
+
+- What was implemented:
+  - Created `src/rlm_mcp/services/s3_guard.py`
+  - Function `require_s3_configured()` returns tuple (s3_client, error)
+  - If S3 configured: returns (client, None)
+  - If S3 not configured: returns (None, error_dict with isError=True)
+
+- Files changed:
+  - src/rlm_mcp/services/s3_guard.py (new file)
+  - PRD.md (marked Task 2 complete)
+  - progress.txt
+
+- Learnings for future iterations:
+  - Relative imports work: `from ..s3_client import get_s3_client`
+  - Validation: `python -c "from rlm_mcp.services.s3_guard import require_s3_configured; print('OK')"`
+  - All 1514 tests pass after adding this module
