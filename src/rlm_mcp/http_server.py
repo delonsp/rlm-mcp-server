@@ -1060,6 +1060,25 @@ Mostra todas as variáveis na coleção com seus tamanhos.""",
             }
         },
         {
+            "name": "rlm_collection_rebuild",
+            "description": """Reconstrói o índice combinado de uma coleção.
+
+Use após atualizar o servidor ou quando a busca na coleção não funcionar.
+Concatena todas as variáveis e cria índice semântico unificado.
+
+Exemplo: rlm_collection_rebuild(name="injetaveis")""",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Nome da coleção"
+                    }
+                },
+                "required": ["name"]
+            }
+        },
+        {
             "name": "rlm_search_collection",
             "description": """Busca termos em TODAS as variáveis de uma coleção.
 
@@ -1881,6 +1900,89 @@ Próximo passo: rlm_load_s3(key="{output_key}", name="texto", data_type="text")"
                 return {
                     "content": [
                         {"type": "text", "text": f"Erro ao obter info da coleção: {e}"}
+                    ],
+                    "isError": True
+                }
+
+        elif name == "rlm_collection_rebuild":
+            try:
+                persistence = get_persistence()
+                coll_name = arguments["name"]
+
+                # Obter variáveis da coleção
+                all_vars = persistence.get_collection_vars(coll_name)
+                if not all_vars:
+                    return {
+                        "content": [
+                            {"type": "text", "text": f"Coleção '{coll_name}' vazia ou não existe."}
+                        ],
+                        "isError": True
+                    }
+
+                # Concatenar todas as variáveis com separadores claros
+                combined_parts = []
+                var_mapping = {}  # Mapeia linha -> (var_name, linha_original)
+                current_line = 1
+                vars_included = 0
+
+                for var_name in all_vars:
+                    if var_name in repl.variables:
+                        value = repl.variables[var_name]
+                        if isinstance(value, str):
+                            # Adicionar header identificador
+                            header = f"\n{'='*60}\n=== VARIÁVEL: {var_name} ===\n{'='*60}\n"
+                            combined_parts.append(header)
+
+                            # Registrar mapeamento de linhas
+                            header_lines = header.count('\n')
+                            current_line += header_lines
+
+                            # Adicionar conteúdo e mapear linhas
+                            content_lines = value.split('\n')
+                            for i, _ in enumerate(content_lines):
+                                var_mapping[current_line + i] = (var_name, i + 1)
+
+                            combined_parts.append(value)
+                            current_line += len(content_lines)
+                            vars_included += 1
+
+                if not combined_parts:
+                    return {
+                        "content": [
+                            {"type": "text", "text": f"Nenhuma variável de texto encontrada na coleção '{coll_name}'."}
+                        ],
+                        "isError": True
+                    }
+
+                combined_text = "\n".join(combined_parts)
+                combined_var_name = f"_coll_{coll_name}_combined"
+
+                # Salvar variável combinada no REPL
+                repl.variables[combined_var_name] = combined_text
+
+                # Forçar criação de índice (min_chars=0)
+                from .indexer import create_index, set_index
+                combined_index = create_index(combined_text, combined_var_name)
+                set_index(combined_var_name, combined_index)
+
+                # Salvar mapeamento como metadado
+                repl.variables[f"_coll_{coll_name}_mapping"] = var_mapping
+
+                stats = combined_index.get_stats()
+                text = f"✅ Índice combinado da coleção '{coll_name}' reconstruído!"
+                text += f"\n\n📊 Estatísticas:"
+                text += f"\n   Variáveis incluídas: {vars_included}/{len(all_vars)}"
+                text += f"\n   Tamanho total: {len(combined_text):,} caracteres"
+                text += f"\n   Termos indexados: {stats['indexed_terms']}"
+                text += f"\n   Total de ocorrências: {stats['total_occurrences']}"
+                text += f"\n\n🔍 Agora use: rlm_search_collection(collection=\"{coll_name}\", terms=[...])"
+
+                return {"content": [{"type": "text", "text": text}]}
+
+            except Exception as e:
+                return {
+                    "content": [
+                        {"type": "text", "text": f"Erro ao reconstruir índice: {e}"}
                     ],
                     "isError": True
                 }
