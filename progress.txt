@@ -3269,3 +3269,23 @@ All tasks in PRD.md are now marked [x]. The 0.2.0 release includes:
 - Fase 8: Documentação e Cleanup
 
 ---
+
+---
+
+## Iteration - Tarefa 1: Criar estrutura de diretórios
+
+- What was implemented:
+  - Created src/rlm_mcp/services/__init__.py (minimal comment header)
+  - Created src/rlm_mcp/tools/__init__.py (minimal comment header)
+  - Foundation directories for future extraction of helpers from http_server.py
+
+- Files changed:
+  - src/rlm_mcp/services/__init__.py (new file)
+  - src/rlm_mcp/tools/__init__.py (new file)
+  - PRD.md (marked task complete)
+
+- Learnings for future iterations:
+  - mkdir -p creates nested directories without error if they already exist
+  - Empty __init__.py files are sufficient to make directories Python packages
+  - All 1514 tests still pass after creating new packages (no import conflicts)
+

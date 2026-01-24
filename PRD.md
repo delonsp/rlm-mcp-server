@@ -36,9 +36,9 @@ src/rlm_mcp/
 ---
 
 ### Tarefa 2: Criar services/s3_guard.py
-- [ ] Criar arquivo com função `require_s3_configured()`
-- [ ] Função retorna `(s3_client, None)` se configurado
-- [ ] Função retorna `(None, error_dict)` se não configurado
+- [x] Criar arquivo com função `require_s3_configured()`
+- [x] Função retorna `(s3_client, None)` se configurado
+- [x] Função retorna `(None, error_dict)` se não configurado
 
 ```python
 from ..s3_client import get_s3_client
