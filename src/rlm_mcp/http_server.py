@@ -1432,16 +1432,41 @@ Próximo passo: rlm_load_s3(key="{output_key}", name="texto", data_type="text")"
                             if results:
                                 all_results[var_name] = results
 
+                used_fallback = False
                 if not all_results:
-                    # Última tentativa: busca direta via Python
-                    text = f"Nenhum resultado indexado para {terms} na coleção '{coll_name}'\n"
-                    text += f"\n💡 Dica: Use rlm_execute com Python para busca direta:\n"
-                    text += f"   for var in {var_names[:3]}...:\n"
-                    text += f"       print(buscar(var, '{terms[0]}'))"
+                    # Fallback: busca full-text no texto combinado
+                    if combined_var_name in repl.variables and mapping_var in repl.variables:
+                        used_fallback = True
+                        combined_text = repl.variables[combined_var_name]
+                        var_mapping = repl.variables[mapping_var]
+
+                        for term in terms:
+                            term_lower = term.lower()
+                            for line_num, line in enumerate(combined_text.split('\n'), start=1):
+                                if term_lower in line.lower():
+                                    # Mapear de volta para variável original
+                                    if line_num in var_mapping:
+                                        orig_var, orig_linha = var_mapping[line_num]
+                                        if orig_var not in all_results:
+                                            all_results[orig_var] = {}
+                                        if term not in all_results[orig_var]:
+                                            all_results[orig_var][term] = []
+                                        all_results[orig_var][term].append({
+                                            'linha': orig_linha,
+                                            'contexto': line.strip()
+                                        })
+
+                if not all_results:
+                    # Nenhum resultado nem no índice nem no fallback
+                    text = f"Nenhum resultado para {terms} na coleção '{coll_name}'\n"
+                    text += f"\n💡 Dica: Verifique se os termos estão corretos ou use rlm_execute com Python para busca avançada"
                 else:
                     lines = [f"🔍 Busca em '{coll_name}': {', '.join(terms)}", ""]
                     used_combined = combined_index is not None
-                    if used_combined:
+                    if used_fallback:
+                        lines.append(f"🔄 Busca full-text (termos não indexados)")
+                        lines.append("")
+                    elif used_combined:
                         lines.append(f"✅ Usando índice combinado ({len(var_names)} vars)")
                         lines.append("")
 
