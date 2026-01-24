@@ -206,8 +206,8 @@ persist_msg, index_msg, persist_error = persist_and_index(var_name, value, repl)
 ---
 
 ### Tarefa 9: Teste final completo
-- [ ] Rodar suite completa de testes
-- [ ] Verificar que todos os 1514+ testes passam
+- [x] Rodar suite completa de testes
+- [x] Verificar que todos os 1514+ testes passam
 
 **Validação**: `pytest tests/ -v --tb=short`
 

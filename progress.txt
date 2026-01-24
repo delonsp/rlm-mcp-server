@@ -3422,3 +3422,31 @@ All tasks in PRD.md are now marked [x]. The 0.2.0 release includes:
   - Tests for S3 functionality are NOT tracked by git (tests/ in .gitignore) but still run correctly locally
   - Mock path should match the import location in the module being tested (s3_guard imports get_s3_client, so mock s3_guard.get_s3_client)
 
+
+---
+
+## Iteration 8 - Use persistence_service in http_server.py
+
+- What was implemented:
+  - Added import: `from .services.persistence_service import persist_and_index`
+  - Replaced 3 persistence/indexing blocks in call_tool() with persist_and_index():
+    - rlm_load_data: lines 613-633 reduced from ~20 lines to 3 lines
+    - PDF extraction from S3: lines 831-847 reduced from ~17 lines to 3 lines
+    - Regular file from S3: lines 875-893 reduced from ~17 lines to 3 lines
+  - Updated test patches from `rlm_mcp.http_server.get_persistence` to `rlm_mcp.services.persistence_service.get_persistence`
+
+- Files changed:
+  - src/rlm_mcp/http_server.py (import added, 3 persistence blocks replaced)
+  - tests/test_http_server.py (6 mock patch paths updated)
+  - PRD.md (marked task complete)
+
+- Metrics:
+  - http_server.py reduced by ~52 lines
+  - All 1514 tests pass
+  - 8 tests in TestPersistenceErrorsInOutput verify error handling behavior
+
+- Learnings for future iterations:
+  - persist_and_index() returns (persist_msg, index_msg, error_msg) tuple for consistent output formatting
+  - The function is responsible for: getting persistence, saving variable, checking size, auto-indexing if large text
+  - Mock patches must target the module where the function is called, not where it's defined
+  - Pattern: `value = repl.variables.get(var_name); persist_msg, index_msg, persist_error = persist_and_index(var_name, value, repl)`
