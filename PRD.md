@@ -174,8 +174,8 @@ if error:
 ---
 
 ### Tarefa 8: Atualizar http_server.py - usar persistence_service
-- [ ] Adicionar import: `from .services.persistence_service import persist_and_index`
-- [ ] Substituir 3 blocos de persistência em `call_tool()`:
+- [x] Adicionar import: `from .services.persistence_service import persist_and_index`
+- [x] Substituir 3 blocos de persistência em `call_tool()`:
   - Bloco após rlm_load_data/rlm_load_file (linhas ~1146-1173)
   - Bloco após carregar PDF do S3 (linhas ~1368-1391)
   - Bloco após carregar texto do S3 (linhas ~1412-1435)

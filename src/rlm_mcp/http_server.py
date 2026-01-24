@@ -34,6 +34,7 @@ from .indexer import get_index, set_index, TextIndex, auto_index_if_large
 from .rate_limiter import SlidingWindowRateLimiter, RateLimitResult
 from .tools.schemas import TOOL_SCHEMAS
 from .services.s3_guard import require_s3_configured
+from .services.persistence_service import persist_and_index
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -610,27 +611,8 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
             result = repl.load_data(name=var_name, data=data, data_type=data_type)
 
             # Auto-persistência e indexação
-            persist_msg = ""
-            index_msg = ""
-            persist_error = ""
-            try:
-                # Persistir variável
-                persistence = get_persistence()
-                value = repl.variables.get(var_name)
-                if value is not None:
-                    persistence.save_variable(var_name, value)
-                    persist_msg = "💾 Persistido"
-
-                    # Indexar se for texto grande
-                    if isinstance(value, str) and len(value) >= 100000:
-                        idx = auto_index_if_large(value, var_name)
-                        if idx:
-                            set_index(var_name, idx)
-                            persistence.save_index(var_name, idx.to_dict())
-                            index_msg = f"📑 Indexado ({idx.get_stats()['indexed_terms']} termos)"
-            except Exception as e:
-                logger.warning(f"Erro ao persistir/indexar {var_name}: {e}")
-                persist_error = f"\n⚠️ Erro de persistência: {e}"
+            value = repl.variables.get(var_name)
+            persist_msg, index_msg, persist_error = persist_and_index(var_name, value, repl)
 
             output = format_execution_result(result)
             extras = f"\n\n{persist_msg} {index_msg}".strip() if (persist_msg or index_msg) else ""
@@ -828,25 +810,8 @@ Uso: {mem['usage_percent']:.1f}%"""
                         result = repl.load_data(name=var_name, data=data, data_type="text")
 
                         # Auto-persistência e indexação
-                        persist_msg = ""
-                        index_msg = ""
-                        persist_error = ""
-                        try:
-                            persistence = get_persistence()
-                            value = repl.variables.get(var_name)
-                            if value is not None:
-                                persistence.save_variable(var_name, value)
-                                persist_msg = "💾 Persistido"
-
-                                if isinstance(value, str) and len(value) >= 100000:
-                                    idx = auto_index_if_large(value, var_name)
-                                    if idx:
-                                        set_index(var_name, idx)
-                                        persistence.save_index(var_name, idx.to_dict())
-                                        index_msg = f"📑 Indexado ({idx.get_stats()['indexed_terms']} termos)"
-                        except Exception as e:
-                            logger.warning(f"Erro ao persistir/indexar {var_name}: {e}")
-                            persist_error = f"\n⚠️ Erro de persistência: {e}"
+                        value = repl.variables.get(var_name)
+                        persist_msg, index_msg, persist_error = persist_and_index(var_name, value, repl)
 
                         extras = f"\n{persist_msg} {index_msg}".strip() if (persist_msg or index_msg) else ""
                         if SHOW_PERSISTENCE_ERRORS:
@@ -872,25 +837,8 @@ Variável: {var_name}{extras}
                 result = repl.load_data(name=var_name, data=data, data_type=data_type)
 
                 # Auto-persistência e indexação
-                persist_msg = ""
-                index_msg = ""
-                persist_error = ""
-                try:
-                    persistence = get_persistence()
-                    value = repl.variables.get(var_name)
-                    if value is not None:
-                        persistence.save_variable(var_name, value)
-                        persist_msg = "💾 Persistido"
-
-                        if isinstance(value, str) and len(value) >= 100000:
-                            idx = auto_index_if_large(value, var_name)
-                            if idx:
-                                set_index(var_name, idx)
-                                persistence.save_index(var_name, idx.to_dict())
-                                index_msg = f"📑 Indexado ({idx.get_stats()['indexed_terms']} termos)"
-                except Exception as e:
-                    logger.warning(f"Erro ao persistir/indexar {var_name}: {e}")
-                    persist_error = f"\n⚠️ Erro de persistência: {e}"
+                value = repl.variables.get(var_name)
+                persist_msg, index_msg, persist_error = persist_and_index(var_name, value, repl)
 
                 extras = f"\n{persist_msg} {index_msg}".strip() if (persist_msg or index_msg) else ""
                 if SHOW_PERSISTENCE_ERRORS:
