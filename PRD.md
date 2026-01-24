@@ -145,8 +145,8 @@ def get_tools_list() -> list[dict]:
 ---
 
 ### Tarefa 7: Atualizar http_server.py - usar s3_guard
-- [ ] Adicionar import: `from .services.s3_guard import require_s3_configured`
-- [ ] Substituir 5 ocorrências de S3 check em `call_tool()`:
+- [x] Adicionar import: `from .services.s3_guard import require_s3_configured`
+- [x] Substituir 5 ocorrências de S3 check em `call_tool()`:
   - rlm_load_s3: substituir padrão `s3 = get_s3_client()` + `if not s3.is_configured()`
   - rlm_list_buckets: mesmo padrão
   - rlm_list_s3: mesmo padrão

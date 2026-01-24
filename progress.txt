@@ -3368,3 +3368,57 @@ All tasks in PRD.md are now marked [x]. The 0.2.0 release includes:
   - inputSchema always has type: "object" and properties dict
   - Required fields are listed in inputSchema.required array
   - Some tools have empty properties dict (no required params)
+
+---
+
+## Iteration 6 (refactoring) - Tarefa 6: Atualizar http_server.py - imports e get_tools_list
+
+- What was implemented:
+  - Added import: `from .tools.schemas import TOOL_SCHEMAS`
+  - Simplified `get_tools_list()` function from 538 lines to just 3 lines
+  - Function now returns TOOL_SCHEMAS constant directly
+
+- Files changed:
+  - src/rlm_mcp/http_server.py (import added, function simplified)
+  - PRD.md (marked task complete)
+
+- Metrics:
+  - http_server.py reduced from 2454 to 1920 lines (534 lines removed, 22% reduction)
+  - All 1514 tests pass
+  - 28 TestMcpToolsList tests verify the refactoring is correct
+
+- Learnings for future iterations:
+  - The get_tools_list() function was the largest single function in http_server.py
+  - Moving schemas to separate module makes them reusable and easier to maintain
+  - Import placement: after other local imports (after .rate_limiter import)
+
+---
+
+## Iteration 7 - Use s3_guard in http_server.py
+
+- What was implemented:
+  - Added import: `from .services.s3_guard import require_s3_configured`
+  - Replaced 5 S3 configuration checks in call_tool() with require_s3_configured():
+    - rlm_load_s3: lines 776-783 reduced to 4 lines
+    - rlm_list_buckets: lines 921-928 reduced to 4 lines
+    - rlm_list_s3: lines 946-953 reduced to 4 lines
+    - rlm_upload_url: lines 981-988 reduced to 4 lines
+    - rlm_process_pdf: lines 1027-1034 reduced to 4 lines
+  - Updated test patches from `rlm_mcp.http_server.get_s3_client` to `rlm_mcp.services.s3_guard.get_s3_client`
+
+- Files changed:
+  - src/rlm_mcp/http_server.py (import added, 5 S3 checks replaced)
+  - tests/test_http_server.py (7 mock patch paths updated)
+  - PRD.md (marked task complete)
+
+- Metrics:
+  - http_server.py reduced from 1920 to ~1880 lines (~40 lines removed)
+  - All 1514 tests pass
+  - 53 tests specifically verify S3/minio/bucket functionality
+
+- Learnings for future iterations:
+  - When extracting helpers to separate modules, tests that mock the original location need to be updated
+  - Pattern: `s3, error = require_s3_configured(); if error: return error` is cleaner than 8-line check
+  - Tests for S3 functionality are NOT tracked by git (tests/ in .gitignore) but still run correctly locally
+  - Mock path should match the import location in the module being tested (s3_guard imports get_s3_client, so mock s3_guard.get_s3_client)
+

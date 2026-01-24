@@ -33,6 +33,7 @@ from .persistence import get_persistence
 from .indexer import get_index, set_index, TextIndex, auto_index_if_large
 from .rate_limiter import SlidingWindowRateLimiter, RateLimitResult
 from .tools.schemas import TOOL_SCHEMAS
+from .services.s3_guard import require_s3_configured
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -773,14 +774,9 @@ Uso: {mem['usage_percent']:.1f}%"""
             return {"content": [{"type": "text", "text": text}]}
 
         elif name == "rlm_load_s3":
-            s3 = get_s3_client()
-            if not s3.is_configured():
-                return {
-                    "content": [
-                        {"type": "text", "text": "Erro: Minio não configurado. Configure MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY."}
-                    ],
-                    "isError": True
-                }
+            s3, error = require_s3_configured()
+            if error:
+                return error
 
             bucket = arguments.get("bucket", "claude-code")
             key = arguments["key"]
@@ -918,14 +914,9 @@ Variável: {var_name} (tipo: {data_type}){extras}
                 }
 
         elif name == "rlm_list_buckets":
-            s3 = get_s3_client()
-            if not s3.is_configured():
-                return {
-                    "content": [
-                        {"type": "text", "text": "Erro: Minio não configurado."}
-                    ],
-                    "isError": True
-                }
+            s3, error = require_s3_configured()
+            if error:
+                return error
 
             try:
                 buckets = s3.list_buckets()
@@ -943,14 +934,9 @@ Variável: {var_name} (tipo: {data_type}){extras}
                 }
 
         elif name == "rlm_list_s3":
-            s3 = get_s3_client()
-            if not s3.is_configured():
-                return {
-                    "content": [
-                        {"type": "text", "text": "Erro: Minio não configurado."}
-                    ],
-                    "isError": True
-                }
+            s3, error = require_s3_configured()
+            if error:
+                return error
 
             bucket = arguments.get("bucket", "claude-code")
             prefix = arguments.get("prefix", "")
@@ -992,14 +978,9 @@ Variável: {var_name} (tipo: {data_type}){extras}
                     message=f"Upload rate limit exceeded: {rate_result.limit} uploads per {rate_result.window_seconds} seconds"
                 )
 
-            s3 = get_s3_client()
-            if not s3.is_configured():
-                return {
-                    "content": [
-                        {"type": "text", "text": "Erro: Minio não configurado."}
-                    ],
-                    "isError": True
-                }
+            s3, error = require_s3_configured()
+            if error:
+                return error
 
             url = arguments["url"]
             bucket = arguments.get("bucket", "claude-code")
@@ -1024,14 +1005,9 @@ Tamanho: {result['size_human']}"""
                 }
 
         elif name == "rlm_process_pdf":
-            s3 = get_s3_client()
-            if not s3.is_configured():
-                return {
-                    "content": [
-                        {"type": "text", "text": "Erro: Minio não configurado."}
-                    ],
-                    "isError": True
-                }
+            s3, error = require_s3_configured()
+            if error:
+                return error
 
             bucket = arguments.get("bucket", "claude-code")
             key = arguments["key"]
