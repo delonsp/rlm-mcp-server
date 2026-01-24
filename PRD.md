@@ -76,8 +76,8 @@ def error_response(message: str) -> dict:
 ---
 
 ### Tarefa 4: Criar services/persistence_service.py
-- [ ] Criar arquivo com função `persist_and_index()`
-- [ ] Extrair padrão repetido 3x em http_server.py (linhas 1146-1173, 1368-1391, 1412-1435)
+- [x] Criar arquivo com função `persist_and_index()`
+- [x] Extrair padrão repetido 3x em http_server.py (linhas 1146-1173, 1368-1391, 1412-1435)
 
 ```python
 import logging
