@@ -129,8 +129,8 @@ def persist_and_index(var_name: str, value, repl) -> tuple[str, str, str]:
 ---
 
 ### Tarefa 6: Atualizar http_server.py - imports e get_tools_list
-- [ ] Adicionar import: `from .tools.schemas import TOOL_SCHEMAS`
-- [ ] Simplificar `get_tools_list()` para retornar `TOOL_SCHEMAS`
+- [x] Adicionar import: `from .tools.schemas import TOOL_SCHEMAS`
+- [x] Simplificar `get_tools_list()` para retornar `TOOL_SCHEMAS`
 
 ```python
 from .tools.schemas import TOOL_SCHEMAS
