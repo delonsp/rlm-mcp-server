@@ -1401,50 +1401,78 @@ Próximo passo: rlm_load_s3(key="{output_key}", name="texto", data_type="text")"
                 mapping_var = f"_coll_{coll_name}_mapping"
 
                 all_results = {}
+                terms_via_index = []
+                terms_via_fallback = []
+                indexed_terms_count = 0
 
                 if combined_index and mapping_var in repl.variables:
-                    # Usar índice combinado (FUNCIONA SEMPRE!)
+                    # Usar índice combinado + fallback híbrido
                     var_mapping = repl.variables[mapping_var]
-                    results = combined_index.search_multiple(terms, require_all=False)
+                    index_stats = combined_index.get_stats()
+                    indexed_terms_count = index_stats.get('indexed_terms', 0)
+                    available_terms = set(combined_index.terms.keys())
 
-                    if results:
-                        # Agrupar resultados por variável original
-                        for term, matches in results.items():
-                            for m in matches:
-                                linha_combined = m['linha']
-                                # Encontrar variável original usando mapeamento
-                                if linha_combined in var_mapping:
-                                    orig_var, orig_linha = var_mapping[linha_combined]
-                                    if orig_var not in all_results:
-                                        all_results[orig_var] = {}
-                                    if term not in all_results[orig_var]:
-                                        all_results[orig_var][term] = []
-                                    all_results[orig_var][term].append({
-                                        'linha': orig_linha,
-                                        'contexto': m['contexto']
-                                    })
+                    # Separar termos indexados vs não-indexados
+                    for term in terms:
+                        if term.lower() in available_terms:
+                            terms_via_index.append(term)
+                        else:
+                            terms_via_fallback.append(term)
+
+                    # Buscar termos indexados via índice
+                    if terms_via_index:
+                        results = combined_index.search_multiple(terms_via_index, require_all=False)
+                        if results:
+                            for term, matches in results.items():
+                                for m in matches:
+                                    linha_combined = m['linha']
+                                    if linha_combined in var_mapping:
+                                        orig_var, orig_linha = var_mapping[linha_combined]
+                                        if orig_var not in all_results:
+                                            all_results[orig_var] = {}
+                                        if term not in all_results[orig_var]:
+                                            all_results[orig_var][term] = []
+                                        all_results[orig_var][term].append({
+                                            'linha': orig_linha,
+                                            'contexto': m['contexto']
+                                        })
+
+                    # Buscar termos não-indexados via full-text
+                    if terms_via_fallback and combined_var_name in repl.variables:
+                        combined_text = repl.variables[combined_var_name]
+                        for term in terms_via_fallback:
+                            term_lower = term.lower()
+                            for line_num, line in enumerate(combined_text.split('\n'), start=1):
+                                if term_lower in line.lower():
+                                    if line_num in var_mapping:
+                                        orig_var, orig_linha = var_mapping[line_num]
+                                        if orig_var not in all_results:
+                                            all_results[orig_var] = {}
+                                        if term not in all_results[orig_var]:
+                                            all_results[orig_var][term] = []
+                                        all_results[orig_var][term].append({
+                                            'linha': orig_linha,
+                                            'contexto': line.strip()
+                                        })
                 else:
-                    # Fallback: buscar em índices individuais (vars > 100k)
+                    # Fallback total: buscar em índices individuais ou full-text
+                    terms_via_fallback = terms[:]
                     for var_name in var_names:
                         index = get_index(var_name)
                         if index:
                             results = index.search_multiple(terms, require_all=False)
                             if results:
                                 all_results[var_name] = results
+                                terms_via_fallback = []  # Encontrou no índice
 
-                used_fallback = False
-                if not all_results:
-                    # Fallback: busca full-text no texto combinado
-                    if combined_var_name in repl.variables and mapping_var in repl.variables:
-                        used_fallback = True
+                    # Se não encontrou em índices individuais, tenta full-text
+                    if not all_results and combined_var_name in repl.variables and mapping_var in repl.variables:
                         combined_text = repl.variables[combined_var_name]
                         var_mapping = repl.variables[mapping_var]
-
                         for term in terms:
                             term_lower = term.lower()
                             for line_num, line in enumerate(combined_text.split('\n'), start=1):
                                 if term_lower in line.lower():
-                                    # Mapear de volta para variável original
                                     if line_num in var_mapping:
                                         orig_var, orig_linha = var_mapping[line_num]
                                         if orig_var not in all_results:
@@ -1462,12 +1490,22 @@ Próximo passo: rlm_load_s3(key="{output_key}", name="texto", data_type="text")"
                     text += f"\n💡 Dica: Verifique se os termos estão corretos ou use rlm_execute com Python para busca avançada"
                 else:
                     lines = [f"🔍 Busca em '{coll_name}': {', '.join(terms)}", ""]
-                    used_combined = combined_index is not None
-                    if used_fallback:
-                        lines.append(f"🔄 Busca full-text (termos não indexados)")
+
+                    # Stats de busca híbrida
+                    if terms_via_index and terms_via_fallback:
+                        lines.append(f"📊 Busca híbrida: {len(terms_via_index)} via índice, {len(terms_via_fallback)} via full-text")
+                        lines.append(f"   ✅ Indexados: {', '.join(terms_via_index)}")
+                        lines.append(f"   🔄 Full-text: {', '.join(terms_via_fallback)}")
+                        if indexed_terms_count:
+                            lines.append(f"   ℹ️  {indexed_terms_count} termos disponíveis no índice")
                         lines.append("")
-                    elif used_combined:
-                        lines.append(f"✅ Usando índice combinado ({len(var_names)} vars)")
+                    elif terms_via_fallback:
+                        lines.append(f"🔄 Busca full-text ({len(terms_via_fallback)} termos não indexados)")
+                        if indexed_terms_count:
+                            lines.append(f"   ℹ️  {indexed_terms_count} termos disponíveis no índice")
+                        lines.append("")
+                    elif combined_index:
+                        lines.append(f"✅ Usando índice combinado ({len(var_names)} vars, {indexed_terms_count} termos)")
                         lines.append("")
 
                     for var_name, results in all_results.items():
