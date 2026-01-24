@@ -3309,3 +3309,62 @@ All tasks in PRD.md are now marked [x]. The 0.2.0 release includes:
   - Relative imports work: `from ..s3_client import get_s3_client`
   - Validation: `python -c "from rlm_mcp.services.s3_guard import require_s3_configured; print('OK')"`
   - All 1514 tests pass after adding this module
+
+## Iteration [Refactor Phase] - Tarefa 3: Criar tools/base.py
+- What was implemented:
+  - Created `src/rlm_mcp/tools/base.py` with helper functions
+  - `text_response(text: str)` - creates MCP response with text content
+  - `error_response(message: str)` - creates MCP error response with isError flag
+  - Both functions have type hints and docstrings
+
+- Files changed:
+  - src/rlm_mcp/tools/base.py (new file)
+  - PRD.md (marked task complete)
+
+- Learnings for future iterations:
+  - Tools package already existed from Tarefa 1 (with __init__.py)
+  - MCP response format is `{"content": [{"type": "text", "text": ...}]}`
+  - Error responses add `"isError": True` to the dict
+  - These helpers will simplify http_server.py once integrated in later tasks
+---
+
+---
+
+## Iteration 4 (refactoring) - Create services/persistence_service.py
+
+- What was implemented:
+  - Created `src/rlm_mcp/services/persistence_service.py` with `persist_and_index()` helper function
+  - Function extracts repeated pattern (20+ lines) found 3x in http_server.py
+  - Returns tuple (persist_msg, index_msg, error_msg) for flexible message formatting
+  - Uses TYPE_CHECKING for PythonREPL to avoid circular imports
+
+- Files changed:
+  - src/rlm_mcp/services/persistence_service.py (new file)
+  - PRD.md (marked task 4 complete)
+
+- Learnings for future iterations:
+  - Use TYPE_CHECKING for type hints that would cause circular imports
+  - The repl parameter is kept for API compatibility even though value is passed directly
+  - Auto-indexing threshold is 100k characters (>= 100000)
+  - set_index() stores index in memory, persistence.save_index() stores in SQLite
+
+---
+
+## Iteration 5 (refactoring) - Create tools/schemas.py
+
+- What was implemented:
+  - Created `src/rlm_mcp/tools/schemas.py` with `TOOL_SCHEMAS` constant
+  - Extracted all 20 tool definitions from `get_tools_list()` (lines 578-1115 of http_server.py)
+  - Maintained exact same content and structure of original schemas
+  - Tools: rlm_execute, rlm_load_data, rlm_load_file, rlm_list_vars, rlm_var_info, rlm_clear, rlm_memory, rlm_load_s3, rlm_list_buckets, rlm_list_s3, rlm_upload_url, rlm_process_pdf, rlm_search_index, rlm_persistence_stats, rlm_collection_create, rlm_collection_add, rlm_collection_list, rlm_collection_info, rlm_collection_rebuild, rlm_search_collection
+
+- Files changed:
+  - src/rlm_mcp/tools/schemas.py (new file)
+  - PRD.md (marked task 5 complete)
+
+- Learnings for future iterations:
+  - Total of 20 tool schemas in the MCP server
+  - Each tool has name, description, and inputSchema (JSON Schema format)
+  - inputSchema always has type: "object" and properties dict
+  - Required fields are listed in inputSchema.required array
+  - Some tools have empty properties dict (no required params)

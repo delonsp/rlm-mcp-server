@@ -120,9 +120,9 @@ def persist_and_index(var_name: str, value, repl) -> tuple[str, str, str]:
 ---
 
 ### Tarefa 5: Criar tools/schemas.py
-- [ ] Extrair todas as definições de tools de `get_tools_list()` (linhas 578-1115 de http_server.py)
-- [ ] Criar constante `TOOL_SCHEMAS` com lista de dicts
-- [ ] Manter exatamente o mesmo conteúdo dos schemas existentes
+- [x] Extrair todas as definições de tools de `get_tools_list()` (linhas 578-1115 de http_server.py)
+- [x] Criar constante `TOOL_SCHEMAS` com lista de dicts
+- [x] Manter exatamente o mesmo conteúdo dos schemas existentes
 
 **Validação**: `python -c "from rlm_mcp.tools.schemas import TOOL_SCHEMAS; print(f'{len(TOOL_SCHEMAS)} schemas')"`
 
