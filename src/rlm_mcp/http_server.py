@@ -1537,6 +1537,87 @@ Próximo passo: rlm_load_s3(key="{output_key}", name="texto", data_type="text")"
                     "isError": True
                 }
 
+        elif name == "rlm_save_to_s3":
+            # Rate limit check for uploads
+            rate_id = client_id or "anonymous"
+            rate_result = upload_rate_limiter.check(rate_id)
+            if not rate_result.allowed:
+                logger.warning(f"Upload rate limit exceeded for {rate_id}: {rate_result.current_count}/{rate_result.limit}")
+                raise RateLimitExceeded(
+                    result=rate_result,
+                    message=f"Upload rate limit exceeded: {rate_result.limit} uploads per {rate_result.window_seconds} seconds"
+                )
+
+            s3, error = require_s3_configured()
+            if error:
+                return error
+
+            var_name = arguments["var_name"]
+            bucket = arguments.get("bucket", "claude-code")
+            key = arguments["key"]
+            fmt = arguments.get("format", "auto")
+
+            # Verificar se variável existe
+            if var_name not in repl.variables:
+                return {
+                    "content": [
+                        {"type": "text", "text": f"Erro: Variável '{var_name}' não encontrada no REPL.\n\nUse rlm_list_vars() para ver variáveis disponíveis."}
+                    ],
+                    "isError": True
+                }
+
+            value = repl.variables[var_name]
+
+            try:
+                # Determinar formato de serialização
+                if fmt == "auto":
+                    if isinstance(value, str):
+                        fmt = "text"
+                    elif isinstance(value, (dict, list)):
+                        fmt = "json"
+                    else:
+                        fmt = "text"
+
+                # Serializar
+                if fmt == "json":
+                    content = json.dumps(value, ensure_ascii=False, indent=2)
+                    content_type = "application/json"
+                else:
+                    content = str(value)
+                    content_type = "text/plain"
+
+                # Upload
+                result = s3.put_object(
+                    bucket,
+                    key,
+                    content.encode("utf-8"),
+                    content_type=f"{content_type}; charset=utf-8"
+                )
+
+                # Record successful upload for rate limiting
+                upload_rate_limiter.record(rate_id)
+
+                text = f"""✅ Variável salva no S3:
+Variável: {var_name}
+Tipo original: {type(value).__name__}
+Formato: {fmt}
+
+Destino:
+  Bucket: {result['bucket']}
+  Key: {result['key']}
+  Tamanho: {result['size_human']}
+
+Para carregar novamente: rlm_load_s3(key="{key}", name="{var_name}", data_type="{'json' if fmt == 'json' else 'text'}")"""
+                return {"content": [{"type": "text", "text": text}]}
+
+            except Exception as e:
+                return {
+                    "content": [
+                        {"type": "text", "text": f"Erro ao salvar variável no S3: {e}"}
+                    ],
+                    "isError": True
+                }
+
         else:
             return {
                 "content": [

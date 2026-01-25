@@ -537,5 +537,44 @@ Exemplo: rlm_search_collection(collection="homeopatia", terms=["medo", "ansiedad
             },
             "required": ["collection", "terms"]
         }
+    },
+    {
+        "name": "rlm_save_to_s3",
+        "description": """Salva uma variável do REPL para o Minio/S3.
+
+Permite exportar variáveis carregadas/processadas diretamente para o bucket,
+sem precisar de código Python customizado.
+
+Formatos suportados:
+- auto: Detecta automaticamente (str → text, dict/list → json)
+- text: Força salvar como texto plano (.txt)
+- json: Força salvar como JSON (.json)
+
+Exemplo: rlm_save_to_s3(var_name="resultado", key="output/analise.json")""",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "var_name": {
+                    "type": "string",
+                    "description": "Nome da variável no REPL para salvar"
+                },
+                "key": {
+                    "type": "string",
+                    "description": "Caminho/chave do objeto no bucket (ex: output/resultado.json)"
+                },
+                "bucket": {
+                    "type": "string",
+                    "default": "claude-code",
+                    "description": "Nome do bucket (padrão: claude-code)"
+                },
+                "format": {
+                    "type": "string",
+                    "enum": ["auto", "text", "json"],
+                    "default": "auto",
+                    "description": "Formato de serialização (padrão: auto)"
+                }
+            },
+            "required": ["var_name", "key"]
+        }
     }
 ]
