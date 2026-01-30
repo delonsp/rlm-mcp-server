@@ -86,6 +86,9 @@ fazer análises que RAG não consegue - cruzamento, agregação, lógica condici
         "name": "rlm_load_data",
         "description": """Carrega dados diretamente em uma variável do REPL.
 
+A variável é automaticamente persistida no banco local (SQLite)
+e sobrevive a restarts do servidor.
+
 Tipos suportados:
 - "text": String simples
 - "json": Parse JSON para dict/list
@@ -202,6 +205,9 @@ Tipos suportados:
 
 O arquivo é baixado direto do Minio para o servidor RLM,
 sem passar pelo contexto do Claude Code. Ideal para arquivos grandes.
+
+Ao carregar, a variável é automaticamente persistida no banco local (SQLite)
+e sobrevive a restarts do servidor.
 
 Tipos suportados:
 - text: String simples
@@ -407,9 +413,9 @@ Exemplo: rlm_search_index(var_name="scholten1", terms=["medo", "fracasso"])""",
     },
     {
         "name": "rlm_persistence_stats",
-        "description": """Retorna estatísticas de persistência (variáveis salvas, índices, etc).
+        "description": """Retorna estatísticas do banco SQLite local (variáveis salvas, índices, etc).
 
-Mostra quais variáveis estão persistidas e sobreviverão ao restart do servidor.""",
+Mostra quais variáveis estão persistidas no SQLite e sobreviverão ao restart do servidor.""",
         "inputSchema": {
             "type": "object",
             "properties": {}
@@ -542,8 +548,10 @@ Exemplo: rlm_search_collection(collection="homeopatia", terms=["medo", "ansiedad
         "name": "rlm_save_to_s3",
         "description": """Salva uma variável do REPL para o Minio/S3.
 
-Permite exportar variáveis carregadas/processadas diretamente para o bucket,
-sem precisar de código Python customizado.
+Exporta para o S3 como arquivo, útil para compartilhar externamente
+ou manter o formato original no bucket.
+A variável já está salva localmente no SQLite — use esta ferramenta
+apenas quando precisar do arquivo no S3.
 
 Formatos suportados:
 - auto: Detecta automaticamente (str → text, dict/list → json)
