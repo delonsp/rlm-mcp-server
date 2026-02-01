@@ -320,12 +320,14 @@ class SafeREPL:
     def __init__(
         self,
         max_memory_mb: int = 1024,
+        max_var_size_mb: int = 50,
         cleanup_threshold_percent: float = 80.0,
         cleanup_target_percent: float = 60.0
     ):
         self.variables: dict[str, Any] = {}
         self.variable_metadata: dict[str, VariableInfo] = {}
         self.max_memory_mb = max_memory_mb
+        self.max_var_size_mb = max_var_size_mb
         self.execution_count = 0
 
         # Auto-cleanup settings
@@ -590,11 +592,15 @@ class SafeREPL:
             is_changed = not is_new and self.variables.get(name) is not value
 
             if is_new or is_changed:
+                size = self._estimate_size(value)
+                max_var_bytes = self.max_var_size_mb * 1024 * 1024
+                if size > max_var_bytes:
+                    stderr += f"\nVariavel '{name}' rejeitada: {self._human_size(size)} excede limite de {self.max_var_size_mb}MB\n"
+                    success = False
+                    continue
+
                 self.variables[name] = value
                 variables_changed.append(name)
-
-                # Atualiza metadados
-                size = self._estimate_size(value)
                 self.variable_metadata[name] = VariableInfo(
                     name=name,
                     type_name=type(value).__name__,
@@ -642,8 +648,17 @@ class SafeREPL:
             else:  # text
                 value = data if isinstance(data, str) else data.decode()
 
-            self.variables[name] = value
             size = self._estimate_size(value)
+            max_var_bytes = self.max_var_size_mb * 1024 * 1024
+            if size > max_var_bytes:
+                return ExecutionResult(
+                    success=False,
+                    stdout="",
+                    stderr=f"Variavel rejeitada: {self._human_size(size)} excede limite de {self.max_var_size_mb}MB por variavel. Ajuste RLM_MAX_VAR_SIZE_MB se necessario.",
+                    execution_time_ms=0,
+                )
+
+            self.variables[name] = value
             now = datetime.now()
 
             self.variable_metadata[name] = VariableInfo(

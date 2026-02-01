@@ -264,6 +264,7 @@ SSE_RATE_LIMIT_REQUESTS = int(os.getenv("RLM_SSE_RATE_LIMIT", "100"))
 SSE_RATE_LIMIT_WINDOW = int(os.getenv("RLM_SSE_RATE_WINDOW", "60"))  # seconds
 UPLOAD_RATE_LIMIT_REQUESTS = int(os.getenv("RLM_UPLOAD_RATE_LIMIT", "10"))
 UPLOAD_RATE_LIMIT_WINDOW = int(os.getenv("RLM_UPLOAD_RATE_WINDOW", "60"))  # seconds
+MAX_VAR_SIZE_MB = int(os.getenv("RLM_MAX_VAR_SIZE_MB", "50"))
 
 # Rate limiter for SSE sessions (100 requests per minute by default)
 sse_rate_limiter = SlidingWindowRateLimiter(
@@ -280,6 +281,7 @@ upload_rate_limiter = SlidingWindowRateLimiter(
 # Instância global do REPL com auto-cleanup
 repl = SafeREPL(
     max_memory_mb=MAX_MEMORY_MB,
+    max_var_size_mb=MAX_VAR_SIZE_MB,
     cleanup_threshold_percent=CLEANUP_THRESHOLD,
     cleanup_target_percent=CLEANUP_TARGET
 )
@@ -351,10 +353,17 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS para permitir conexões do Claude Code
+# CORS — restrito a origens configuradas (padrão: localhost + domínio do servidor)
+_cors_origins_env = os.getenv("RLM_CORS_ORIGINS", "")
+CORS_ORIGINS = [o.strip() for o in _cors_origins_env.split(",") if o.strip()] if _cors_origins_env else [
+    "http://localhost",
+    "http://localhost:3000",
+    "http://localhost:8080",
+    "https://localhost",
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Em produção, restrinja isso
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1911,14 +1920,31 @@ async def mcp_direct_endpoint(
 
     logger.info(f"Processing /mcp request", extra={"request_id": request_id})
 
+    # Rate limiting by client IP
+    client_id = request.client.host if request.client else "anonymous"
+    rate_result = sse_rate_limiter.check_and_record(client_id)
+    if not rate_result.allowed:
+        logger.warning(f"Rate limit exceeded for {client_id}: {rate_result.current_count}/{rate_result.limit}", extra={"request_id": request_id})
+        metrics_collector.record_rate_limit_rejection()
+        latency_ms = (time.time() - start_time) * 1000
+        metrics_collector.record_request("/mcp", latency_ms, is_error=True)
+        return JSONResponse(
+            {
+                "error": "Too Many Requests",
+                "message": f"Rate limit exceeded: {rate_result.limit} requests per {rate_result.window_seconds} seconds",
+                "retry_after": rate_result.retry_after,
+                "request_id": request_id
+            },
+            status_code=429,
+            headers={"Retry-After": str(int(rate_result.retry_after or 1)), "X-Request-Id": request_id}
+        )
+
     try:
         body = await request.json()
         mcp_request = MCPRequest(**body)
 
         logger.debug(f"MCP method: {mcp_request.method}", extra={"request_id": request_id})
 
-        # Use client IP for rate limiting
-        client_id = request.client.host if request.client else "anonymous"
         response = handle_mcp_request(mcp_request, client_id=client_id)
 
         if response is None:

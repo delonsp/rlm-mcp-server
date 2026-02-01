@@ -89,15 +89,22 @@ scp arquivo.pdf user@vps:/caminho/para/rlm-data/
 # No container, estará em /data/arquivo.pdf
 ```
 
-## Variáveis de Ambiente Necessárias
+## Variáveis de Ambiente
 
-| Variável | Obrigatória | Uso |
-|----------|-------------|-----|
-| `RLM_API_KEY` | Recomendado | Autenticação do servidor |
-| `OPENAI_API_KEY` | Para llm_query | Sub-chamadas LLM |
-| `MISTRAL_API_KEY` | Para OCR | PDFs escaneados |
-| `MINIO_*` | Opcional | Storage S3 |
-| `RLM_PERSIST_DIR` | Opcional | Diretório SQLite (padrão: /persist) |
+| Variável | Obrigatória | Uso | Padrão |
+|----------|-------------|-----|--------|
+| `RLM_API_KEY` | Recomendado | Autenticação Bearer token | — |
+| `OPENAI_API_KEY` | Para llm_query | Sub-chamadas LLM | — |
+| `MISTRAL_API_KEY` | Para OCR | PDFs escaneados | — |
+| `MINIO_*` | Opcional | Storage S3 | — |
+| `RLM_PERSIST_DIR` | Opcional | Diretório SQLite | `/persist` |
+| `RLM_MAX_MEMORY_MB` | Opcional | Memória total do REPL | `1024` |
+| `RLM_MAX_VAR_SIZE_MB` | Opcional | Limite por variável individual | `50` |
+| `RLM_CORS_ORIGINS` | Opcional | Origens CORS (vírgula-separadas) | `localhost` |
+| `RLM_SSE_RATE_LIMIT` | Opcional | Requests por janela | `100` |
+| `RLM_SSE_RATE_WINDOW` | Opcional | Janela em segundos | `60` |
+| `RLM_UPLOAD_RATE_LIMIT` | Opcional | Uploads por janela | `10` |
+| `RLM_UPLOAD_RATE_WINDOW` | Opcional | Janela em segundos | `60` |
 
 ## Tools Disponíveis
 
@@ -216,13 +223,28 @@ print(resumir_tamanho(1536))     # → "1.5 KB"
 
 ```
 src/rlm_mcp/
-├── http_server.py   # Servidor HTTP/SSE (único servidor MCP)
-├── repl.py          # REPL Python sandboxed
-├── pdf_parser.py    # Extração de PDF (pdfplumber + Mistral OCR)
-├── s3_client.py     # Cliente Minio/S3
-├── llm_client.py    # Cliente para sub-chamadas LLM
-├── persistence.py   # Persistência SQLite (variáveis + índices)
-└── indexer.py       # Indexação semântica automática
+├── http_server.py        # Servidor HTTP/SSE FastAPI (MCP protocol)
+├── repl.py               # REPL Python sandboxed (variáveis em memória)
+├── rate_limiter.py       # Sliding window rate limiting
+├── persistence.py        # Persistência SQLite (variáveis + índices)
+├── indexer.py            # Indexação semântica automática
+├── pdf_parser.py         # Extração PDF (pdfplumber + Mistral OCR)
+├── s3_client.py          # Cliente Minio/S3
+├── llm_client.py         # Cliente para sub-chamadas LLM
+├── services/
+│   ├── persistence_service.py  # Auto-persist + index helper
+│   └── s3_guard.py             # Validação config S3
+└── tools/
+    ├── base.py           # text_response/error_response helpers
+    └── schemas.py        # Definições de tools MCP (~540 linhas)
+
+tests/                    # 1880 testes (pytest)
+├── test_http_server.py   # Integração HTTP (1514 testes)
+├── test_repl.py          # Sandbox REPL (366 testes)
+├── test_rate_limiter.py
+├── test_persistence.py
+├── test_indexer.py
+├── ...
 ```
 
 ## Persistência e Indexação
@@ -270,68 +292,32 @@ Você pode ter múltiplas coleções no mesmo servidor:
 - `nutrição`: protocolos, suplementos, dietas
 - `fitoterapia`: plantas, formulações
 
-## Rate Limiting
+## Segurança
 
-O servidor implementa rate limiting para proteger contra sobrecarga:
+### Rate Limiting
+Todos os endpoints MCP têm rate limiting (sliding window por IP/session). HTTP 429 quando excedido.
 
 | Endpoint | Limite | Janela |
 |----------|--------|--------|
-| SSE/MCP requests | 100 requests | 1 minuto |
-| `rlm_upload_url` | 10 uploads | 1 minuto |
+| `/message` (SSE) | 100 req | 60s (por session) |
+| `/mcp` (direto) | 100 req | 60s (por IP) |
+| `rlm_upload_url` | 10 uploads | 60s |
 
-Quando o limite é excedido, o servidor retorna HTTP 429 (Too Many Requests).
+### Memory Protection
+Variáveis individuais limitadas a `RLM_MAX_VAR_SIZE_MB` (padrão: 50MB). Aplica tanto em `load_data()` quanto em variáveis criadas via `execute()`. Auto-cleanup remove variáveis mais antigas quando memória total atinge threshold (80%).
 
-Configuração via variáveis de ambiente:
-- `RLM_SSE_RATE_LIMIT`: requests por minuto (padrão: 100)
-- `RLM_SSE_RATE_WINDOW`: janela em segundos (padrão: 60)
-- `RLM_UPLOAD_RATE_LIMIT`: uploads por minuto (padrão: 10)
-- `RLM_UPLOAD_RATE_WINDOW`: janela em segundos (padrão: 60)
+### CORS
+Origens restritas via `RLM_CORS_ORIGINS`. Padrão: `localhost` (portas 80, 3000, 8080). Para produção: `RLM_CORS_ORIGINS=https://rlm.drsolution.online`
+
+### Sandbox
+REPL bloqueia: `os`, `subprocess`, `socket`, `open()`, `exec()`, `eval()`, dunder attrs. Whitelist de imports seguros (re, json, math, collections, etc).
 
 ## Observabilidade
 
-### Endpoint `/metrics`
-
-Retorna métricas do servidor em JSON:
-
-```json
-{
-  "timestamp": "2024-01-15T10:30:00Z",
-  "uptime_seconds": 3600,
-  "requests": {
-    "total": 1500,
-    "by_endpoint": {"/message": 1200, "/mcp": 300}
-  },
-  "errors": {
-    "total": 5,
-    "by_endpoint": {"/message": 3, "/mcp": 2}
-  },
-  "latency_ms": {
-    "avg": 45.2,
-    "p50": 30,
-    "p95": 120,
-    "p99": 250,
-    "max": 500
-  },
-  "tools": {
-    "calls_by_name": {"rlm_execute": 500, "rlm_load_s3": 200}
-  },
-  "rate_limiting": {
-    "rejections": 3
-  }
-}
-```
-
-### Logging estruturado (JSON)
-
-Ative logging JSON via variável de ambiente:
-```bash
-LOG_FORMAT=json  # ou LOG_FORMAT=text (padrão)
-LOG_LEVEL=INFO   # DEBUG, INFO, WARNING, ERROR
-```
-
-### Request ID
-
-Cada requisição inclui um `X-Request-Id` header para tracing. O ID também aparece nos logs e nas respostas de erro.
+- **`/health`** — Status, memória, versão
+- **`/metrics`** — Request counts, latência (p50/p95/p99), tool calls, rate limit rejections
+- **`X-Request-Id`** header em todas as respostas para tracing
+- Logging: `LOG_FORMAT=json|text`, `LOG_LEVEL=INFO|DEBUG|WARNING`
 
 ## Notas Importantes
 
