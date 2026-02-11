@@ -38,11 +38,14 @@ def persist_and_index(var_name: str, value, repl: "PythonREPL") -> tuple[str, st
     try:
         persistence = get_persistence()
         if value is not None:
-            persistence.save_variable(var_name, value)
-            persist_msg = "💾 Persistido"
+            saved = persistence.save_variable(var_name, value)
+            if saved:
+                persist_msg = "💾 Persistido"
+            else:
+                error_msg = "\n⚠️ Erro de persistência: save_variable retornou False"
 
             # Indexar se for texto grande (>= 100k caracteres)
-            if isinstance(value, str) and len(value) >= 100000:
+            if saved and isinstance(value, str) and len(value) >= 100000:
                 idx = auto_index_if_large(value, var_name)
                 if idx:
                     set_index(var_name, idx)

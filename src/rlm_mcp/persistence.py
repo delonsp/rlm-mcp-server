@@ -333,7 +333,13 @@ class PersistenceManager:
                 """, (name, description, name, now))
                 conn.commit()
 
-            logger.info(f"Coleção '{name}' criada")
+                # Verify the write succeeded
+                cursor.execute("SELECT 1 FROM collections WHERE name = ?", (name,))
+                if not cursor.fetchone():
+                    logger.error(f"Coleção '{name}' não encontrada após INSERT - possível problema de escrita no SQLite")
+                    return False
+
+            logger.info(f"Coleção '{name}' criada com sucesso")
             return True
 
         except Exception as e:
@@ -381,17 +387,23 @@ class PersistenceManager:
                         "INSERT INTO collections (name, created_at) VALUES (?, ?)",
                         (collection_name, now)
                     )
+                    logger.info(f"Coleção '{collection_name}' criada automaticamente em add_to_collection")
 
                 for var_name in var_names:
-                    try:
-                        cursor.execute("""
-                            INSERT OR IGNORE INTO collection_vars (collection_name, var_name, added_at)
-                            VALUES (?, ?, ?)
-                        """, (collection_name, var_name, now))
-                        if cursor.rowcount > 0:
-                            added += 1
-                    except sqlite3.IntegrityError:
-                        pass  # Já existe
+                    # Check if already exists (more reliable than INSERT OR IGNORE + rowcount)
+                    cursor.execute(
+                        "SELECT 1 FROM collection_vars WHERE collection_name = ? AND var_name = ?",
+                        (collection_name, var_name)
+                    )
+                    if cursor.fetchone():
+                        logger.debug(f"Variável '{var_name}' já existe na coleção '{collection_name}'")
+                        continue
+
+                    cursor.execute("""
+                        INSERT INTO collection_vars (collection_name, var_name, added_at)
+                        VALUES (?, ?, ?)
+                    """, (collection_name, var_name, now))
+                    added += 1
 
                 conn.commit()
 

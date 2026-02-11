@@ -1151,7 +1151,15 @@ Próximo passo: rlm_load_s3(key="{output_key}", name="texto", data_type="text")"
                 coll_name = arguments["name"]
                 description = arguments.get("description")
 
-                persistence.create_collection(coll_name, description)
+                success = persistence.create_collection(coll_name, description)
+
+                if not success:
+                    return {
+                        "content": [
+                            {"type": "text", "text": f"Erro: Falha ao criar coleção '{coll_name}' - verifique logs do servidor"}
+                        ],
+                        "isError": True
+                    }
 
                 text = f"✅ Coleção '{coll_name}' criada"
                 if description:
