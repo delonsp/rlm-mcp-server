@@ -1231,8 +1231,10 @@ Próximo passo: rlm_load_s3(key="{output_key}", name="texto", data_type="text")"
 
                 text = f"✅ {added} variável(is) adicionada(s) à coleção '{coll_name}'"
                 text += f"\nVariáveis: {', '.join(var_names)}"
-                text += f"\n\n🔍 Índice combinado atualizado: {len(combined_text):,} chars indexados"
-                text += f"\n   Variáveis no índice: {len(all_vars)}"
+
+                if combined_parts:
+                    text += f"\n\n🔍 Índice combinado atualizado: {len(combined_text):,} chars indexados"
+                    text += f"\n   Variáveis no índice: {len(all_vars)}"
 
                 return {"content": [{"type": "text", "text": text}]}
 
