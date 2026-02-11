@@ -59,12 +59,13 @@ ENV PYTHONUNBUFFERED=1
 # Expõe porta (não necessária para MCP stdio, mas útil para health checks)
 EXPOSE 8080
 
-# Muda para usuário não-root
-USER rlm
+# Entrypoint que corrige permissões do volume e roda como rlm
+RUN printf '#!/bin/sh\nchown -R rlm:rlm /persist /data 2>/dev/null; exec su -s /bin/sh rlm -c "exec $*" -- "$@"\n' > /entrypoint.sh \
+    && chmod +x /entrypoint.sh
 
 # Health check via HTTP
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD curl -f http://localhost:8765/health || exit 1
 
-# Comando padrão - HTTP server
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python", "-m", "rlm_mcp.http_server"]
