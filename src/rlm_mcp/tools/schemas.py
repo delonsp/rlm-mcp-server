@@ -107,7 +107,7 @@ Tipos suportados:
                 },
                 "data_type": {
                     "type": "string",
-                    "enum": ["text", "json", "lines", "csv"],
+                    "enum": ["text", "json", "lines", "csv", "code"],
                     "default": "text"
                 }
             },
@@ -125,6 +125,7 @@ Tipos suportados:
 - json: Parse JSON para dict/list
 - lines: Split por \\n para lista
 - csv: Parse CSV para lista de dicts
+- code: Parse estrutural com tree-sitter (auto-detecta linguagem pelo nome do arquivo)
 - pdf: Extrai texto de PDF (auto-detecta método)
 - pdf_ocr: Força OCR para PDFs escaneados (requer MISTRAL_API_KEY)""",
         "inputSchema": {
@@ -140,7 +141,7 @@ Tipos suportados:
                 },
                 "data_type": {
                     "type": "string",
-                    "enum": ["text", "json", "lines", "csv", "pdf", "pdf_ocr"],
+                    "enum": ["text", "json", "lines", "csv", "code", "pdf", "pdf_ocr"],
                     "default": "text"
                 }
             },
@@ -214,6 +215,7 @@ Tipos suportados:
 - json: Parse JSON para dict/list
 - lines: Split por \\n para lista
 - csv: Parse CSV para lista de dicts
+- code: Parse estrutural com tree-sitter (auto-detecta linguagem pelo nome do arquivo)
 - pdf: Extrai texto de PDF (auto-detecta método)
 - pdf_ocr: Força OCR para PDFs escaneados (requer MISTRAL_API_KEY)
 
@@ -239,7 +241,7 @@ Exemplo: rlm_load_s3(key="pdfs/doc.pdf", name="doc", data_type="pdf")""",
                 },
                 "data_type": {
                     "type": "string",
-                    "enum": ["text", "json", "lines", "csv", "pdf", "pdf_ocr"],
+                    "enum": ["text", "json", "lines", "csv", "code", "pdf", "pdf_ocr"],
                     "default": "text",
                     "description": "Tipo de parsing dos dados"
                 },
@@ -733,6 +735,50 @@ Exemplo: rlm_batch_upload_s3(vars=[
                 }
             },
             "required": ["vars"]
+        }
+    },
+    {
+        "name": "rlm_search_code",
+        "description": """Busca estrutural em código-fonte carregado no REPL.
+
+Permite buscar funções, classes, métodos e imports por nome ou tipo.
+Requer que a variável tenha sido carregada com data_type="code" (tree-sitter parse).
+
+Se a variável foi carregada como text, faz parse on-the-fly (se linguagem for detectável).
+
+Parâmetros de busca:
+- query: busca substring no nome do símbolo (case-insensitive)
+- kind: filtra por tipo (function, class, method, import, variable)
+- include_source: se True, inclui o código-fonte de cada símbolo
+
+Exemplo: rlm_search_code(var_name="my_code", query="parse", kind="function")""",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "var_name": {
+                    "type": "string",
+                    "description": "Nome da variável que contém o código"
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Busca substring no nome do símbolo (opcional)"
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": ["function", "class", "method", "import", "variable"],
+                    "description": "Filtra por tipo de símbolo (opcional)"
+                },
+                "include_source": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Se True, inclui código-fonte de cada símbolo (padrão: False)"
+                },
+                "language": {
+                    "type": "string",
+                    "description": "Forçar linguagem (opcional, auto-detecta se não especificado)"
+                }
+            },
+            "required": ["var_name"]
         }
     },
     {

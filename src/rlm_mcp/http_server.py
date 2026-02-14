@@ -37,6 +37,7 @@ from .services.s3_guard import require_s3_configured
 from .services.persistence_service import persist_and_index
 from .task_manager import TaskManager
 from . import response_formatter as fmt
+from . import code_parser
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -629,10 +630,21 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
             data = arguments["data"]
             data_type = arguments.get("data_type", "text")
 
+            # "code" loads as text but also auto-parses the code structure
+            actual_type = "text" if data_type == "code" else data_type
+
             # Set source on metadata
-            result = repl.load_data(name=var_name, data=data, data_type=data_type)
+            result = repl.load_data(name=var_name, data=data, data_type=actual_type)
             if var_name in repl.variable_metadata:
                 repl.variable_metadata[var_name].source = "load_data"
+
+            # Auto-parse code structure if data_type="code"
+            if data_type == "code" and result.success:
+                lang = code_parser.detect_language(var_name, data)
+                if lang and code_parser.is_available():
+                    structure = code_parser.parse(data, lang)
+                    if structure:
+                        repl.variables[f"_code_structure_{var_name}"] = structure
 
             # Auto-persistência e indexação
             value = repl.variables.get(var_name)
@@ -706,13 +718,23 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                     data = f.read()
 
                 var_name = arguments["name"]
+                actual_type = "text" if data_type == "code" else data_type
                 result = repl.load_data(
                     name=var_name,
                     data=data,
-                    data_type=data_type
+                    data_type=actual_type
                 )
                 if var_name in repl.variable_metadata:
-                    repl.variable_metadata[var_name].source = "file"
+                    repl.variable_metadata[var_name].source = f"file:{path}"
+
+                # Auto-parse code structure if data_type="code"
+                if data_type == "code" and result.success:
+                    lang = code_parser.detect_language(path, data)
+                    if lang and code_parser.is_available():
+                        structure = code_parser.parse(data, lang)
+                        if structure:
+                            repl.variables[f"_code_structure_{var_name}"] = structure
+
                 return {
                     "content": [
                         {"type": "text", "text": fmt.format_execution_result(result)}
@@ -833,9 +855,18 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
 
                 # Regular file handling
                 data = s3.get_object_text(bucket, key)
-                result = repl.load_data(name=var_name, data=data, data_type=data_type)
+                actual_type = "text" if data_type == "code" else data_type
+                result = repl.load_data(name=var_name, data=data, data_type=actual_type)
                 if var_name in repl.variable_metadata:
-                    repl.variable_metadata[var_name].source = "s3"
+                    repl.variable_metadata[var_name].source = f"s3:{bucket}/{key}"
+
+                # Auto-parse code structure if data_type="code"
+                if data_type == "code" and result.success:
+                    lang = code_parser.detect_language(key, data)
+                    if lang and code_parser.is_available():
+                        structure = code_parser.parse(data, lang)
+                        if structure:
+                            repl.variables[f"_code_structure_{var_name}"] = structure
 
                 # Auto-persistência e indexação
                 value = repl.variables.get(var_name)
@@ -1749,6 +1780,75 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                     "content": [{"type": "text", "text": f"Erro no batch upload: {e}"}],
                     "isError": True,
                 }
+
+        elif name == "rlm_search_code":
+            var_name = arguments["var_name"]
+            query = arguments.get("query")
+            kind = arguments.get("kind")
+            include_source = arguments.get("include_source", False)
+            language_hint = arguments.get("language")
+
+            if var_name not in repl.variables:
+                return {
+                    "content": [{"type": "text", "text": f"Erro: Variável '{var_name}' não encontrada no REPL."}],
+                    "isError": True,
+                }
+
+            value = repl.variables[var_name]
+            if not isinstance(value, str):
+                return {
+                    "content": [{"type": "text", "text": f"Erro: Variável '{var_name}' não é texto (tipo: {type(value).__name__})."}],
+                    "isError": True,
+                }
+
+            # Check if we already have a parsed CodeStructure in metadata
+            meta_key = f"_code_structure_{var_name}"
+            structure = repl.variables.get(meta_key)
+
+            if not structure or not isinstance(structure, code_parser.CodeStructure):
+                # Parse on-the-fly
+                lang = language_hint
+                if not lang:
+                    # Try to detect from variable metadata source
+                    meta = repl.variable_metadata.get(var_name)
+                    source_hint = meta.source if meta else ""
+                    # Source may contain filename info like "s3:bucket/path/file.py" or "file:/data/file.py"
+                    lang = code_parser.detect_language(source_hint or var_name, value)
+
+                if not lang:
+                    return {
+                        "content": [{"type": "text", "text": f"Erro: Não foi possível detectar a linguagem de '{var_name}'. Especifique o parâmetro 'language'."}],
+                        "isError": True,
+                    }
+
+                if not code_parser.is_available():
+                    return {
+                        "content": [{"type": "text", "text": "Erro: tree-sitter não está instalado no servidor."}],
+                        "isError": True,
+                    }
+
+                structure = code_parser.parse(value, lang)
+                if not structure:
+                    return {
+                        "content": [{"type": "text", "text": f"Erro: Falha ao parsear '{var_name}' como {lang}. Gramática pode não estar instalada."}],
+                        "isError": True,
+                    }
+
+                # Cache the structure
+                repl.variables[meta_key] = structure
+
+            results = structure.search(
+                query=query,
+                kind=kind,
+                include_source=include_source,
+                source_code=value,
+            )
+
+            text = fmt.format_search_code(
+                results, var_name, structure.language,
+                query=query, kind=kind, total_symbols=len(structure.symbols),
+            )
+            return {"content": [{"type": "text", "text": text}]}
 
         elif name == "rlm_save_to_s3":
             # Rate limit check for uploads

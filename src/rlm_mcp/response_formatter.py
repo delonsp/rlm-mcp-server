@@ -843,6 +843,77 @@ def format_batch_upload_s3(
     return "\n".join(lines)
 
 
+# =============================================================================
+# Code search formatting
+# =============================================================================
+
+def format_search_code(
+    results: list[dict],
+    var_name: str,
+    language: str,
+    query: Optional[str] = None,
+    kind: Optional[str] = None,
+    total_symbols: int = 0,
+    verbosity: Optional[Verbosity] = None,
+) -> str:
+    """Format rlm_search_code response.
+
+    Args:
+        results: List of symbol dicts from CodeStructure.search()
+        var_name: Variable name searched
+        language: Detected language
+        query: Search query used
+        kind: Kind filter used
+        total_symbols: Total symbols in the code structure
+        verbosity: Override verbosity level
+    """
+    v = verbosity or get_verbosity()
+
+    if not results:
+        filter_desc = []
+        if query:
+            filter_desc.append(f'query="{query}"')
+        if kind:
+            filter_desc.append(f"kind={kind}")
+        filt = ", ".join(filter_desc) if filter_desc else "no filter"
+        return f"No symbols found in {var_name} ({filt})"
+
+    if v == Verbosity.COMPACT:
+        parts = [f"code:{var_name}", language, f"{len(results)}/{total_symbols} symbols"]
+        # Group by kind
+        kinds: dict[str, list[str]] = {}
+        for r in results:
+            k = r["kind"]
+            if k not in kinds:
+                kinds[k] = []
+            kinds[k].append(r["name"])
+        for k, names in kinds.items():
+            parts.append(f"{k}:{','.join(names[:10])}" + (f"+{len(names)-10}" if len(names) > 10 else ""))
+        return "[" + " | ".join(parts) + "]"
+
+    # Normal/verbose
+    lines = [f"Code search in '{var_name}' ({language}, {total_symbols} total symbols):"]
+    lines.append("")
+
+    for r in results:
+        icon = {"function": "fn", "class": "cls", "method": "mtd", "import": "imp", "variable": "var"}.get(r["kind"], r["kind"])
+        parent = f" ({r['parent']})" if r.get("parent") else ""
+        lines.append(f"  [{icon}] {r['name']}{parent}  L{r['line_start']}-{r['line_end']}")
+        lines.append(f"        {r['signature'][:120]}")
+        if r.get("docstring"):
+            doc = r["docstring"][:100]
+            lines.append(f"        \"{doc}\"")
+        if r.get("source"):
+            src_lines = r["source"].split("\n")
+            for sl in src_lines[:15]:
+                lines.append(f"        | {sl}")
+            if len(src_lines) > 15:
+                lines.append(f"        | ... (+{len(src_lines)-15} lines)")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 def format_task_cancel(task_id: str, success: bool,
                         verbosity: Optional[Verbosity] = None) -> str:
     """Format rlm_task_cancel response."""
