@@ -35,6 +35,7 @@ from .rate_limiter import SlidingWindowRateLimiter, RateLimitResult
 from .tools.schemas import TOOL_SCHEMAS
 from .services.s3_guard import require_s3_configured
 from .services.persistence_service import persist_and_index
+from . import response_formatter as fmt
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -258,6 +259,7 @@ MAX_MEMORY_MB = int(os.getenv("RLM_MAX_MEMORY_MB", "1024"))
 CLEANUP_THRESHOLD = float(os.getenv("RLM_CLEANUP_THRESHOLD", "80.0"))  # Quando iniciar limpeza (%)
 CLEANUP_TARGET = float(os.getenv("RLM_CLEANUP_TARGET", "60.0"))  # Até quanto limpar (%)
 SHOW_PERSISTENCE_ERRORS = os.getenv("RLM_SHOW_PERSISTENCE_ERRORS", "true").lower() in ("true", "1", "yes")
+CLEANUP_STRATEGY = os.getenv("RLM_CLEANUP_STRATEGY", "weighted")
 
 # Rate limiting configuration
 SSE_RATE_LIMIT_REQUESTS = int(os.getenv("RLM_SSE_RATE_LIMIT", "100"))
@@ -283,7 +285,8 @@ repl = SafeREPL(
     max_memory_mb=MAX_MEMORY_MB,
     max_var_size_mb=MAX_VAR_SIZE_MB,
     cleanup_threshold_percent=CLEANUP_THRESHOLD,
-    cleanup_target_percent=CLEANUP_TARGET
+    cleanup_target_percent=CLEANUP_TARGET,
+    cleanup_strategy=CLEANUP_STRATEGY,
 )
 
 # Sessões SSE ativas
@@ -608,7 +611,7 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
             result = repl.execute(arguments["code"])
             return {
                 "content": [
-                    {"type": "text", "text": format_execution_result(result)}
+                    {"type": "text", "text": fmt.format_execution_result(result)}
                 ]
             }
 
@@ -617,18 +620,25 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
             data = arguments["data"]
             data_type = arguments.get("data_type", "text")
 
+            # Set source on metadata
             result = repl.load_data(name=var_name, data=data, data_type=data_type)
+            if var_name in repl.variable_metadata:
+                repl.variable_metadata[var_name].source = "load_data"
 
             # Auto-persistência e indexação
             value = repl.variables.get(var_name)
             persist_msg, index_msg, persist_error = persist_and_index(var_name, value, repl)
-
-            output = format_execution_result(result)
-            extras = f"\n\n{persist_msg} {index_msg}".strip() if (persist_msg or index_msg) else ""
             if SHOW_PERSISTENCE_ERRORS:
-                extras += persist_error
-            if extras:
-                output += extras
+                pass  # persist_error already contains the error
+            else:
+                persist_error = ""
+
+            size_human = repl.variable_metadata[var_name].size_human if var_name in repl.variable_metadata else "?"
+            output = fmt.format_load_response(
+                source="direct", var_name=var_name, size_human=size_human,
+                data_type=data_type, exec_result=result,
+                persist_msg=persist_msg, index_msg=index_msg, persist_error=persist_error,
+            )
 
             return {"content": [{"type": "text", "text": output}]}
 
@@ -670,34 +680,33 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                         }
 
                     data = pdf_result.text
+                    var_name = arguments["name"]
                     result = repl.load_data(
-                        name=arguments["name"],
+                        name=var_name,
                         data=data,
                         data_type="text"
                     )
+                    if var_name in repl.variable_metadata:
+                        repl.variable_metadata[var_name].source = "file"
 
-                    text = f"""✅ PDF extraído com sucesso:
-Arquivo: {path}
-Método: {pdf_result.method}
-Páginas: {pdf_result.pages}
-Caracteres: {len(data):,}
-Variável: {arguments["name"]}
-
-{format_execution_result(result)}"""
+                    text = fmt.format_file_load_pdf(path, pdf_result, result, var_name)
                     return {"content": [{"type": "text", "text": text}]}
 
                 # Regular file handling
                 with open(path, 'r', encoding='utf-8', errors='replace') as f:
                     data = f.read()
 
+                var_name = arguments["name"]
                 result = repl.load_data(
-                    name=arguments["name"],
+                    name=var_name,
                     data=data,
                     data_type=data_type
                 )
+                if var_name in repl.variable_metadata:
+                    repl.variable_metadata[var_name].source = "file"
                 return {
                     "content": [
-                        {"type": "text", "text": format_execution_result(result)}
+                        {"type": "text", "text": fmt.format_execution_result(result)}
                     ]
                 }
             except FileNotFoundError:
@@ -712,19 +721,7 @@ Variável: {arguments["name"]}
             limit = arguments.get("limit", 50)
             offset = arguments.get("offset", 0)
             vars_list = repl.list_variables()
-            if not vars_list:
-                text = "Nenhuma variável no REPL."
-            else:
-                total = len(vars_list)
-                paginated = vars_list[offset:offset + limit]
-                start_idx = offset + 1 if paginated else 0
-                end_idx = offset + len(paginated)
-                lines = [f"Variáveis no REPL ({total} total, mostrando {start_idx}-{end_idx}):", ""]
-                for v in paginated:
-                    lines.append(f"  {v.name}: {v.type_name} ({v.size_human})")
-                    lines.append(f"    Preview: {v.preview[:100]}...")
-                    lines.append("")
-                text = "\n".join(lines)
+            text = fmt.format_list_vars(vars_list, len(vars_list), offset, limit)
             return {"content": [{"type": "text", "text": text}]}
 
         elif name == "rlm_var_info":
@@ -732,14 +729,7 @@ Variável: {arguments["name"]}
             if not info:
                 text = f"Variável '{arguments['name']}' não encontrada."
             else:
-                text = f"""Variável: {info.name}
-Tipo: {info.type_name}
-Tamanho: {info.size_human} ({info.size_bytes} bytes)
-Criada em: {info.created_at.isoformat()}
-Último acesso: {info.last_accessed.isoformat()}
-
-Preview:
-{info.preview}"""
+                text = fmt.format_var_info(info)
             return {"content": [{"type": "text", "text": text}]}
 
         elif name == "rlm_clear":
@@ -757,11 +747,7 @@ Preview:
 
         elif name == "rlm_memory":
             mem = repl.get_memory_usage()
-            text = f"""Uso de Memória do REPL:
-Total: {mem['total_human']}
-Variáveis: {mem['variable_count']}
-Limite: {mem['max_allowed_mb']} MB
-Uso: {mem['usage_percent']:.1f}%"""
+            text = fmt.format_memory(mem)
             return {"content": [{"type": "text", "text": text}]}
 
         elif name == "rlm_load_s3":
@@ -817,25 +803,20 @@ Uso: {mem['usage_percent']:.1f}%"""
 
                         data = pdf_result.text
                         result = repl.load_data(name=var_name, data=data, data_type="text")
+                        if var_name in repl.variable_metadata:
+                            repl.variable_metadata[var_name].source = "s3"
 
                         # Auto-persistência e indexação
                         value = repl.variables.get(var_name)
                         persist_msg, index_msg, persist_error = persist_and_index(var_name, value, repl)
+                        if not SHOW_PERSISTENCE_ERRORS:
+                            persist_error = ""
 
-                        extras = f"\n{persist_msg} {index_msg}".strip() if (persist_msg or index_msg) else ""
-                        if SHOW_PERSISTENCE_ERRORS:
-                            extras += persist_error
-
-                        text = f"""✅ PDF extraído do Minio:
-Bucket: {bucket}
-Objeto: {key}
-Tamanho original: {info['size_human']}
-Método: {pdf_result.method}
-Páginas: {pdf_result.pages}
-Caracteres extraídos: {len(data):,}
-Variável: {var_name}{extras}
-
-{format_execution_result(result)}"""
+                        pdf_info = {"method": pdf_result.method, "pages": pdf_result.pages, "chars": len(data)}
+                        text = fmt.format_s3_load_response(
+                            bucket, key, var_name, info['size_human'], data_type,
+                            result, persist_msg, index_msg, persist_error, pdf_info=pdf_info,
+                        )
                         return {"content": [{"type": "text", "text": text}]}
                     finally:
                         import os
@@ -844,22 +825,19 @@ Variável: {var_name}{extras}
                 # Regular file handling
                 data = s3.get_object_text(bucket, key)
                 result = repl.load_data(name=var_name, data=data, data_type=data_type)
+                if var_name in repl.variable_metadata:
+                    repl.variable_metadata[var_name].source = "s3"
 
                 # Auto-persistência e indexação
                 value = repl.variables.get(var_name)
                 persist_msg, index_msg, persist_error = persist_and_index(var_name, value, repl)
+                if not SHOW_PERSISTENCE_ERRORS:
+                    persist_error = ""
 
-                extras = f"\n{persist_msg} {index_msg}".strip() if (persist_msg or index_msg) else ""
-                if SHOW_PERSISTENCE_ERRORS:
-                    extras += persist_error
-
-                text = f"""✅ Carregado do Minio:
-Bucket: {bucket}
-Objeto: {key}
-Tamanho: {info['size_human']}
-Variável: {var_name} (tipo: {data_type}){extras}
-
-{format_execution_result(result)}"""
+                text = fmt.format_s3_load_response(
+                    bucket, key, var_name, info['size_human'], data_type,
+                    result, persist_msg, index_msg, persist_error,
+                )
                 return {"content": [{"type": "text", "text": text}]}
 
             except Exception as e:
@@ -877,10 +855,7 @@ Variável: {var_name} (tipo: {data_type}){extras}
 
             try:
                 buckets = s3.list_buckets()
-                if not buckets:
-                    text = "Nenhum bucket encontrado."
-                else:
-                    text = "Buckets disponíveis:\n" + "\n".join(f"  - {b}" for b in buckets)
+                text = fmt.format_list_buckets(buckets)
                 return {"content": [{"type": "text", "text": text}]}
             except Exception as e:
                 return {
@@ -903,18 +878,7 @@ Variável: {var_name} (tipo: {data_type}){extras}
             try:
                 objects = s3.list_objects(bucket, prefix)
                 total = len(objects)
-                if not objects:
-                    text = f"Nenhum objeto encontrado em {bucket}/{prefix}"
-                else:
-                    # Apply pagination
-                    paginated = objects[offset:offset + limit]
-                    start_idx = offset + 1 if paginated else 0
-                    end_idx = offset + len(paginated)
-
-                    lines = [f"Objetos em {bucket}/{prefix} ({total} total, mostrando {start_idx}-{end_idx}):", ""]
-                    for obj in paginated:
-                        lines.append(f"  {obj['name']} ({obj['size_human']})")
-                    text = "\n".join(lines)
+                text = fmt.format_list_s3(objects, bucket, prefix, total, offset, limit)
                 return {"content": [{"type": "text", "text": text}]}
             except Exception as e:
                 return {
@@ -947,11 +911,7 @@ Variável: {var_name} (tipo: {data_type}){extras}
                 result = s3.upload_from_url(url, bucket, key)
                 # Record successful upload for rate limiting
                 upload_rate_limiter.record(rate_id)
-                text = f"""✅ Upload concluído:
-URL: {url}
-Bucket: {result['bucket']}
-Objeto: {result['key']}
-Tamanho: {result['size_human']}"""
+                text = fmt.format_upload_url(url, result)
                 return {"content": [{"type": "text", "text": text}]}
             except Exception as e:
                 return {
@@ -1013,24 +973,7 @@ Tamanho: {result['size_human']}"""
                     # Salvar texto no bucket
                     upload_result = s3.put_object_text(bucket, output_key, pdf_result.text)
 
-                    text = f"""✅ PDF processado com sucesso!
-
-📄 Origem:
-  Bucket: {bucket}
-  Arquivo: {key}
-  Tamanho: {info['size_human']}
-
-📝 Extração:
-  Método: {pdf_result.method}
-  Páginas: {pdf_result.pages}
-  Caracteres: {len(pdf_result.text):,}
-
-💾 Texto salvo:
-  Bucket: {bucket}
-  Arquivo: {output_key}
-  Tamanho: {upload_result['size_human']}
-
-Próximo passo: rlm_load_s3(key="{output_key}", name="texto", data_type="text")"""
+                    text = fmt.format_process_pdf(bucket, key, output_key, info, pdf_result, upload_result)
                     return {"content": [{"type": "text", "text": text}]}
 
                 finally:
@@ -1073,37 +1016,14 @@ Próximo passo: rlm_load_s3(key="{output_key}", name="texto", data_type="text")"
                 }
 
             try:
-                if require_all:
-                    results = index.search_multiple(terms, require_all=True)
-                    if not results:
-                        text = f"Nenhuma linha encontrada com TODOS os termos: {', '.join(terms)}"
-                    else:
-                        total_results = len(results)
-                        paginated = sorted(results.items())[offset:offset + limit]
-                        lines = [f"Linhas com todos os termos ({total_results} encontradas, mostrando {offset + 1}-{offset + len(paginated)}):", ""]
-                        for linha, found_terms in paginated:
-                            lines.append(f"  Linha {linha}: {found_terms}")
-                        text = "\n".join(lines)
-                else:
-                    results = index.search_multiple(terms, require_all=False)
-                    if not results:
-                        text = f"Nenhum resultado para: {', '.join(terms)}"
-                    else:
-                        lines = ["Resultados da busca:", ""]
-                        for term, matches in results.items():
-                            total_matches = len(matches)
-                            paginated_matches = matches[offset:offset + limit]
-                            showing = f"{offset + 1}-{offset + len(paginated_matches)}" if paginated_matches else "0"
-                            lines.append(f"📌 '{term}' ({total_matches} ocorrências, mostrando {showing}):")
-                            for m in paginated_matches:
-                                lines.append(f"    Linha {m['linha']}: {m['contexto'][:80]}...")
-                            lines.append("")
-                        text = "\n".join(lines)
-
-                # Adicionar stats do índice
+                results = index.search_multiple(terms, require_all=require_all)
+                total_results = len(results) if results else 0
                 stats = index.get_stats()
-                text += f"\n\n📊 Índice: {stats['indexed_terms']} termos, {stats['total_occurrences']} ocorrências totais"
 
+                text = fmt.format_search_response(
+                    results, terms, require_all, total_results,
+                    offset, limit, index_stats=stats,
+                )
                 return {"content": [{"type": "text", "text": text}]}
 
             except Exception as e:
@@ -1120,22 +1040,8 @@ Próximo passo: rlm_load_s3(key="{output_key}", name="texto", data_type="text")"
                 stats = persistence.get_stats()
                 saved_vars = persistence.list_variables()
 
-                lines = ["📦 Estatísticas de Persistência", ""]
-                lines.append(f"Variáveis salvas: {stats.get('variables_count', 0)}")
-                lines.append(f"Tamanho total: {stats.get('variables_total_size', 0):,} bytes")
-                lines.append(f"Índices salvos: {stats.get('indices_count', 0)}")
-                lines.append(f"Termos indexados: {stats.get('total_indexed_terms', 0):,}")
-                lines.append(f"Arquivo DB: {stats.get('db_path', 'N/A')}")
-                lines.append(f"Tamanho DB: {stats.get('db_file_size', 0):,} bytes")
-
-                if saved_vars:
-                    lines.append("")
-                    lines.append("Variáveis persistidas:")
-                    for v in saved_vars:
-                        lines.append(f"  - {v['name']} ({v['type']}, {v['size_bytes']:,} bytes)")
-                        lines.append(f"    Atualizado: {v['updated_at']}")
-
-                return {"content": [{"type": "text", "text": "\n".join(lines)}]}
+                text = fmt.format_persistence_stats(stats, saved_vars)
+                return {"content": [{"type": "text", "text": text}]}
 
             except Exception as e:
                 return {
@@ -1259,16 +1165,7 @@ Próximo passo: rlm_load_s3(key="{output_key}", name="texto", data_type="text")"
                 persistence = get_persistence()
                 collections = persistence.list_collections()
 
-                if not collections:
-                    text = "Nenhuma coleção criada ainda."
-                else:
-                    lines = ["📚 Coleções disponíveis:", ""]
-                    for c in collections:
-                        lines.append(f"  📁 {c['name']} ({c['var_count']} variáveis)")
-                        if c['description']:
-                            lines.append(f"     {c['description']}")
-                    text = "\n".join(lines)
-
+                text = fmt.format_collection_list(collections)
                 return {"content": [{"type": "text", "text": text}]}
 
             except Exception as e:
@@ -1293,17 +1190,8 @@ Próximo passo: rlm_load_s3(key="{output_key}", name="texto", data_type="text")"
                         "isError": True
                     }
 
-                lines = [f"📁 Coleção: {info['name']}", ""]
-                if info['description']:
-                    lines.append(f"Descrição: {info['description']}")
-                lines.append(f"Criada em: {info['created_at']}")
-                lines.append(f"Total: {info['var_count']} variáveis, {info['total_size']:,} bytes")
-                lines.append("")
-                lines.append("Variáveis:")
-                for v in info['variables']:
-                    lines.append(f"  - {v['name']} ({v['type']}, {v['size_bytes']:,} bytes)")
-
-                return {"content": [{"type": "text", "text": "\n".join(lines)}]}
+                text = fmt.format_collection_info(info)
+                return {"content": [{"type": "text", "text": text}]}
 
             except Exception as e:
                 return {
@@ -1556,6 +1444,17 @@ Próximo passo: rlm_load_s3(key="{output_key}", name="texto", data_type="text")"
                     "isError": True
                 }
 
+        elif name == "rlm_pin_var":
+            var_name = arguments["name"]
+            pin = arguments.get("pin", True)
+
+            if repl.pin_variable(var_name, pin):
+                text = fmt.format_pin_response(var_name, pin)
+            else:
+                text = f"Variável '{var_name}' não encontrada."
+                return {"content": [{"type": "text", "text": text}], "isError": True}
+            return {"content": [{"type": "text", "text": text}]}
+
         elif name == "rlm_save_to_s3":
             # Rate limit check for uploads
             rate_id = client_id or "anonymous"
@@ -1574,7 +1473,7 @@ Próximo passo: rlm_load_s3(key="{output_key}", name="texto", data_type="text")"
             var_name = arguments["var_name"]
             bucket = arguments.get("bucket", "claude-code")
             key = arguments["key"]
-            fmt = arguments.get("format", "auto")
+            save_fmt = arguments.get("format", "auto")
 
             # Verificar se variável existe
             if var_name not in repl.variables:
@@ -1589,16 +1488,16 @@ Próximo passo: rlm_load_s3(key="{output_key}", name="texto", data_type="text")"
 
             try:
                 # Determinar formato de serialização
-                if fmt == "auto":
+                if save_fmt == "auto":
                     if isinstance(value, str):
-                        fmt = "text"
+                        save_fmt = "text"
                     elif isinstance(value, (dict, list)):
-                        fmt = "json"
+                        save_fmt = "json"
                     else:
-                        fmt = "text"
+                        save_fmt = "text"
 
                 # Serializar
-                if fmt == "json":
+                if save_fmt == "json":
                     content = json.dumps(value, ensure_ascii=False, indent=2)
                     content_type = "application/json"
                 else:
@@ -1616,17 +1515,7 @@ Próximo passo: rlm_load_s3(key="{output_key}", name="texto", data_type="text")"
                 # Record successful upload for rate limiting
                 upload_rate_limiter.record(rate_id)
 
-                text = f"""✅ Variável salva no S3:
-Variável: {var_name}
-Tipo original: {type(value).__name__}
-Formato: {fmt}
-
-Destino:
-  Bucket: {result['bucket']}
-  Key: {result['key']}
-  Tamanho: {result['size_human']}
-
-Para carregar novamente: rlm_load_s3(key="{key}", name="{var_name}", data_type="{'json' if fmt == 'json' else 'text'}")"""
+                text = fmt.format_save_to_s3(var_name, type(value).__name__, save_fmt, result, key)
                 return {"content": [{"type": "text", "text": text}]}
 
             except Exception as e:
@@ -1656,24 +1545,6 @@ Para carregar novamente: rlm_load_s3(key="{key}", name="{var_name}", data_type="
             ],
             "isError": True
         }
-
-
-def format_execution_result(result: ExecutionResult) -> str:
-    """Formata resultado de execução"""
-    parts = []
-
-    if result.stdout:
-        parts.append(f"=== OUTPUT ===\n{result.stdout}")
-
-    if result.stderr:
-        parts.append(f"=== ERRORS ===\n{result.stderr}")
-
-    if result.variables_changed:
-        parts.append(f"=== VARIÁVEIS ALTERADAS ===\n{', '.join(result.variables_changed)}")
-
-    parts.append(f"\n[Execução: {result.execution_time_ms:.1f}ms | Status: {'OK' if result.success else 'ERRO'}]")
-
-    return "\n".join(parts) if parts else "Execução concluída sem output."
 
 
 # =============================================================================

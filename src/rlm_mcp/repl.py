@@ -288,6 +288,9 @@ class VariableInfo:
     preview: str  # Primeiros N caracteres
     created_at: datetime
     last_accessed: datetime
+    access_count: int = 0
+    pinned: bool = False
+    source: str = "unknown"  # "s3", "file", "execute", "load_data"
 
 
 class SecurityError(Exception):
@@ -322,7 +325,8 @@ class SafeREPL:
         max_memory_mb: int = 1024,
         max_var_size_mb: int = 50,
         cleanup_threshold_percent: float = 80.0,
-        cleanup_target_percent: float = 60.0
+        cleanup_target_percent: float = 60.0,
+        cleanup_strategy: str = "weighted",
     ):
         self.variables: dict[str, Any] = {}
         self.variable_metadata: dict[str, VariableInfo] = {}
@@ -334,6 +338,7 @@ class SafeREPL:
         self.cleanup_threshold_percent = cleanup_threshold_percent  # Quando limpar
         self.cleanup_target_percent = cleanup_target_percent  # Até quanto limpar
         self.last_cleanup_count = 0  # Quantas variáveis foram removidas na última limpeza
+        self.cleanup_strategy = cleanup_strategy  # weighted|lru|lfu|size
 
         # Cliente LLM para sub-chamadas recursivas (RLM)
         self.llm_client = LLMClient()
@@ -575,6 +580,13 @@ class SafeREPL:
         now = datetime.now()
         variables_changed = []
 
+        # Track which existing variables were accessed (referenced in code)
+        for name in self.variable_metadata:
+            if name in namespace and name in self.variables:
+                # Variable was in namespace = it was accessible, increment access
+                self.variable_metadata[name].access_count += 1
+                self.variable_metadata[name].last_accessed = now
+
         for name, value in namespace.items():
             if name.startswith('_'):
                 continue
@@ -601,14 +613,18 @@ class SafeREPL:
 
                 self.variables[name] = value
                 variables_changed.append(name)
+                existing = self.variable_metadata.get(name)
                 self.variable_metadata[name] = VariableInfo(
                     name=name,
                     type_name=type(value).__name__,
                     size_bytes=size,
                     size_human=self._human_size(size),
                     preview=self._get_preview(value),
-                    created_at=now if is_new else self.variable_metadata.get(name, VariableInfo(name, "", 0, "", "", now, now)).created_at,
+                    created_at=existing.created_at if existing else now,
                     last_accessed=now,
+                    access_count=(existing.access_count if existing else 0) + 1,
+                    pinned=existing.pinned if existing else False,
+                    source=existing.source if existing else "execute",
                 )
 
         execution_time = (time.perf_counter() - start_time) * 1000
@@ -660,6 +676,7 @@ class SafeREPL:
 
             self.variables[name] = value
             now = datetime.now()
+            existing = self.variable_metadata.get(name)
 
             self.variable_metadata[name] = VariableInfo(
                 name=name,
@@ -667,8 +684,11 @@ class SafeREPL:
                 size_bytes=size,
                 size_human=self._human_size(size),
                 preview=self._get_preview(value),
-                created_at=now,
+                created_at=existing.created_at if existing else now,
                 last_accessed=now,
+                access_count=(existing.access_count if existing else 0) + 1,
+                pinned=existing.pinned if existing else False,
+                source=existing.source if existing else "load_data",
             )
 
             # Auto-cleanup se necessário
@@ -715,6 +735,21 @@ class SafeREPL:
         self.variable_metadata.clear()
         return count
 
+    def pin_variable(self, name: str, pin: bool = True) -> bool:
+        """Pin or unpin a variable to protect it from GC.
+
+        Args:
+            name: Variable name
+            pin: True to pin, False to unpin
+
+        Returns:
+            True if variable found and updated, False otherwise
+        """
+        if name in self.variable_metadata:
+            self.variable_metadata[name].pinned = pin
+            return True
+        return False
+
     def get_memory_usage(self) -> dict:
         """Retorna uso de memória"""
         total = sum(v.size_bytes for v in self.variable_metadata.values())
@@ -726,11 +761,36 @@ class SafeREPL:
             "usage_percent": (total / (self.max_memory_mb * 1024 * 1024)) * 100,
         }
 
+    def _cleanup_score(self, meta: VariableInfo) -> float:
+        """Calculate cleanup priority score.
+
+        Higher score = more likely to keep.
+        Lower score = candidate for removal.
+
+        Formula: (recency × frequency) / (1 + size_mb)
+        - recency: seconds since last access (inverted - recent = higher)
+        - frequency: access_count (more accessed = higher)
+        - size_mb: larger vars get lower score (cost more to keep)
+        """
+        now = datetime.now()
+        age_seconds = max(1, (now - meta.last_accessed).total_seconds())
+        recency = 1.0 / age_seconds  # Recent = higher value
+        frequency = max(1, meta.access_count)
+        size_mb = meta.size_bytes / (1024 * 1024)
+
+        return (recency * frequency) / (1.0 + size_mb)
+
     def _auto_cleanup(self) -> dict:
         """
         Auto-limpeza de memória quando atinge threshold.
 
-        Remove variáveis mais antigas (por last_accessed) até atingir o target.
+        Strategies:
+        - weighted: Score-based (recency × frequency / size) - default
+        - lru: Least recently used (original behavior)
+        - lfu: Least frequently used
+        - size: Largest variables first
+
+        Pinned variables are never removed.
         Preserva funções LLM (llm_query, llm_stats, llm_reset_counter).
 
         Returns:
@@ -742,17 +802,29 @@ class SafeREPL:
             return {}  # Não precisa limpar
 
         logger.info(
-            f"Auto-cleanup triggered: {usage['usage_percent']:.1f}% > {self.cleanup_threshold_percent}%"
+            f"Auto-cleanup triggered: {usage['usage_percent']:.1f}% > {self.cleanup_threshold_percent}% "
+            f"(strategy: {self.cleanup_strategy})"
         )
 
         # Variáveis protegidas (não remover)
         protected = {'llm_query', 'llm_stats', 'llm_reset_counter'}
 
-        # Ordena variáveis por last_accessed (mais antigas primeiro)
-        sorted_vars = sorted(
-            [(name, meta) for name, meta in self.variable_metadata.items() if name not in protected],
-            key=lambda x: x[1].last_accessed
-        )
+        # Filter eligible variables (not protected, not pinned)
+        eligible = [
+            (name, meta) for name, meta in self.variable_metadata.items()
+            if name not in protected and not meta.pinned
+        ]
+
+        # Sort by strategy (lowest priority first = removed first)
+        strategy = self.cleanup_strategy
+        if strategy == "lru":
+            sorted_vars = sorted(eligible, key=lambda x: x[1].last_accessed)
+        elif strategy == "lfu":
+            sorted_vars = sorted(eligible, key=lambda x: x[1].access_count)
+        elif strategy == "size":
+            sorted_vars = sorted(eligible, key=lambda x: -x[1].size_bytes)
+        else:  # weighted (default)
+            sorted_vars = sorted(eligible, key=lambda x: self._cleanup_score(x[1]))
 
         removed = []
         removed_bytes = 0

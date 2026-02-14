@@ -545,6 +545,30 @@ Exemplo: rlm_search_collection(collection="homeopatia", terms=["medo", "ansiedad
         }
     },
     {
+        "name": "rlm_pin_var",
+        "description": """Protege (pin) ou desprotege (unpin) uma variável do garbage collector.
+
+Variáveis pinned NUNCA são removidas pelo auto-cleanup, mesmo sob pressão de memória.
+Use para proteger variáveis importantes que não devem ser perdidas.
+
+Exemplo: rlm_pin_var(name="dados_importantes", pin=True)""",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Nome da variável"
+                },
+                "pin": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "True para proteger, False para desproteger (padrão: True)"
+                }
+            },
+            "required": ["name"]
+        }
+    },
+    {
         "name": "rlm_save_to_s3",
         "description": """Salva uma variável do REPL para o Minio/S3.
 
