@@ -180,6 +180,21 @@ def detect_language(filename: str, content: Optional[str] = None) -> Optional[st
             if "node" in first_line:
                 return "javascript"
 
+        # Content-based heuristic detection
+        import re
+        if re.search(r'\bdef\s+\w+\s*\(', content) or re.search(r'\bclass\s+\w+[\s(:]', content):
+            return "python"
+        if re.search(r'\bfunction\s+\w+\s*\(', content) or re.search(r'\bconst\s+\w+\s*=\s*\(', content):
+            if 'interface ' in content or ': string' in content or ': number' in content:
+                return "typescript"
+            return "javascript"
+        if re.search(r'\bfunc\s+\w+\s*\(', content) and 'package ' in content:
+            return "go"
+        if re.search(r'\bfn\s+\w+\s*\(', content) and ('let mut ' in content or '-> ' in content):
+            return "rust"
+        if re.search(r'public\s+class\s+\w+', content) and 'System.out' in content:
+            return "java"
+
     return None
 
 
