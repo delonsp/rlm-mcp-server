@@ -41,6 +41,8 @@ services:
       - RLM_MAX_CONCURRENT_TASKS=${RLM_MAX_CONCURRENT_TASKS:-3}
       # Batch S3 operations (max parallel workers)
       - RLM_BATCH_MAX_WORKERS=${RLM_BATCH_MAX_WORKERS:-4}
+      # Embedding mode for vector search (openai|disabled)
+      - RLM_EMBEDDING_MODE=${RLM_EMBEDDING_MODE:-openai}
       # Diretório de persistência SQLite
       - RLM_PERSIST_DIR=/persist
 

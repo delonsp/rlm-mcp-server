@@ -280,3 +280,151 @@ def clear_index(var_name: str):
 def clear_all_indices():
     """Limpa todo o cache de índices."""
     _indices_cache.clear()
+
+
+# =============================================================================
+# Hybrid Search (keyword + semantic with Reciprocal Rank Fusion)
+# =============================================================================
+
+def hybrid_search(
+    var_name: str,
+    terms: list[str],
+    mode: str = "keyword",
+    require_all: bool = False,
+    limit: int = 20,
+    offset: int = 0,
+) -> dict:
+    """Perform keyword, semantic, or hybrid search.
+
+    Args:
+        var_name: Variable name to search
+        terms: Search terms
+        mode: "keyword" (default), "semantic", or "hybrid"
+        require_all: For keyword mode, require all terms in same line
+        limit: Max results
+        offset: Pagination offset
+
+    Returns:
+        dict with:
+            - "mode": actual mode used
+            - "keyword_results": keyword search results (if applicable)
+            - "semantic_results": list of {chunk_text, line_start, line_end, score} (if applicable)
+            - "hybrid_results": RRF-fused results (if hybrid mode)
+            - "stats": index stats
+    """
+    from .vector_index import get_vector_index
+
+    result = {
+        "mode": mode,
+        "keyword_results": None,
+        "semantic_results": None,
+        "hybrid_results": None,
+        "stats": {},
+    }
+
+    # Keyword search
+    keyword_results = None
+    keyword_index = get_index(var_name)
+    if keyword_index and mode in ("keyword", "hybrid"):
+        keyword_results = keyword_index.search_multiple(terms, require_all=require_all)
+        result["keyword_results"] = keyword_results
+        result["stats"]["keyword"] = keyword_index.get_stats()
+
+    # Semantic search
+    semantic_results = None
+    vector_index = get_vector_index(var_name)
+    if vector_index and mode in ("semantic", "hybrid"):
+        query_text = " ".join(terms)
+        raw_results = vector_index.search(query_text, top_k=limit + offset)
+        semantic_results = [
+            {
+                "chunk_text": r.chunk_text,
+                "line_start": r.line_start,
+                "line_end": r.line_end,
+                "score": r.score,
+                "chunk_index": r.chunk_index,
+            }
+            for r in raw_results
+        ]
+        result["semantic_results"] = semantic_results[offset:offset + limit]
+        result["stats"]["vector"] = vector_index.get_stats()
+
+    # Hybrid fusion with RRF
+    if mode == "hybrid" and keyword_results and semantic_results:
+        result["hybrid_results"] = _reciprocal_rank_fusion(
+            keyword_results, semantic_results, terms, limit, offset
+        )
+    elif mode == "semantic" and not vector_index:
+        # Fallback: no vector index, try keyword
+        if keyword_index:
+            result["mode"] = "keyword (fallback)"
+            result["keyword_results"] = keyword_index.search_multiple(terms, require_all=require_all)
+    elif mode == "hybrid" and not vector_index:
+        # Fallback: no vector index, keyword only
+        result["mode"] = "keyword (no embeddings)"
+
+    return result
+
+
+def _reciprocal_rank_fusion(
+    keyword_results: dict,
+    semantic_results: list[dict],
+    terms: list[str],
+    limit: int = 20,
+    offset: int = 0,
+    k: int = 60,
+) -> list[dict]:
+    """Combine keyword and semantic results using Reciprocal Rank Fusion.
+
+    RRF score = sum(1 / (k + rank_i)) for each result list.
+
+    Args:
+        keyword_results: {term: [matches]} from keyword search
+        semantic_results: [{chunk_text, line_start, line_end, score}] from vector search
+        terms: Original search terms
+        limit: Max results
+        offset: Pagination offset
+        k: RRF constant (default 60)
+
+    Returns:
+        List of fused results sorted by RRF score
+    """
+    rrf_scores: dict[int, dict] = {}  # line_number -> {score, sources, text}
+
+    # Score keyword results by line
+    rank = 0
+    for term, matches in keyword_results.items():
+        for match in matches:
+            line = match["linha"]
+            if line not in rrf_scores:
+                rrf_scores[line] = {
+                    "line": line,
+                    "rrf_score": 0.0,
+                    "text": match.get("contexto", ""),
+                    "sources": set(),
+                }
+            rrf_scores[line]["rrf_score"] += 1.0 / (k + rank)
+            rrf_scores[line]["sources"].add("keyword")
+            rank += 1
+
+    # Score semantic results by line
+    for rank, sr in enumerate(semantic_results):
+        line = sr["line_start"]
+        if line not in rrf_scores:
+            rrf_scores[line] = {
+                "line": line,
+                "rrf_score": 0.0,
+                "text": sr["chunk_text"][:100],
+                "sources": set(),
+            }
+        rrf_scores[line]["rrf_score"] += 1.0 / (k + rank)
+        rrf_scores[line]["sources"].add("semantic")
+
+    # Sort by RRF score
+    sorted_results = sorted(rrf_scores.values(), key=lambda x: -x["rrf_score"])
+
+    # Convert sources set to list for JSON serialization
+    for r in sorted_results:
+        r["sources"] = list(r["sources"])
+
+    return sorted_results[offset:offset + limit]

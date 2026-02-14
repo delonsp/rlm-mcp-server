@@ -377,11 +377,16 @@ O índice é criado automaticamente ao carregar textos grandes (100k+ chars).
 Permite busca rápida sem varrer o texto todo.
 
 Modos de busca:
+- keyword (padrão): busca exata por termos no texto
+- semantic: busca por similaridade vetorial (requer OPENAI_API_KEY)
+- hybrid: combina keyword + semantic com Reciprocal Rank Fusion
+
+Parâmetros:
 - termo único: retorna linhas onde o termo aparece
 - múltiplos termos: retorna linhas com qualquer um dos termos
-- require_all=true: retorna apenas linhas com TODOS os termos
+- require_all=true: retorna apenas linhas com TODOS os termos (só keyword)
 
-Exemplo: rlm_search_index(var_name="scholten1", terms=["medo", "fracasso"])""",
+Exemplo: rlm_search_index(var_name="scholten1", terms=["medo", "fracasso"], mode="hybrid")""",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -394,10 +399,16 @@ Exemplo: rlm_search_index(var_name="scholten1", terms=["medo", "fracasso"])""",
                     "items": {"type": "string"},
                     "description": "Lista de termos para buscar"
                 },
+                "mode": {
+                    "type": "string",
+                    "enum": ["keyword", "semantic", "hybrid"],
+                    "default": "keyword",
+                    "description": "Modo de busca: keyword (exato), semantic (vetorial), hybrid (combinado)"
+                },
                 "require_all": {
                     "type": "boolean",
                     "default": False,
-                    "description": "Se True, retorna apenas linhas com TODOS os termos"
+                    "description": "Se True, retorna apenas linhas com TODOS os termos (modo keyword)"
                 },
                 "limit": {
                     "type": "integer",

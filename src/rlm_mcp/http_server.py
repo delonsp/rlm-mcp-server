@@ -30,7 +30,7 @@ from .repl import SafeREPL, ExecutionResult, INTERNAL_FUNCTION_NAMES
 from .s3_client import get_s3_client
 from .pdf_parser import extract_pdf
 from .persistence import get_persistence
-from .indexer import get_index, set_index, TextIndex, auto_index_if_large
+from .indexer import get_index, set_index, TextIndex, auto_index_if_large, hybrid_search
 from .rate_limiter import SlidingWindowRateLimiter, RateLimitResult
 from .tools.schemas import TOOL_SCHEMAS
 from .services.s3_guard import require_s3_configured
@@ -345,10 +345,28 @@ async def lifespan(app: FastAPI):
                 value = persistence.load_variable(name)
                 if value is not None:
                     repl.variables[name] = value
-                    # Restaurar índice se existir
+                    # Restaurar índice keyword se existir
                     index_data = persistence.load_index(name)
                     if index_data:
                         set_index(name, TextIndex.from_dict(index_data))
+                    # Restaurar embeddings vetoriais se existirem
+                    emb_data = persistence.load_embeddings(name)
+                    if emb_data:
+                        from .vector_index import VectorIndex, ChunkInfo, set_vector_index
+                        vi = VectorIndex(var_name=name)
+                        vi.total_chars = len(value) if isinstance(value, str) else 0
+                        vi.total_lines = value.count('\n') + 1 if isinstance(value, str) else 0
+                        vi.chunks = [
+                            ChunkInfo(
+                                chunk_index=c["chunk_index"],
+                                text=c["chunk_text"],
+                                line_start=c["line_start"],
+                                line_end=c["line_end"],
+                                embedding=c["embedding"],
+                            )
+                            for c in emb_data
+                        ]
+                        set_vector_index(name, vi)
                     logger.info(f"  Restaurado: {name} ({var_info['type']})")
             logger.info("Variáveis restauradas com sucesso")
     except Exception as e:
@@ -1070,6 +1088,7 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
         elif name == "rlm_search_index":
             var_name = arguments["var_name"]
             terms = arguments["terms"]
+            mode = arguments.get("mode", "keyword")
             require_all = arguments.get("require_all", False)
             limit = arguments.get("limit", 20)
             offset = arguments.get("offset", 0)
@@ -1083,26 +1102,39 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                     "isError": True
                 }
 
-            # Verificar se tem índice
-            index = get_index(var_name)
-            if not index:
-                return {
-                    "content": [
-                        {"type": "text", "text": f"Erro: Variável '{var_name}' não possui índice. Indexação automática ocorre para textos >= 100k chars."}
-                    ],
-                    "isError": True
-                }
-
             try:
-                results = index.search_multiple(terms, require_all=require_all)
-                total_results = len(results) if results else 0
-                stats = index.get_stats()
+                if mode in ("semantic", "hybrid"):
+                    # Use hybrid search (supports keyword, semantic, hybrid)
+                    search_result = hybrid_search(
+                        var_name, terms, mode=mode,
+                        require_all=require_all,
+                        limit=limit, offset=offset,
+                    )
+                    text = fmt.format_hybrid_search(
+                        search_result, terms, var_name,
+                        offset=offset, limit=limit,
+                    )
+                    return {"content": [{"type": "text", "text": text}]}
+                else:
+                    # Pure keyword search (original behavior)
+                    index = get_index(var_name)
+                    if not index:
+                        return {
+                            "content": [
+                                {"type": "text", "text": f"Erro: Variável '{var_name}' não possui índice. Indexação automática ocorre para textos >= 100k chars."}
+                            ],
+                            "isError": True
+                        }
 
-                text = fmt.format_search_response(
-                    results, terms, require_all, total_results,
-                    offset, limit, index_stats=stats,
-                )
-                return {"content": [{"type": "text", "text": text}]}
+                    results = index.search_multiple(terms, require_all=require_all)
+                    total_results = len(results) if results else 0
+                    stats = index.get_stats()
+
+                    text = fmt.format_search_response(
+                        results, terms, require_all, total_results,
+                        offset, limit, index_stats=stats,
+                    )
+                    return {"content": [{"type": "text", "text": text}]}
 
             except Exception as e:
                 return {

@@ -103,6 +103,20 @@ class PersistenceManager:
                 )
             """)
 
+            # Tabela de embeddings vetoriais
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS embeddings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    var_name TEXT NOT NULL,
+                    chunk_index INTEGER NOT NULL,
+                    chunk_text TEXT NOT NULL,
+                    line_start INTEGER NOT NULL,
+                    line_end INTEGER NOT NULL,
+                    embedding BLOB NOT NULL,
+                    UNIQUE(var_name, chunk_index)
+                )
+            """)
+
             conn.commit()
             logger.info("Banco de dados SQLite inicializado")
 
@@ -182,6 +196,7 @@ class PersistenceManager:
                 cursor = conn.cursor()
                 cursor.execute("DELETE FROM variables WHERE name = ?", (name,))
                 cursor.execute("DELETE FROM indices WHERE var_name = ?", (name,))
+                cursor.execute("DELETE FROM embeddings WHERE var_name = ?", (name,))
                 conn.commit()
 
             logger.info(f"Variável '{name}' removida")
@@ -280,6 +295,7 @@ class PersistenceManager:
                 count = cursor.fetchone()[0]
                 cursor.execute("DELETE FROM variables")
                 cursor.execute("DELETE FROM indices")
+                cursor.execute("DELETE FROM embeddings")
                 conn.commit()
 
             logger.info(f"Todas as {count} variáveis removidas")
@@ -301,6 +317,9 @@ class PersistenceManager:
                 cursor.execute("SELECT COUNT(*), SUM(terms_count) FROM indices")
                 idx_count, total_terms = cursor.fetchone()
 
+                cursor.execute("SELECT COUNT(DISTINCT var_name), COUNT(*) FROM embeddings")
+                emb_vars, emb_chunks = cursor.fetchone()
+
                 # Tamanho do arquivo
                 file_size = os.path.getsize(self.db_path) if os.path.exists(self.db_path) else 0
 
@@ -309,6 +328,8 @@ class PersistenceManager:
                     "variables_total_size": total_size or 0,
                     "indices_count": idx_count or 0,
                     "total_indexed_terms": total_terms or 0,
+                    "embedding_vars": emb_vars or 0,
+                    "embedding_chunks": emb_chunks or 0,
                     "db_file_size": file_size,
                     "db_path": self.db_path
                 }
@@ -316,6 +337,104 @@ class PersistenceManager:
         except Exception as e:
             logger.error(f"Erro ao obter estatísticas: {e}")
             return {}
+
+    # =========================================================================
+    # Métodos de Embeddings
+    # =========================================================================
+
+    def save_embeddings(self, var_name: str, chunks: list[dict]) -> bool:
+        """Save vector embeddings for a variable.
+
+        Args:
+            var_name: Variable name
+            chunks: List of dicts with chunk_index, chunk_text, line_start, line_end, embedding
+
+        Returns:
+            True if saved successfully
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                # Clear existing embeddings for this variable
+                cursor.execute("DELETE FROM embeddings WHERE var_name = ?", (var_name,))
+
+                for chunk in chunks:
+                    embedding = chunk.get("embedding", [])
+                    if not embedding:
+                        continue
+                    # Store embedding as pickle+zlib compressed blob
+                    emb_blob = zlib.compress(pickle.dumps(embedding))
+                    cursor.execute("""
+                        INSERT INTO embeddings
+                        (var_name, chunk_index, chunk_text, line_start, line_end, embedding)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (
+                        var_name,
+                        chunk["chunk_index"],
+                        chunk["chunk_text"],
+                        chunk["line_start"],
+                        chunk["line_end"],
+                        emb_blob,
+                    ))
+                conn.commit()
+
+            saved_count = len([c for c in chunks if c.get("embedding")])
+            logger.info(f"Embeddings de '{var_name}' salvos ({saved_count} chunks)")
+            return True
+
+        except Exception as e:
+            logger.error(f"Erro ao salvar embeddings de '{var_name}': {e}")
+            return False
+
+    def load_embeddings(self, var_name: str) -> list[dict]:
+        """Load vector embeddings for a variable.
+
+        Returns:
+            List of dicts with chunk_index, chunk_text, line_start, line_end, embedding
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT chunk_index, chunk_text, line_start, line_end, embedding
+                    FROM embeddings WHERE var_name = ?
+                    ORDER BY chunk_index
+                """, (var_name,))
+                rows = cursor.fetchall()
+
+                result = []
+                for row in rows:
+                    embedding = pickle.loads(zlib.decompress(row[4]))
+                    result.append({
+                        "chunk_index": row[0],
+                        "chunk_text": row[1],
+                        "line_start": row[2],
+                        "line_end": row[3],
+                        "embedding": embedding,
+                    })
+
+                if result:
+                    logger.info(f"Embeddings de '{var_name}' carregados ({len(result)} chunks)")
+                return result
+
+        except Exception as e:
+            logger.error(f"Erro ao carregar embeddings de '{var_name}': {e}")
+            return []
+
+    def delete_embeddings(self, var_name: str) -> bool:
+        """Delete vector embeddings for a variable."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM embeddings WHERE var_name = ?", (var_name,))
+                conn.commit()
+
+            logger.info(f"Embeddings de '{var_name}' removidos")
+            return True
+
+        except Exception as e:
+            logger.error(f"Erro ao remover embeddings de '{var_name}': {e}")
+            return False
 
     # =========================================================================
     # Métodos de Coleções

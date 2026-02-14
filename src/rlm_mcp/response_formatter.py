@@ -520,6 +520,9 @@ def format_persistence_stats(stats, saved_vars, verbosity: Optional[Verbosity] =
             f"{stats.get('indices_count', 0)} idx",
             f"{stats.get('total_indexed_terms', 0)} terms",
         ]
+        emb_vars = stats.get('embedding_vars', 0)
+        if emb_vars:
+            parts.append(f"emb:{emb_vars}vars/{stats.get('embedding_chunks', 0)}chunks")
         return "[persist: " + " | ".join(parts) + "]"
 
     lines = ["📦 Estatísticas de Persistência", ""]
@@ -527,6 +530,10 @@ def format_persistence_stats(stats, saved_vars, verbosity: Optional[Verbosity] =
     lines.append(f"Tamanho total: {stats.get('variables_total_size', 0):,} bytes")
     lines.append(f"Índices salvos: {stats.get('indices_count', 0)}")
     lines.append(f"Termos indexados: {stats.get('total_indexed_terms', 0):,}")
+    emb_vars = stats.get('embedding_vars', 0)
+    emb_chunks = stats.get('embedding_chunks', 0)
+    if emb_vars:
+        lines.append(f"Embeddings: {emb_vars} variáveis, {emb_chunks} chunks")
     lines.append(f"Arquivo DB: {stats.get('db_path', 'N/A')}")
     lines.append(f"Tamanho DB: {stats.get('db_file_size', 0):,} bytes")
 
@@ -912,6 +919,83 @@ def format_search_code(
         lines.append("")
 
     return "\n".join(lines)
+
+
+# =============================================================================
+# Hybrid/Semantic search formatting
+# =============================================================================
+
+def format_hybrid_search(
+    search_result: dict,
+    terms: list[str],
+    var_name: str,
+    offset: int = 0,
+    limit: int = 20,
+    verbosity: Optional[Verbosity] = None,
+) -> str:
+    """Format hybrid/semantic search results.
+
+    Args:
+        search_result: dict from indexer.hybrid_search()
+        terms: Original search terms
+        var_name: Variable searched
+        offset: Pagination offset
+        limit: Max results
+        verbosity: Override verbosity
+    """
+    v = verbosity or get_verbosity()
+    mode = search_result.get("mode", "keyword")
+
+    # Semantic mode
+    if "semantic" in mode and search_result.get("semantic_results"):
+        results = search_result["semantic_results"]
+        stats = search_result.get("stats", {}).get("vector", {})
+
+        if v == Verbosity.COMPACT:
+            parts = [f"sem:{var_name}", f"mode:{mode}", f"{len(results)} hits"]
+            for r in results[:5]:
+                parts.append(f"L{r['line_start']}({r['score']:.2f})")
+            return "[" + " | ".join(parts) + "]"
+
+        lines = [f"Semantic search in '{var_name}' (mode: {mode}):", ""]
+        for r in results:
+            lines.append(f"  L{r['line_start']}-{r['line_end']} (score: {r['score']:.3f})")
+            lines.append(f"    {r['chunk_text'][:120]}...")
+            lines.append("")
+        if stats:
+            lines.append(f"Vector index: {stats.get('embedded_chunks', 0)} chunks, {stats.get('total_chars', 0):,} chars")
+        return "\n".join(lines)
+
+    # Hybrid mode
+    if search_result.get("hybrid_results"):
+        results = search_result["hybrid_results"]
+
+        if v == Verbosity.COMPACT:
+            parts = [f"hybrid:{var_name}", f"{len(results)} hits"]
+            for r in results[:5]:
+                src = "+".join(r.get("sources", []))
+                parts.append(f"L{r['line']}({src},{r['rrf_score']:.3f})")
+            return "[" + " | ".join(parts) + "]"
+
+        lines = [f"Hybrid search in '{var_name}' ({len(results)} results, RRF fusion):", ""]
+        for r in results:
+            src = ", ".join(r.get("sources", []))
+            lines.append(f"  L{r['line']} (RRF: {r['rrf_score']:.4f}, sources: {src})")
+            lines.append(f"    {r['text'][:120]}...")
+            lines.append("")
+        return "\n".join(lines)
+
+    # Fallback to keyword formatting
+    keyword_results = search_result.get("keyword_results")
+    if keyword_results:
+        stats = search_result.get("stats", {}).get("keyword")
+        total_results = len(keyword_results)
+        return format_search_response(
+            keyword_results, terms, False, total_results,
+            offset, limit, index_stats=stats, verbosity=v,
+        )
+
+    return f"No results for: {', '.join(terms)} (mode: {mode})"
 
 
 def format_task_cancel(task_id: str, success: bool,
