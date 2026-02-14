@@ -35,6 +35,7 @@ from .rate_limiter import SlidingWindowRateLimiter, RateLimitResult
 from .tools.schemas import TOOL_SCHEMAS
 from .services.s3_guard import require_s3_configured
 from .services.persistence_service import persist_and_index
+from .task_manager import TaskManager
 from . import response_formatter as fmt
 import time
 from collections import defaultdict
@@ -260,6 +261,8 @@ CLEANUP_THRESHOLD = float(os.getenv("RLM_CLEANUP_THRESHOLD", "80.0"))  # Quando 
 CLEANUP_TARGET = float(os.getenv("RLM_CLEANUP_TARGET", "60.0"))  # Até quanto limpar (%)
 SHOW_PERSISTENCE_ERRORS = os.getenv("RLM_SHOW_PERSISTENCE_ERRORS", "true").lower() in ("true", "1", "yes")
 CLEANUP_STRATEGY = os.getenv("RLM_CLEANUP_STRATEGY", "weighted")
+MAX_CONCURRENT_TASKS = int(os.getenv("RLM_MAX_CONCURRENT_TASKS", "3"))
+ASYNC_PDF_THRESHOLD_MB = 5  # PDFs larger than this run as async tasks
 
 # Rate limiting configuration
 SSE_RATE_LIMIT_REQUESTS = int(os.getenv("RLM_SSE_RATE_LIMIT", "100"))
@@ -288,6 +291,9 @@ repl = SafeREPL(
     cleanup_target_percent=CLEANUP_TARGET,
     cleanup_strategy=CLEANUP_STRATEGY,
 )
+
+# Task manager para operações assíncronas
+task_manager = TaskManager(max_concurrent=MAX_CONCURRENT_TASKS)
 
 # Sessões SSE ativas
 sse_sessions: dict[str, asyncio.Queue] = {}
@@ -347,6 +353,7 @@ async def lifespan(app: FastAPI):
 
     yield
     logger.info("RLM MCP Server encerrando")
+    task_manager.shutdown(wait=False)
 
 
 app = FastAPI(
@@ -949,9 +956,50 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                         "isError": True
                     }
 
-                logger.info(f"Processando PDF: {bucket}/{key} ({info['size_human']})")
+                size_mb = info.get("size", 0) / (1024 * 1024)
+                logger.info(f"Processando PDF: {bucket}/{key} ({info['size_human']}, {size_mb:.1f}MB)")
 
-                # Baixar PDF para arquivo temporário
+                # For large PDFs, run as async task
+                if size_mb > ASYNC_PDF_THRESHOLD_MB:
+                    def _process_pdf_async(progress_callback=None):
+                        """Worker function for async PDF processing."""
+                        import tempfile
+                        if progress_callback:
+                            progress_callback(0.05, "downloading PDF from S3")
+                        pdf_bytes = s3.get_object(bucket, key)
+                        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                            tmp.write(pdf_bytes)
+                            tmp_path = tmp.name
+                        try:
+                            if progress_callback:
+                                progress_callback(0.15, "extracting text")
+                            pdf_result = extract_pdf(
+                                tmp_path, method=method,
+                                progress_callback=progress_callback,
+                            )
+                            if not pdf_result.success:
+                                return {
+                                    "content": [{"type": "text", "text": f"Erro ao extrair PDF: {pdf_result.error}"}],
+                                    "isError": True,
+                                }
+                            if progress_callback:
+                                progress_callback(0.9, "uploading text to S3")
+                            upload_result = s3.put_object_text(bucket, output_key, pdf_result.text)
+                            text = fmt.format_process_pdf(bucket, key, output_key, info, pdf_result, upload_result)
+                            return {"content": [{"type": "text", "text": text}]}
+                        finally:
+                            import os as _os
+                            _os.unlink(tmp_path)
+
+                    task_info = task_manager.submit(
+                        tool_name="rlm_process_pdf",
+                        description=f"{bucket}/{key} ({info['size_human']})",
+                        func=_process_pdf_async,
+                    )
+                    text = fmt.format_task_submitted(task_info.task_id, "rlm_process_pdf", f"{bucket}/{key}")
+                    return {"content": [{"type": "text", "text": text}]}
+
+                # Small PDFs: process synchronously (original behavior)
                 import tempfile
                 pdf_bytes = s3.get_object(bucket, key)
                 with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
@@ -959,7 +1007,6 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                     tmp_path = tmp.name
 
                 try:
-                    # Extrair texto
                     pdf_result = extract_pdf(tmp_path, method=method)
 
                     if not pdf_result.success:
@@ -970,9 +1017,7 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                             "isError": True
                         }
 
-                    # Salvar texto no bucket
                     upload_result = s3.put_object_text(bucket, output_key, pdf_result.text)
-
                     text = fmt.format_process_pdf(bucket, key, output_key, info, pdf_result, upload_result)
                     return {"content": [{"type": "text", "text": text}]}
 
@@ -1443,6 +1488,44 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                     ],
                     "isError": True
                 }
+
+        elif name == "rlm_task_status":
+            task_id = arguments["task_id"]
+            task_info = task_manager.get_status(task_id)
+            if not task_info:
+                return {
+                    "content": [{"type": "text", "text": f"Task '{task_id}' não encontrada."}],
+                    "isError": True,
+                }
+
+            # If task completed, return the original result directly
+            if task_info.status == "completed" and task_info.result:
+                result_content = task_info.result.get("content", [])
+                meta = fmt.format_task_status(task_info)
+                # Prepend task meta to the original result
+                if result_content:
+                    original_text = result_content[0].get("text", "")
+                    return {"content": [{"type": "text", "text": original_text}]}
+                return {"content": [{"type": "text", "text": meta}]}
+
+            text = fmt.format_task_status(task_info)
+            return {"content": [{"type": "text", "text": text}]}
+
+        elif name == "rlm_task_list":
+            status_filter = arguments.get("status")
+            tasks = task_manager.list_tasks(status=status_filter)
+            # Cleanup old tasks while we're at it
+            task_manager.cleanup_completed()
+            text = fmt.format_task_list(tasks)
+            return {"content": [{"type": "text", "text": text}]}
+
+        elif name == "rlm_task_cancel":
+            task_id = arguments["task_id"]
+            success = task_manager.cancel(task_id)
+            text = fmt.format_task_cancel(task_id, success)
+            if not success:
+                return {"content": [{"type": "text", "text": text}], "isError": True}
+            return {"content": [{"type": "text", "text": text}]}
 
         elif name == "rlm_pin_var":
             var_name = arguments["name"]

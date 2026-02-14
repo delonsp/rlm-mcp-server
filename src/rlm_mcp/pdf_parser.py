@@ -13,7 +13,7 @@ Estratégia:
 import os
 import base64
 import logging
-from typing import Optional
+from typing import Optional, Callable
 from dataclasses import dataclass
 
 logger = logging.getLogger("rlm-mcp.pdf")
@@ -29,10 +29,17 @@ class PDFExtractionResult:
     error: Optional[str] = None
 
 
-def extract_with_pdfplumber(pdf_path: str) -> PDFExtractionResult:
+def extract_with_pdfplumber(
+    pdf_path: str,
+    progress_callback: Optional[Callable] = None,
+) -> PDFExtractionResult:
     """
     Extrai texto de PDF usando pdfplumber.
     Funciona bem para PDFs machine readable (texto selecionável).
+
+    Args:
+        pdf_path: Caminho para o arquivo PDF
+        progress_callback: Optional callback(progress: float, message: str)
     """
     try:
         import pdfplumber
@@ -55,8 +62,16 @@ def extract_with_pdfplumber(pdf_path: str) -> PDFExtractionResult:
                 page_text = page.extract_text(layout=True) or ""
                 if page_text.strip():
                     text_parts.append(f"--- Página {i + 1} ---\n{page_text}")
+                if progress_callback and page_count > 0:
+                    progress_callback(
+                        (i + 1) / page_count * 0.9,  # Reserve 10% for finalization
+                        f"pdfplumber: page {i + 1}/{page_count}"
+                    )
 
         full_text = "\n\n".join(text_parts)
+
+        if progress_callback:
+            progress_callback(1.0, "pdfplumber: done")
 
         return PDFExtractionResult(
             text=full_text,
@@ -76,7 +91,10 @@ def extract_with_pdfplumber(pdf_path: str) -> PDFExtractionResult:
         )
 
 
-def extract_with_mistral_ocr(pdf_path: str) -> PDFExtractionResult:
+def extract_with_mistral_ocr(
+    pdf_path: str,
+    progress_callback: Optional[Callable] = None,
+) -> PDFExtractionResult:
     """
     Extrai texto de PDF usando Mistral OCR API.
     Funciona para PDFs escaneados (imagens) e machine readable.
@@ -106,11 +124,17 @@ def extract_with_mistral_ocr(pdf_path: str) -> PDFExtractionResult:
     try:
         client = Mistral(api_key=api_key)
 
+        if progress_callback:
+            progress_callback(0.1, "mistral_ocr: uploading PDF")
+
         # Ler PDF e converter para base64
         with open(pdf_path, "rb") as f:
             pdf_bytes = f.read()
 
         base64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
+
+        if progress_callback:
+            progress_callback(0.3, "mistral_ocr: calling API")
 
         # Chamar OCR API
         ocr_response = client.ocr.process(
@@ -122,6 +146,9 @@ def extract_with_mistral_ocr(pdf_path: str) -> PDFExtractionResult:
             table_format="markdown"
         )
 
+        if progress_callback:
+            progress_callback(0.8, "mistral_ocr: processing response")
+
         # Extrair texto das páginas
         text_parts = []
         for i, page in enumerate(ocr_response.pages):
@@ -131,6 +158,9 @@ def extract_with_mistral_ocr(pdf_path: str) -> PDFExtractionResult:
 
         full_text = "\n\n".join(text_parts)
         page_count = len(ocr_response.pages)
+
+        if progress_callback:
+            progress_callback(1.0, "mistral_ocr: done")
 
         return PDFExtractionResult(
             text=full_text,
@@ -210,7 +240,8 @@ def split_pdf_into_chunks(
 def extract_pdf(
     pdf_path: str,
     method: str = "auto",
-    min_chars_threshold: int = 100
+    min_chars_threshold: int = 100,
+    progress_callback: Optional[Callable] = None,
 ) -> PDFExtractionResult:
     """
     Extrai texto de PDF com estratégia configurável.
@@ -223,6 +254,7 @@ def extract_pdf(
             - "ocr": Usa apenas Mistral OCR
         min_chars_threshold: Mínimo de caracteres para considerar extração bem-sucedida
                            (usado no modo "auto" para decidir se faz fallback)
+        progress_callback: Optional callback(progress: float, message: str)
 
     Returns:
         PDFExtractionResult com texto extraído e metadados
@@ -237,14 +269,14 @@ def extract_pdf(
         )
 
     if method == "pdfplumber":
-        return extract_with_pdfplumber(pdf_path)
+        return extract_with_pdfplumber(pdf_path, progress_callback=progress_callback)
 
     elif method == "ocr":
-        return extract_with_mistral_ocr(pdf_path)
+        return extract_with_mistral_ocr(pdf_path, progress_callback=progress_callback)
 
     elif method == "auto":
         # Tenta pdfplumber primeiro
-        result = extract_with_pdfplumber(pdf_path)
+        result = extract_with_pdfplumber(pdf_path, progress_callback=progress_callback)
 
         if result.success and len(result.text.strip()) >= min_chars_threshold:
             return result
@@ -255,7 +287,7 @@ def extract_pdf(
             f"tentando Mistral OCR..."
         )
 
-        ocr_result = extract_with_mistral_ocr(pdf_path)
+        ocr_result = extract_with_mistral_ocr(pdf_path, progress_callback=progress_callback)
 
         # Retorna OCR se funcionou, senão retorna o que tiver
         if ocr_result.success:

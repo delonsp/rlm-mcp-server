@@ -37,6 +37,8 @@ services:
       - RLM_RESPONSE_VERBOSITY=${RLM_RESPONSE_VERBOSITY:-compact}
       # GC cleanup strategy (weighted|lru|lfu|size)
       - RLM_CLEANUP_STRATEGY=${RLM_CLEANUP_STRATEGY:-weighted}
+      # Async tasks (max concurrent workers)
+      - RLM_MAX_CONCURRENT_TASKS=${RLM_MAX_CONCURRENT_TASKS:-3}
       # Diretório de persistência SQLite
       - RLM_PERSIST_DIR=/persist
 

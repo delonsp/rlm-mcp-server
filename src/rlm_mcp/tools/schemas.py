@@ -569,6 +569,63 @@ Exemplo: rlm_pin_var(name="dados_importantes", pin=True)""",
         }
     },
     {
+        "name": "rlm_task_status",
+        "description": """Retorna o status de uma task assíncrona.
+
+Tasks assíncronas são criadas automaticamente para operações longas
+(ex: rlm_process_pdf em PDFs grandes). Use esta ferramenta para verificar
+se a task terminou e obter o resultado.
+
+Exemplo: rlm_task_status(task_id="abc12345")""",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "ID da task (retornado quando a task é criada)"
+                }
+            },
+            "required": ["task_id"]
+        }
+    },
+    {
+        "name": "rlm_task_list",
+        "description": """Lista todas as tasks assíncronas (ativas e recentes).
+
+Mostra tasks pendentes, em execução, concluídas e com erro.
+Use para monitorar operações longas em andamento.
+
+Exemplo: rlm_task_list() ou rlm_task_list(status="running")""",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": ["pending", "running", "completed", "failed", "cancelled"],
+                    "description": "Filtrar por status (opcional, sem filtro retorna todas)"
+                }
+            }
+        }
+    },
+    {
+        "name": "rlm_task_cancel",
+        "description": """Cancela uma task assíncrona em execução.
+
+Útil para cancelar operações longas que não são mais necessárias.
+
+Exemplo: rlm_task_cancel(task_id="abc12345")""",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "ID da task para cancelar"
+                }
+            },
+            "required": ["task_id"]
+        }
+    },
+    {
         "name": "rlm_save_to_s3",
         "description": """Salva uma variável do REPL para o Minio/S3.
 

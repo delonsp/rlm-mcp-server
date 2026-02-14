@@ -9,7 +9,10 @@ Supports three verbosity levels:
 
 import os
 from enum import Enum
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .task_manager import TaskInfo
 
 
 class Verbosity(str, Enum):
@@ -648,3 +651,138 @@ Caracteres: {len(pdf_result.text):,}
 Variável: {var_name}
 
 {format_execution_result(exec_result, Verbosity.NORMAL)}"""
+
+
+# =============================================================================
+# Task formatting (async tasks)
+# =============================================================================
+
+def format_task_submitted(task_id: str, tool_name: str, description: str,
+                           verbosity: Optional[Verbosity] = None) -> str:
+    """Format response when an async task is submitted."""
+    v = verbosity or get_verbosity()
+
+    if v == Verbosity.COMPACT:
+        return f"[task:{task_id} | {description} | use rlm_task_status(\"{task_id}\")]"
+
+    return f"""⏳ Task assíncrona criada:
+ID: {task_id}
+Tool: {tool_name}
+Descrição: {description}
+
+Use rlm_task_status(task_id="{task_id}") para verificar o progresso."""
+
+
+def format_task_status(task: "TaskInfo", verbosity: Optional[Verbosity] = None) -> str:
+    """Format rlm_task_status response."""
+    v = verbosity or get_verbosity()
+
+    status_icons = {
+        "pending": "⏳",
+        "running": "🔄",
+        "completed": "✅",
+        "failed": "❌",
+        "cancelled": "🚫",
+    }
+    icon = status_icons.get(task.status, "❓")
+
+    if v == Verbosity.COMPACT:
+        parts = [f"task:{task.task_id}", task.status]
+        if task.status == "running":
+            parts.append(f"{task.progress:.0%}")
+            if task.progress_message:
+                parts.append(task.progress_message)
+        elif task.status == "completed" and task.result:
+            # Show truncated result
+            result_text = task.result.get("content", [{}])[0].get("text", "") if task.result.get("content") else ""
+            if result_text:
+                parts.append(_truncate(result_text, 200))
+        elif task.status == "failed" and task.error:
+            parts.append(task.error[:100])
+
+        if task.completed_at and task.started_at:
+            elapsed = (task.completed_at - task.started_at).total_seconds()
+            parts.append(f"{elapsed:.1f}s")
+
+        return f"[{' | '.join(parts)}]"
+
+    # Normal/verbose
+    lines = [f"{icon} Task: {task.task_id}"]
+    lines.append(f"Tool: {task.tool_name}")
+    lines.append(f"Descrição: {task.description}")
+    lines.append(f"Status: {task.status}")
+
+    if task.status == "running":
+        pct = f"{task.progress:.0%}"
+        bar_len = 20
+        filled = int(task.progress * bar_len)
+        bar = "█" * filled + "░" * (bar_len - filled)
+        lines.append(f"Progresso: [{bar}] {pct}")
+        if task.progress_message:
+            lines.append(f"Etapa: {task.progress_message}")
+
+    if task.started_at:
+        lines.append(f"Início: {task.started_at.strftime('%H:%M:%S')}")
+    if task.completed_at:
+        lines.append(f"Fim: {task.completed_at.strftime('%H:%M:%S')}")
+        if task.started_at:
+            elapsed = (task.completed_at - task.started_at).total_seconds()
+            lines.append(f"Duração: {elapsed:.1f}s")
+
+    if task.status == "completed" and task.result:
+        result_text = task.result.get("content", [{}])[0].get("text", "") if task.result.get("content") else ""
+        if result_text:
+            lines.append(f"\nResultado:\n{result_text}")
+
+    if task.status == "failed" and task.error:
+        lines.append(f"\nErro: {task.error}")
+
+    return "\n".join(lines)
+
+
+def format_task_list(tasks: list, verbosity: Optional[Verbosity] = None) -> str:
+    """Format rlm_task_list response."""
+    v = verbosity or get_verbosity()
+
+    if not tasks:
+        return "Nenhuma task encontrada."
+
+    status_icons = {
+        "pending": "⏳",
+        "running": "🔄",
+        "completed": "✅",
+        "failed": "❌",
+        "cancelled": "🚫",
+    }
+
+    if v == Verbosity.COMPACT:
+        items = []
+        for t in tasks:
+            icon = status_icons.get(t.status, "?")
+            progress = f" {t.progress:.0%}" if t.status == "running" else ""
+            items.append(f"{icon}{t.task_id}:{t.tool_name}{progress}")
+        return f"{len(tasks)} tasks | {', '.join(items)}"
+
+    lines = [f"📋 Tasks ({len(tasks)}):", ""]
+    for t in tasks:
+        icon = status_icons.get(t.status, "?")
+        line = f"  {icon} {t.task_id} | {t.tool_name} | {t.status}"
+        if t.status == "running":
+            line += f" ({t.progress:.0%})"
+        if t.description:
+            line += f" - {t.description}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def format_task_cancel(task_id: str, success: bool,
+                        verbosity: Optional[Verbosity] = None) -> str:
+    """Format rlm_task_cancel response."""
+    v = verbosity or get_verbosity()
+
+    if v == Verbosity.COMPACT:
+        return f"[task:{task_id} | {'cancelled' if success else 'cancel failed'}]"
+
+    if success:
+        return f"🚫 Task '{task_id}' cancelada com sucesso."
+    return f"Não foi possível cancelar task '{task_id}' (não encontrada ou já finalizada)."
