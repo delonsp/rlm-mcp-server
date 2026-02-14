@@ -20,15 +20,14 @@ dependencies = [
     "tree-sitter-typescript>=0.23.0",  # Gramática TypeScript
 ]
 
-[project.optional-dependencies.grammars]
-# Gramáticas adicionais para tree-sitter (instale conforme necessidade)
-go = ["tree-sitter-go>=0.23.0"]
-rust = ["tree-sitter-rust>=0.23.0"]
-java = ["tree-sitter-java>=0.23.0"]
-c = ["tree-sitter-c>=0.23.0"]
-cpp = ["tree-sitter-cpp>=0.23.0"]
-
 [project.optional-dependencies]
+grammars = [
+    "tree-sitter-go>=0.23.0",
+    "tree-sitter-rust>=0.23.0",
+    "tree-sitter-java>=0.23.0",
+    "tree-sitter-c>=0.23.0",
+    "tree-sitter-cpp>=0.23.0",
+]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
