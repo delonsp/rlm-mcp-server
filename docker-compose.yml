@@ -39,6 +39,8 @@ services:
       - RLM_CLEANUP_STRATEGY=${RLM_CLEANUP_STRATEGY:-weighted}
       # Async tasks (max concurrent workers)
       - RLM_MAX_CONCURRENT_TASKS=${RLM_MAX_CONCURRENT_TASKS:-3}
+      # Batch S3 operations (max parallel workers)
+      - RLM_BATCH_MAX_WORKERS=${RLM_BATCH_MAX_WORKERS:-4}
       # Diretório de persistência SQLite
       - RLM_PERSIST_DIR=/persist
 

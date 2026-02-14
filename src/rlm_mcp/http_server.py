@@ -263,6 +263,8 @@ SHOW_PERSISTENCE_ERRORS = os.getenv("RLM_SHOW_PERSISTENCE_ERRORS", "true").lower
 CLEANUP_STRATEGY = os.getenv("RLM_CLEANUP_STRATEGY", "weighted")
 MAX_CONCURRENT_TASKS = int(os.getenv("RLM_MAX_CONCURRENT_TASKS", "3"))
 ASYNC_PDF_THRESHOLD_MB = 5  # PDFs larger than this run as async tasks
+BATCH_ASYNC_THRESHOLD_FILES = 5  # Batches larger than this run as async tasks
+BATCH_ASYNC_THRESHOLD_MB = 50  # Total batch size threshold for async
 
 # Rate limiting configuration
 SSE_RATE_LIMIT_REQUESTS = int(os.getenv("RLM_SSE_RATE_LIMIT", "100"))
@@ -1537,6 +1539,216 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                 text = f"Variável '{var_name}' não encontrada."
                 return {"content": [{"type": "text", "text": text}], "isError": True}
             return {"content": [{"type": "text", "text": text}]}
+
+        elif name == "rlm_batch_load_s3":
+            s3, error = require_s3_configured()
+            if error:
+                return error
+
+            bucket = arguments.get("bucket", "claude-code")
+            keys_list = arguments["keys"]
+
+            if not keys_list:
+                return {"content": [{"type": "text", "text": "Erro: lista 'keys' vazia."}], "isError": True}
+
+            # Check total size to decide sync vs async
+            total_size = 0
+            for item in keys_list:
+                info = s3.get_object_info(bucket, item["key"])
+                if info:
+                    total_size += info.get("size", 0)
+            total_size_mb = total_size / (1024 * 1024)
+
+            def _batch_load_worker(progress_callback=None):
+                """Worker for batch loading from S3."""
+                s3_keys = [item["key"] for item in keys_list]
+                download_results = s3.batch_get_objects(
+                    bucket, s3_keys, progress_callback=progress_callback,
+                )
+
+                # Map downloaded data to items
+                downloads_by_key = {r["key"]: r for r in download_results}
+                load_results = []
+
+                for item in keys_list:
+                    key = item["key"]
+                    var_name = item["name"]
+                    data_type = item.get("data_type", "text")
+                    dl = downloads_by_key.get(key)
+
+                    if not dl or dl["error"]:
+                        load_results.append({
+                            "name": var_name, "key": key, "size_human": "0 B",
+                            "data_type": data_type, "success": False,
+                            "error": dl["error"] if dl else "not found",
+                        })
+                        continue
+
+                    try:
+                        raw = dl["data"]
+                        try:
+                            text_data = raw.decode("utf-8")
+                        except UnicodeDecodeError:
+                            text_data = raw.decode("latin-1")
+
+                        result = repl.load_data(name=var_name, data=text_data, data_type=data_type)
+                        if var_name in repl.variable_metadata:
+                            repl.variable_metadata[var_name].source = "s3"
+
+                        value = repl.variables.get(var_name)
+                        persist_and_index(var_name, value, repl)
+
+                        load_results.append({
+                            "name": var_name, "key": key,
+                            "size_human": dl["size_human"],
+                            "data_type": data_type,
+                            "success": result.success,
+                            "error": result.stderr if not result.success else None,
+                        })
+                    except Exception as e:
+                        load_results.append({
+                            "name": var_name, "key": key,
+                            "size_human": dl["size_human"],
+                            "data_type": data_type, "success": False,
+                            "error": str(e),
+                        })
+
+                text = fmt.format_batch_load_s3(load_results)
+                return {"content": [{"type": "text", "text": text}]}
+
+            # Large batch → async task
+            if len(keys_list) > BATCH_ASYNC_THRESHOLD_FILES or total_size_mb > BATCH_ASYNC_THRESHOLD_MB:
+                task_info = task_manager.submit(
+                    tool_name="rlm_batch_load_s3",
+                    description=f"{len(keys_list)} files from {bucket} ({total_size_mb:.1f}MB)",
+                    func=_batch_load_worker,
+                )
+                text = fmt.format_task_submitted(
+                    task_info.task_id, "rlm_batch_load_s3",
+                    f"{len(keys_list)} files from {bucket}",
+                )
+                return {"content": [{"type": "text", "text": text}]}
+
+            # Small batch → sync
+            try:
+                return _batch_load_worker()
+            except Exception as e:
+                return {
+                    "content": [{"type": "text", "text": f"Erro no batch load: {e}"}],
+                    "isError": True,
+                }
+
+        elif name == "rlm_batch_upload_s3":
+            # Rate limit check for uploads
+            rate_id = client_id or "anonymous"
+            rate_result = upload_rate_limiter.check(rate_id)
+            if not rate_result.allowed:
+                raise RateLimitExceeded(
+                    result=rate_result,
+                    message=f"Upload rate limit exceeded: {rate_result.limit} uploads per {rate_result.window_seconds} seconds"
+                )
+
+            s3, error = require_s3_configured()
+            if error:
+                return error
+
+            bucket = arguments.get("bucket", "claude-code")
+            vars_list = arguments["vars"]
+
+            if not vars_list:
+                return {"content": [{"type": "text", "text": "Erro: lista 'vars' vazia."}], "isError": True}
+
+            # Validate all vars exist first
+            missing = [item["var_name"] for item in vars_list if item["var_name"] not in repl.variables]
+            if missing:
+                return {
+                    "content": [{"type": "text", "text": f"Erro: Variáveis não encontradas: {', '.join(missing)}"}],
+                    "isError": True,
+                }
+
+            # Calculate total size
+            total_size = 0
+            for item in vars_list:
+                value = repl.variables[item["var_name"]]
+                total_size += len(str(value).encode("utf-8"))
+            total_size_mb = total_size / (1024 * 1024)
+
+            def _batch_upload_worker(progress_callback=None):
+                """Worker for batch uploading to S3."""
+                # Prepare upload items
+                upload_items = []
+                upload_meta = []
+                for item in vars_list:
+                    var_name = item["var_name"]
+                    key = item["key"]
+                    save_fmt = item.get("format", "auto")
+                    value = repl.variables[var_name]
+
+                    # Determine format
+                    if save_fmt == "auto":
+                        if isinstance(value, str):
+                            save_fmt = "text"
+                        elif isinstance(value, (dict, list)):
+                            save_fmt = "json"
+                        else:
+                            save_fmt = "text"
+
+                    # Serialize
+                    if save_fmt == "json":
+                        content = json.dumps(value, ensure_ascii=False, indent=2)
+                        ct = "application/json; charset=utf-8"
+                    else:
+                        content = str(value)
+                        ct = "text/plain; charset=utf-8"
+
+                    data = content.encode("utf-8")
+                    upload_items.append({"key": key, "data": data, "content_type": ct})
+                    upload_meta.append({"var_name": var_name, "key": key, "format": save_fmt})
+
+                upload_results = s3.batch_put_objects(
+                    bucket, upload_items, progress_callback=progress_callback,
+                )
+
+                # Merge results with metadata
+                fmt_results = []
+                for i, up_result in enumerate(upload_results):
+                    meta = upload_meta[i]
+                    fmt_results.append({
+                        "var_name": meta["var_name"],
+                        "key": meta["key"],
+                        "format": meta["format"],
+                        "size_human": up_result["size_human"],
+                        "success": up_result["error"] is None,
+                        "error": up_result.get("error"),
+                    })
+
+                # Record for rate limiting
+                upload_rate_limiter.record(rate_id)
+
+                text = fmt.format_batch_upload_s3(fmt_results)
+                return {"content": [{"type": "text", "text": text}]}
+
+            # Large batch → async task
+            if len(vars_list) > BATCH_ASYNC_THRESHOLD_FILES or total_size_mb > BATCH_ASYNC_THRESHOLD_MB:
+                task_info = task_manager.submit(
+                    tool_name="rlm_batch_upload_s3",
+                    description=f"{len(vars_list)} vars to {bucket} ({total_size_mb:.1f}MB)",
+                    func=_batch_upload_worker,
+                )
+                text = fmt.format_task_submitted(
+                    task_info.task_id, "rlm_batch_upload_s3",
+                    f"{len(vars_list)} vars to {bucket}",
+                )
+                return {"content": [{"type": "text", "text": text}]}
+
+            # Small batch → sync
+            try:
+                return _batch_upload_worker()
+            except Exception as e:
+                return {
+                    "content": [{"type": "text", "text": f"Erro no batch upload: {e}"}],
+                    "isError": True,
+                }
 
         elif name == "rlm_save_to_s3":
             # Rate limit check for uploads

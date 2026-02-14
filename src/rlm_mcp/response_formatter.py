@@ -775,6 +775,74 @@ def format_task_list(tasks: list, verbosity: Optional[Verbosity] = None) -> str:
     return "\n".join(lines)
 
 
+# =============================================================================
+# Batch S3 formatting
+# =============================================================================
+
+def format_batch_load_s3(
+    results: list[dict],
+    verbosity: Optional[Verbosity] = None,
+) -> str:
+    """Format rlm_batch_load_s3 response.
+
+    Args:
+        results: List of dicts with {name, key, size_human, data_type, success, error}
+    """
+    v = verbosity or get_verbosity()
+
+    ok = [r for r in results if r.get("success")]
+    err = [r for r in results if not r.get("success")]
+
+    if v == Verbosity.COMPACT:
+        parts = [f"batch:{len(ok)}/{len(results)} loaded"]
+        if ok:
+            ok_names = ",".join(r["name"] for r in ok)
+            parts.append(f"ok:{ok_names}")
+        if err:
+            err_items = ",".join(f"{r['name']}({r.get('error', '?')[:20]})" for r in err)
+            parts.append(f"err:{err_items}")
+        return "[" + " | ".join(parts) + "]"
+
+    lines = [f"Batch Load S3 ({len(ok)}/{len(results)} carregados):", ""]
+    for r in ok:
+        lines.append(f"  ✅ {r['name']} ← {r['key']} ({r['size_human']}, {r['data_type']})")
+    for r in err:
+        lines.append(f"  ❌ {r['name']} ← {r['key']}: {r.get('error', 'erro desconhecido')}")
+    return "\n".join(lines)
+
+
+def format_batch_upload_s3(
+    results: list[dict],
+    verbosity: Optional[Verbosity] = None,
+) -> str:
+    """Format rlm_batch_upload_s3 response.
+
+    Args:
+        results: List of dicts with {var_name, key, size_human, format, success, error}
+    """
+    v = verbosity or get_verbosity()
+
+    ok = [r for r in results if r.get("success")]
+    err = [r for r in results if not r.get("success")]
+
+    if v == Verbosity.COMPACT:
+        parts = [f"batch:{len(ok)}/{len(results)} uploaded"]
+        if ok:
+            ok_names = ",".join(r["var_name"] for r in ok)
+            parts.append(f"ok:{ok_names}")
+        if err:
+            err_items = ",".join(f"{r['var_name']}({r.get('error', '?')[:20]})" for r in err)
+            parts.append(f"err:{err_items}")
+        return "[" + " | ".join(parts) + "]"
+
+    lines = [f"Batch Upload S3 ({len(ok)}/{len(results)} enviados):", ""]
+    for r in ok:
+        lines.append(f"  ✅ {r['var_name']} → {r['key']} ({r['size_human']}, {r['format']})")
+    for r in err:
+        lines.append(f"  ❌ {r['var_name']} → {r['key']}: {r.get('error', 'erro desconhecido')}")
+    return "\n".join(lines)
+
+
 def format_task_cancel(task_id: str, success: bool,
                         verbosity: Optional[Verbosity] = None) -> str:
     """Format rlm_task_cancel response."""

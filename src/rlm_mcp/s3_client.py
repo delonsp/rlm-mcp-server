@@ -7,11 +7,13 @@ sem passar pelo contexto do Claude Code.
 
 import os
 import logging
-from typing import Optional
+from typing import Optional, Callable
 from io import BytesIO
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger("rlm-mcp.s3")
 
+BATCH_MAX_WORKERS = int(os.getenv("RLM_BATCH_MAX_WORKERS", "4"))
 
 class S3Client:
     """Cliente para carregar arquivos do Minio/S3."""
@@ -240,6 +242,129 @@ class S3Client:
         except Exception as e:
             logger.error(f"Erro ao gerar URL de download: {e}")
             raise RuntimeError(f"Erro ao gerar URL de download: {e}")
+
+    def batch_get_objects(
+        self,
+        bucket: str,
+        keys: list[str],
+        max_workers: int = 0,
+        progress_callback: Optional[Callable] = None,
+    ) -> list[dict]:
+        """Download multiple objects in parallel.
+
+        Args:
+            bucket: Bucket name
+            keys: List of object keys to download
+            max_workers: Max parallel workers (0 = use env default)
+            progress_callback: Optional callback(progress: float, message: str)
+
+        Returns:
+            List of dicts with {key, data, size, size_human, error}
+        """
+        workers = max_workers or BATCH_MAX_WORKERS
+        results = []
+        completed = 0
+        total = len(keys)
+
+        def _get_one(key: str) -> dict:
+            try:
+                data = self.get_object(bucket, key)
+                return {
+                    "key": key,
+                    "data": data,
+                    "size": len(data),
+                    "size_human": self._human_size(len(data)),
+                    "error": None,
+                }
+            except Exception as e:
+                logger.warning(f"Batch get failed for {bucket}/{key}: {e}")
+                return {
+                    "key": key,
+                    "data": None,
+                    "size": 0,
+                    "size_human": "0 B",
+                    "error": str(e),
+                }
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            future_to_key = {executor.submit(_get_one, k): k for k in keys}
+            for future in as_completed(future_to_key):
+                result = future.result()
+                results.append(result)
+                completed += 1
+                if progress_callback:
+                    progress_callback(
+                        completed / total,
+                        f"downloaded {completed}/{total}: {result['key']}"
+                    )
+
+        # Preserve original order
+        key_order = {k: i for i, k in enumerate(keys)}
+        results.sort(key=lambda r: key_order.get(r["key"], 0))
+        return results
+
+    def batch_put_objects(
+        self,
+        bucket: str,
+        items: list[dict],
+        max_workers: int = 0,
+        progress_callback: Optional[Callable] = None,
+    ) -> list[dict]:
+        """Upload multiple objects in parallel.
+
+        Args:
+            bucket: Bucket name
+            items: List of dicts with {key, data (bytes), content_type?}
+            max_workers: Max parallel workers (0 = use env default)
+            progress_callback: Optional callback(progress: float, message: str)
+
+        Returns:
+            List of dicts with {key, size, size_human, etag, error}
+        """
+        workers = max_workers or BATCH_MAX_WORKERS
+        results = []
+        completed = 0
+        total = len(items)
+
+        def _put_one(item: dict) -> dict:
+            key = item["key"]
+            try:
+                data = item["data"]
+                ct = item.get("content_type", "application/octet-stream")
+                result = self.put_object(bucket, key, data, content_type=ct)
+                return {
+                    "key": key,
+                    "size": result["size"],
+                    "size_human": result["size_human"],
+                    "etag": result.get("etag"),
+                    "error": None,
+                }
+            except Exception as e:
+                logger.warning(f"Batch put failed for {bucket}/{key}: {e}")
+                return {
+                    "key": key,
+                    "size": 0,
+                    "size_human": "0 B",
+                    "etag": None,
+                    "error": str(e),
+                }
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            future_to_key = {executor.submit(_put_one, it): it["key"] for it in items}
+            for future in as_completed(future_to_key):
+                result = future.result()
+                results.append(result)
+                completed += 1
+                if progress_callback:
+                    progress_callback(
+                        completed / total,
+                        f"uploaded {completed}/{total}: {result['key']}"
+                    )
+
+        # Preserve original order
+        key_order = {it["key"]: i for i, it in enumerate(items)}
+        results.sort(key=lambda r: key_order.get(r["key"], 0))
+        return results
 
     @staticmethod
     def _human_size(size_bytes: int) -> str:

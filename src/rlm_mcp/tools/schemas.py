@@ -626,6 +626,116 @@ Exemplo: rlm_task_cancel(task_id="abc12345")""",
         }
     },
     {
+        "name": "rlm_batch_load_s3",
+        "description": """Carrega múltiplos arquivos do Minio/S3 de uma vez.
+
+Baixa todos os arquivos em paralelo e cria uma variável para cada.
+Ideal para carregar vários documentos relacionados de uma vez.
+
+Se o batch for grande (> 5 arquivos ou > 50MB total), roda como task assíncrona.
+
+Cada item em 'keys' deve ter:
+- key: Caminho no bucket
+- name: Nome da variável
+
+Opcionais por item:
+- data_type: Tipo de parsing (text, json, lines, csv) — padrão: text
+
+Exemplo: rlm_batch_load_s3(keys=[
+    {"key": "data/doc1.txt", "name": "doc1"},
+    {"key": "data/doc2.json", "name": "doc2", "data_type": "json"}
+])""",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "key": {
+                                "type": "string",
+                                "description": "Caminho/chave do objeto no bucket"
+                            },
+                            "name": {
+                                "type": "string",
+                                "description": "Nome da variável no REPL"
+                            },
+                            "data_type": {
+                                "type": "string",
+                                "enum": ["text", "json", "lines", "csv"],
+                                "default": "text",
+                                "description": "Tipo de parsing (padrão: text)"
+                            }
+                        },
+                        "required": ["key", "name"]
+                    },
+                    "description": "Lista de objetos para carregar"
+                },
+                "bucket": {
+                    "type": "string",
+                    "default": "claude-code",
+                    "description": "Nome do bucket (padrão: claude-code)"
+                }
+            },
+            "required": ["keys"]
+        }
+    },
+    {
+        "name": "rlm_batch_upload_s3",
+        "description": """Exporta múltiplas variáveis do REPL para o Minio/S3 de uma vez.
+
+Faz upload de todas as variáveis em paralelo.
+Se o batch for grande (> 5 vars ou > 50MB total), roda como task assíncrona.
+
+Cada item em 'vars' deve ter:
+- var_name: Nome da variável no REPL
+- key: Caminho destino no bucket
+
+Opcionais por item:
+- format: Formato de serialização (auto, text, json) — padrão: auto
+
+Exemplo: rlm_batch_upload_s3(vars=[
+    {"var_name": "resultado1", "key": "output/res1.json", "format": "json"},
+    {"var_name": "resultado2", "key": "output/res2.txt"}
+])""",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "vars": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "var_name": {
+                                "type": "string",
+                                "description": "Nome da variável no REPL"
+                            },
+                            "key": {
+                                "type": "string",
+                                "description": "Caminho/chave destino no bucket"
+                            },
+                            "format": {
+                                "type": "string",
+                                "enum": ["auto", "text", "json"],
+                                "default": "auto",
+                                "description": "Formato de serialização (padrão: auto)"
+                            }
+                        },
+                        "required": ["var_name", "key"]
+                    },
+                    "description": "Lista de variáveis para exportar"
+                },
+                "bucket": {
+                    "type": "string",
+                    "default": "claude-code",
+                    "description": "Nome do bucket (padrão: claude-code)"
+                }
+            },
+            "required": ["vars"]
+        }
+    },
+    {
         "name": "rlm_save_to_s3",
         "description": """Salva uma variável do REPL para o Minio/S3.
 
