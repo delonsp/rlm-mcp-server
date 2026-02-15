@@ -141,7 +141,7 @@ scp arquivo.pdf user@vps:/caminho/para/rlm-data/
 - `rlm_task` - Gerencia tasks assíncronas via `action`: list, status, cancel
 
 ### Ajuda
-- `rlm_help` - Documentação integrada (use `topic` para seções específicas)
+- `rlm_help` - Documentação integrada. Tópicos: `workflows`, `s3`, `search`, `code`, `pdf`, `collections`, `execute`, `security`, `config`
 
 ## Paginação
 
