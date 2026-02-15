@@ -623,6 +623,153 @@ def get_tools_list() -> list[dict]:
     return TOOL_SCHEMAS
 
 
+_HELP_SECTIONS = {
+    "workflows": """## Workflows Essenciais
+
+1. **PDF grande (2 etapas)** — Evita timeout:
+   rlm_process_pdf(key="pdfs/livro.pdf")  → salva pdfs/livro.txt no bucket
+   rlm_load_s3(key="pdfs/livro.txt", name="livro")  → carrega texto rápido
+
+2. **Batch load** — Múltiplos arquivos de uma vez:
+   rlm_load_s3(keys=[{"key":"data/a.csv","name":"a","data_type":"csv"}, {"key":"data/b.csv","name":"b","data_type":"csv"}])
+
+3. **Coleção** — Agrupar + buscar em vários docs:
+   rlm_collection(action="create", name="manuais", description="Manuais técnicos")
+   rlm_collection(action="add", name="manuais", vars=["doc1","doc2","doc3"])
+   rlm_collection(action="search", name="manuais", terms=["instalação"])
+
+4. **Análise com código** — Carregar → executar Python → salvar resultado:
+   rlm_load_s3(key="data/vendas.csv", name="v", data_type="csv")
+   rlm_execute(code="from collections import Counter; print(Counter(r['cidade'] for r in v).most_common(5))")
+   rlm_save_to_s3(var_name="resultado", key="output/analise.json")""",
+
+    "s3": """## Convenções S3
+
+Bucket padrão: claude-code
+
+Estrutura recomendada:
+  data/    → Dados estruturados (.csv, .json, .txt)
+  pdfs/    → PDFs (.pdf) e textos extraídos (.txt)
+  code/    → Código-fonte (.py, .js, .ts)
+  logs/    → Logs (.log)
+  output/  → Resultados de análises
+
+Upload de URL externa direto para S3:
+  rlm_upload_url(url="https://example.com/data.csv", key="data/externo.csv")
+
+Listar conteúdo:
+  rlm_list_s3(prefix="data/", limit=20)
+  rlm_list_buckets()""",
+
+    "search": """## Busca e Indexação
+
+**Auto-indexação**: Textos >= 100k chars recebem índice de keywords e embeddings vetoriais automaticamente ao carregar.
+
+**Modos de busca** (rlm_search_index):
+- keyword: busca exata por termo (rápido, sem API)
+- semantic: busca por significado via embeddings OpenAI
+- hybrid: combina ambos com Reciprocal Rank Fusion
+
+Exemplos:
+  rlm_search_index(var_name="livro", terms=["ansiedade"], mode="keyword")
+  rlm_search_index(var_name="livro", terms=["preocupação excessiva"], mode="semantic")
+  rlm_search_index(var_name="livro", terms=["medo do futuro"], mode="hybrid")
+
+**Textos < 100k chars**: Use rlm_execute com buscar(texto, termo) ou Python direto.
+
+**Busca em coleção**: rlm_search_collection busca em TODOS os docs da coleção.""",
+
+    "code": """## Análise de Código-Fonte
+
+Carregar com data_type="code" para parsing estrutural tree-sitter:
+  rlm_load_s3(key="code/app.py", name="app", data_type="code")
+
+Linguagens suportadas: Python, JavaScript, TypeScript, Go, Rust, Java, C, C++
+Auto-detecção por extensão do arquivo ou conteúdo.
+
+Buscar símbolos:
+  rlm_search_code(var_name="app")  → todos os símbolos
+  rlm_search_code(var_name="app", kind="function")  → só funções
+  rlm_search_code(var_name="app", query="parse", include_source=true)  → com código""",
+
+    "pdf": """## Processamento de PDF
+
+**PDFs pequenos** (< 5MB): Carregar direto
+  rlm_load_s3(key="pdfs/doc.pdf", name="doc", data_type="pdf")
+
+**PDFs grandes**: Workflow em 2 etapas (evita timeout)
+  rlm_process_pdf(key="pdfs/livro.pdf")  → extrai texto → salva .txt no bucket
+  rlm_load_s3(key="pdfs/livro.txt", name="livro")  → carrega texto rápido
+
+**PDFs escaneados**: Usar OCR (requer MISTRAL_API_KEY)
+  rlm_load_s3(key="pdfs/scan.pdf", name="scan", data_type="pdf_ocr")
+
+PDFs grandes rodam como task assíncrona:
+  rlm_task_list()  → ver progresso
+  rlm_task_status(task_id="...")  → resultado""",
+
+    "collections": """## Coleções
+
+Agrupam variáveis por assunto para busca unificada.
+Tool consolidada: rlm_collection(action, ...)
+
+Criar e popular:
+  rlm_collection(action="create", name="docs", description="Documentação técnica")
+  rlm_collection(action="add", name="docs", vars=["manual1", "manual2", "manual3"])
+
+Buscar em todos de uma vez:
+  rlm_collection(action="search", name="docs", terms=["configuração", "instalação"])
+
+Listar e inspecionar:
+  rlm_collection(action="list")
+  rlm_collection(action="info", name="docs")
+
+Se a busca parar de funcionar após atualização:
+  rlm_collection(action="rebuild", name="docs")""",
+
+    "execute": """## REPL Python
+
+Variáveis persistem entre execuções e sobrevivem a restarts do servidor.
+
+**Helpers pré-definidos:**
+  buscar(texto, termo) → [{posicao, linha, contexto}]
+  contar(texto, termo) → {total, por_linha}
+  extrair_secao(texto, inicio, fim) → [{conteudo, linha_inicio, linha_fim}]
+  resumir_tamanho(bytes) → "1.5 MB"
+
+**Sub-chamada LLM** (requer OPENAI_API_KEY):
+  resposta = llm_query("Resuma:", contexto=texto[:5000])
+
+**Imports permitidos**: re, json, math, collections, datetime, csv, statistics, itertools, functools, string, textwrap, difflib, hashlib, base64, html, urllib.parse
+**Bloqueados**: os, subprocess, socket, requests, open(), exec(), eval()
+
+**GC**: Quando memória atinge 80%, variáveis menos usadas são removidas.
+  rlm_pin_var(name="importante") protege do GC.
+  rlm_memory() mostra uso atual.""",
+}
+
+
+def _get_help_text(topic: str = "all") -> str:
+    """Retorna texto de ajuda para o tópico especificado."""
+    if topic != "all" and topic in _HELP_SECTIONS:
+        return _HELP_SECTIONS[topic]
+
+    # all: header + todas as seções
+    parts = [
+        "# RLM MCP Server — Guia Rápido",
+        "",
+        "Servidor MCP com REPL Python persistente para processar milhões de caracteres.",
+        "19 tools | Persistência SQLite | S3/Minio | Tree-sitter | Embeddings vetoriais",
+        "",
+        "Tópicos: rlm_help(topic=\"workflows|s3|search|code|pdf|collections|execute\")",
+        "",
+    ]
+    for section in _HELP_SECTIONS.values():
+        parts.append(section)
+        parts.append("")
+    return "\n".join(parts)
+
+
 def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
     """Executa uma tool e retorna resultado.
 
@@ -797,12 +944,29 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
         elif name == "rlm_memory":
             mem = repl.get_memory_usage()
             text = fmt.format_memory(mem)
+            # Include persistence stats
+            try:
+                persistence = get_persistence()
+                stats = persistence.get_stats()
+                saved_vars = persistence.list_variables()
+                persist_text = fmt.format_persistence_stats(stats, saved_vars)
+                text += "\n" + persist_text
+            except Exception:
+                pass
             return {"content": [{"type": "text", "text": text}]}
 
         elif name == "rlm_load_s3":
             s3, error = require_s3_configured()
             if error:
                 return error
+
+            # Batch mode: if 'keys' is provided, delegate to batch handler
+            if "keys" in arguments and arguments["keys"]:
+                arguments_for_batch = {
+                    "keys": arguments["keys"],
+                    "bucket": arguments.get("bucket", "claude-code"),
+                }
+                return call_tool("rlm_batch_load_s3", arguments_for_batch, client_id)
 
             bucket = arguments.get("bucket", "claude-code")
             key = arguments["key"]
@@ -1144,22 +1308,51 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                     "isError": True
                 }
 
+        # Legacy name kept for internal dispatch
         elif name == "rlm_persistence_stats":
             try:
                 persistence = get_persistence()
                 stats = persistence.get_stats()
                 saved_vars = persistence.list_variables()
-
                 text = fmt.format_persistence_stats(stats, saved_vars)
                 return {"content": [{"type": "text", "text": text}]}
-
             except Exception as e:
-                return {
-                    "content": [
-                        {"type": "text", "text": f"Erro ao obter estatísticas: {e}"}
-                    ],
-                    "isError": True
-                }
+                return {"content": [{"type": "text", "text": f"Erro ao obter estatísticas: {e}"}], "isError": True}
+
+        elif name == "rlm_collection":
+            action = arguments.get("action", "list")
+            if action == "create":
+                name = "rlm_collection_create"
+                arguments = {"name": arguments.get("name", ""), "description": arguments.get("description")}
+            elif action == "add":
+                name = "rlm_collection_add"
+                arguments = {"collection": arguments.get("name", ""), "vars": arguments.get("vars", [])}
+            elif action == "list":
+                name = "rlm_collection_list"
+            elif action == "info":
+                name = "rlm_collection_info"
+                arguments = {"name": arguments.get("name", "")}
+            elif action == "rebuild":
+                name = "rlm_collection_rebuild"
+                arguments = {"name": arguments.get("name", "")}
+            elif action == "search":
+                name = "rlm_search_collection"
+                arguments = {"collection": arguments.get("name", ""), "terms": arguments.get("terms", []), "limit": arguments.get("limit", 10), "offset": arguments.get("offset", 0)}
+            else:
+                return {"content": [{"type": "text", "text": f"Ação desconhecida: {action}"}], "isError": True}
+            # Dispatch to the original handler
+            return call_tool(name, arguments, client_id)
+
+        elif name == "rlm_task":
+            action = arguments.get("action", "list")
+            if action == "list":
+                return call_tool("rlm_task_list", {"status": arguments.get("status")}, client_id)
+            elif action == "status":
+                return call_tool("rlm_task_status", {"task_id": arguments.get("task_id", "")}, client_id)
+            elif action == "cancel":
+                return call_tool("rlm_task_cancel", {"task_id": arguments.get("task_id", "")}, client_id)
+            else:
+                return {"content": [{"type": "text", "text": f"Ação desconhecida: {action}"}], "isError": True}
 
         elif name == "rlm_collection_create":
             try:
@@ -1883,6 +2076,14 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
             return {"content": [{"type": "text", "text": text}]}
 
         elif name == "rlm_save_to_s3":
+            # Batch mode: if 'vars' is provided, delegate to batch handler
+            if "vars" in arguments and arguments["vars"]:
+                arguments_for_batch = {
+                    "vars": arguments["vars"],
+                    "bucket": arguments.get("bucket", "claude-code"),
+                }
+                return call_tool("rlm_batch_upload_s3", arguments_for_batch, client_id)
+
             # Rate limit check for uploads
             rate_id = client_id or "anonymous"
             rate_result = upload_rate_limiter.check(rate_id)
@@ -1952,6 +2153,11 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                     ],
                     "isError": True
                 }
+
+        elif name == "rlm_help":
+            topic = arguments.get("topic", "all")
+            text = _get_help_text(topic)
+            return {"content": [{"type": "text", "text": text}]}
 
         else:
             return {

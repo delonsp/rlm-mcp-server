@@ -9,7 +9,7 @@ FROM python:3.12-slim AS builder
 WORKDIR /build
 
 # Cache buster - mude para forçar rebuild
-ARG CACHE_BUST=2026021404
+ARG CACHE_BUST=2026021501
 
 # Instala dependências de build
 RUN pip install --no-cache-dir hatchling
@@ -44,7 +44,7 @@ WORKDIR /app
 RUN mkdir -p /data /persist && chown rlm:rlm /data /persist
 
 # Cache buster para runtime (deve ser igual ao do builder)
-ARG CACHE_BUST=2026021404
+ARG CACHE_BUST=2026021501
 
 # Instala dependências do wheel
 COPY --from=builder /wheels /wheels

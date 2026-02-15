@@ -106,12 +106,12 @@ scp arquivo.pdf user@vps:/caminho/para/rlm-data/
 | `RLM_UPLOAD_RATE_LIMIT` | Opcional | Uploads por janela | `10` |
 | `RLM_UPLOAD_RATE_WINDOW` | Opcional | Janela em segundos | `60` |
 
-## Tools Disponíveis
+## Tools Disponíveis (19 tools)
 
 ### Carregamento de dados
 - `rlm_load_data` - Dados diretos (string)
-- `rlm_load_file` - Arquivo do volume /data (text, json, csv, lines, **pdf**, **pdf_ocr**)
-- `rlm_load_s3` - Arquivo do Minio/S3 (text, json, csv, lines, **pdf**, **pdf_ocr**)
+- `rlm_load_file` - Arquivo do volume /data (text, json, csv, lines, **pdf**, **pdf_ocr**, **code**)
+- `rlm_load_s3` - Arquivo(s) do Minio/S3 (unitário ou batch via `keys[]`)
 
 ### Execução
 - `rlm_execute` - Código Python no REPL
@@ -120,33 +120,28 @@ scp arquivo.pdf user@vps:/caminho/para/rlm-data/
 - `rlm_list_vars` - Lista variáveis (suporta paginação: `offset`, `limit`)
 - `rlm_var_info` - Info de uma variável
 - `rlm_clear` - Limpa variáveis
-- `rlm_memory` - Uso de memória
+- `rlm_memory` - Uso de memória + estatísticas de persistência
+- `rlm_pin_var` - Protege variável do garbage collector
 
 ### S3/Minio
 - `rlm_list_buckets` - Lista buckets
 - `rlm_list_s3` - Lista objetos (suporta paginação: `offset`, `limit`)
 - `rlm_upload_url` - Upload de URL para bucket (rate limited: 10/min)
+- `rlm_save_to_s3` - Salva variável(eis) no S3 (unitário ou batch via `vars[]`)
 
-### Busca e Persistência
-- `rlm_search_index` - Busca termos no índice semântico (suporta paginação: `offset`, `limit`)
-- `rlm_persistence_stats` - Estatísticas de variáveis/índices persistidos
+### Busca
+- `rlm_search_index` - Busca keyword/semantic/hybrid no índice
+- `rlm_search_code` - Busca estrutural em código (tree-sitter)
 
 ### Coleções (Multi-assunto)
-- `rlm_collection_create` - Cria coleção para agrupar variáveis
-- `rlm_collection_add` - Adiciona variáveis a uma coleção
-- `rlm_collection_list` - Lista todas as coleções
-- `rlm_collection_info` - Info detalhada de uma coleção
-- `rlm_search_collection` - Busca em TODAS as variáveis de uma coleção (suporta paginação: `offset`, `limit`)
+- `rlm_collection` - Gerencia coleções via `action`: create, add, list, info, rebuild, search
 
-### Processamento de PDF (duas etapas)
-- `rlm_process_pdf` - Extrai texto de PDF e salva .txt no bucket (não bloqueia)
-  ```
-  # Etapa 1: Processar PDF grande (salva texto no bucket)
-  rlm_process_pdf(key="pdfs/livro.pdf")  # → salva pdfs/livro.txt
+### PDF e Tasks
+- `rlm_process_pdf` - Extrai texto de PDF e salva .txt no bucket
+- `rlm_task` - Gerencia tasks assíncronas via `action`: list, status, cancel
 
-  # Etapa 2: Carregar texto rápido para análise
-  rlm_load_s3(key="pdfs/livro.txt", name="texto", data_type="text")
-  ```
+### Ajuda
+- `rlm_help` - Documentação integrada (use `topic` para seções específicas)
 
 ## Paginação
 
@@ -166,7 +161,7 @@ rlm_search_index(var_name="texto", terms=["erro"], offset=0, limit=20)
 rlm_list_s3(bucket="claude-code", prefix="data/", offset=0, limit=50)
 
 # Busca em coleção com paginação
-rlm_search_collection(collection="docs", terms=["termo"], offset=0, limit=10)
+rlm_collection(action="search", name="docs", terms=["termo"], offset=0, limit=10)
 ```
 
 ## MCP Resources
@@ -268,23 +263,23 @@ rlm_search_index(var_name="scholten1", terms=["medo", "trabalho"])
 # Busca com todos os termos (AND)
 rlm_search_index(var_name="scholten1", terms=["medo", "fracasso"], require_all=True)
 
-# Ver estatísticas de persistência
-rlm_persistence_stats()
+# Ver estatísticas de persistência (incluído no rlm_memory)
+rlm_memory()
 ```
 
 ### Usando Coleções (Multi-assunto)
 ```
 # Criar coleção de homeopatia
-rlm_collection_create(name="homeopatia", description="Materiais de homeopatia unicista")
+rlm_collection(action="create", name="homeopatia", description="Materiais de homeopatia unicista")
 
 # Adicionar documentos à coleção
-rlm_collection_add(collection="homeopatia", vars=["scholten1", "scholten2", "kent", "banerji"])
+rlm_collection(action="add", name="homeopatia", vars=["scholten1", "scholten2", "kent", "banerji"])
 
 # Buscar em TODOS os documentos da coleção de uma vez
-rlm_search_collection(collection="homeopatia", terms=["medo", "ansiedade"])
+rlm_collection(action="search", name="homeopatia", terms=["medo", "ansiedade"])
 
 # Listar coleções disponíveis
-rlm_collection_list()
+rlm_collection(action="list")
 ```
 
 Você pode ter múltiplas coleções no mesmo servidor:
