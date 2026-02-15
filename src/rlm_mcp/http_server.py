@@ -746,6 +746,44 @@ Variáveis persistem entre execuções e sobrevivem a restarts do servidor.
 **GC**: Quando memória atinge 80%, variáveis menos usadas são removidas.
   rlm_pin_var(name="importante") protege do GC.
   rlm_memory() mostra uso atual.""",
+
+    "security": """## Segurança
+
+**Sandbox do REPL:**
+  Bloqueados: os, subprocess, socket, requests, http, sys, open(), exec(), eval(), __import__()
+  Permitidos: re, json, math, collections, datetime, csv, statistics, itertools, functools, string, textwrap, difflib, hashlib, base64, html, urllib.parse
+
+**Rate Limiting:**
+  /message (SSE): 100 req / 60s (por session)
+  /mcp (direto): 100 req / 60s (por IP)
+  rlm_upload_url: 10 uploads / 60s
+
+**Limites de Memória:**
+  Variável individual: RLM_MAX_VAR_SIZE_MB (padrão: 50MB)
+  Total do REPL: RLM_MAX_MEMORY_MB (padrão: 1024MB)
+  Volume /data: read-only""",
+
+    "config": """## Variáveis de Ambiente
+
+**Obrigatórias/Recomendadas:**
+  RLM_API_KEY — Autenticação Bearer token
+  OPENAI_API_KEY — Sub-chamadas LLM e embeddings vetoriais
+  MISTRAL_API_KEY — OCR de PDFs escaneados
+
+**S3/Minio:**
+  MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_SECURE (padrão: true)
+
+**Limites:**
+  RLM_MAX_MEMORY_MB (padrão: 1024) — Memória total do REPL
+  RLM_MAX_VAR_SIZE_MB (padrão: 50) — Limite por variável
+  RLM_MAX_CONCURRENT_TASKS (padrão: 3) — Workers para tasks assíncronas
+  RLM_BATCH_MAX_WORKERS (padrão: 4) — Workers para operações batch S3
+
+**Comportamento:**
+  RLM_RESPONSE_VERBOSITY (padrão: compact) — compact, normal, verbose
+  RLM_CLEANUP_STRATEGY (padrão: weighted) — weighted, lru, lfu, size
+  RLM_EMBEDDING_MODE (padrão: openai) — openai, disabled
+  RLM_PERSIST_DIR (padrão: /persist) — Diretório do SQLite""",
 }
 
 
