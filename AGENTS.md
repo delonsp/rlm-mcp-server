@@ -31,6 +31,6 @@ Este arquivo contém padrões aprendidos durante o desenvolvimento. Ralph atuali
 
 ## Gotchas Conhecidos
 
-- `repl.namespace` persiste entre execuções - limpar com `clear_namespace()`
+- `repl.namespace` persiste entre execuções - limpar com `clear_all()`
 - PDFs grandes (>40MB) precisam de chunking para Mistral OCR
 - Índices são salvos separadamente das variáveis em `indices` table

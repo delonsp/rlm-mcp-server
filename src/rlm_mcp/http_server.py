@@ -740,7 +740,7 @@ Variáveis persistem entre execuções e sobrevivem a restarts do servidor.
 **Sub-chamada LLM** (requer OPENAI_API_KEY):
   resposta = llm_query("Resuma:", contexto=texto[:5000])
 
-**Imports permitidos**: re, json, math, collections, datetime, csv, statistics, itertools, functools, string, textwrap, difflib, hashlib, base64, html, urllib.parse
+**Imports permitidos**: re, json, math, statistics, collections, itertools, functools, operator, string, textwrap, unicodedata, datetime, time, calendar, dataclasses, typing, enum, csv, html, xml.etree.ElementTree, hashlib, base64, gzip, zipfile, tarfile
 **Bloqueados**: os, subprocess, socket, requests, open(), exec(), eval()
 
 **GC**: Quando memória atinge 80%, variáveis menos usadas são removidas.
@@ -751,7 +751,7 @@ Variáveis persistem entre execuções e sobrevivem a restarts do servidor.
 
 **Sandbox do REPL:**
   Bloqueados: os, subprocess, socket, requests, http, sys, open(), exec(), eval(), __import__()
-  Permitidos: re, json, math, collections, datetime, csv, statistics, itertools, functools, string, textwrap, difflib, hashlib, base64, html, urllib.parse
+  Permitidos: re, json, math, statistics, collections, itertools, functools, operator, string, textwrap, unicodedata, datetime, time, calendar, dataclasses, typing, enum, csv, html, xml.etree.ElementTree, hashlib, base64, gzip, zipfile, tarfile
 
 **Rate Limiting:**
   /message (SSE): 100 req / 60s (por session)

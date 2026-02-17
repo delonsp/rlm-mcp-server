@@ -177,7 +177,7 @@ Variáveis são auto-persistidas no SQLite.""",
                         "properties": {
                             "key": {"type": "string", "description": "Caminho no bucket"},
                             "name": {"type": "string", "description": "Nome da variável"},
-                            "data_type": {"type": "string", "enum": ["text", "json", "lines", "csv"], "default": "text"}
+                            "data_type": {"type": "string", "enum": ["text", "json", "lines", "csv", "code", "pdf", "pdf_ocr"], "default": "text"}
                         },
                         "required": ["key", "name"]
                     },
@@ -429,7 +429,7 @@ Exemplos:
                     "items": {"type": "string"},
                     "description": "Termos para buscar (para search)"
                 },
-                "limit": {"type": "integer", "default": 10, "description": "Max resultados (para search)"},
+                "limit": {"type": "integer", "default": 20, "description": "Max resultados (para search)"},
                 "offset": {"type": "integer", "default": 0, "description": "Paginação (para search)"}
             },
             "required": ["action"]
@@ -474,7 +474,7 @@ Exemplos:
             "properties": {
                 "topic": {
                     "type": "string",
-                    "enum": ["all", "workflows", "s3", "search", "code", "pdf", "collections", "execute"],
+                    "enum": ["all", "workflows", "s3", "search", "code", "pdf", "collections", "execute", "security", "config"],
                     "default": "all"
                 }
             }

@@ -187,7 +187,7 @@ rlm_execute(code="print(len(meus_dados))")
 | `code` | string | Sim | Codigo Python para executar |
 
 **Sandbox de seguranca:**
-- Imports permitidos: `re`, `json`, `math`, `collections`, `datetime`, `csv`, `statistics`, `itertools`, `functools`, `string`, `textwrap`, `difflib`, `hashlib`, `base64`, `html`, `urllib.parse`
+- Imports permitidos: `re`, `json`, `math`, `statistics`, `collections`, `itertools`, `functools`, `operator`, `string`, `textwrap`, `unicodedata`, `datetime`, `time`, `calendar`, `dataclasses`, `typing`, `enum`, `csv`, `html`, `xml.etree.ElementTree`, `hashlib`, `base64`, `gzip`, `zipfile`, `tarfile`
 - Imports bloqueados: `os`, `subprocess`, `socket`, `requests`, `http`, `sys`
 - Funcoes bloqueadas: `open()`, `exec()`, `eval()`, `__import__()`, acesso a dunder attrs
 
