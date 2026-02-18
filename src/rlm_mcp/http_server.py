@@ -1294,6 +1294,7 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
             require_all = arguments.get("require_all", False)
             limit = arguments.get("limit", 20)
             offset = arguments.get("offset", 0)
+            max_results = arguments.get("max_results", 30)
 
             # Verificar se variável existe
             if var_name not in repl.variables:
@@ -1315,6 +1316,7 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                     text = fmt.format_hybrid_search(
                         search_result, terms, var_name,
                         offset=offset, limit=limit,
+                        max_results=max_results,
                     )
                     return {"content": [{"type": "text", "text": text}]}
                 else:
@@ -1329,12 +1331,28 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                         }
 
                     results = index.search_multiple(terms, require_all=require_all)
+
+                    # Apply global cap (max_results) across all terms
+                    total_available = 0
+                    if not require_all and isinstance(results, dict):
+                        total_available = sum(len(v) for v in results.values())
+                        if total_available > max_results:
+                            capped = {}
+                            count = 0
+                            for term, matches in results.items():
+                                if count >= max_results:
+                                    break
+                                take = min(len(matches), max_results - count)
+                                capped[term] = matches[:take]
+                                count += take
+                            results = capped
+
                     total_results = len(results) if results else 0
-                    stats = index.get_stats()
 
                     text = fmt.format_search_response(
                         results, terms, require_all, total_results,
-                        offset, limit, index_stats=stats,
+                        offset, limit,
+                        max_results=max_results, total_available=total_available,
                     )
                     return {"content": [{"type": "text", "text": text}]}
 
@@ -2050,6 +2068,9 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
             kind = arguments.get("kind")
             include_source = arguments.get("include_source", False)
             language_hint = arguments.get("language")
+            code_limit = arguments.get("limit", 20)
+            code_offset = arguments.get("offset", 0)
+            max_source_lines = arguments.get("max_source_lines", 5)
 
             if var_name not in repl.variables:
                 return {
@@ -2107,9 +2128,15 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                 source_code=value,
             )
 
+            # Apply pagination
+            total_matched = len(results)
+            results = results[code_offset:code_offset + code_limit]
+
             text = fmt.format_search_code(
                 results, var_name, structure.language,
                 query=query, kind=kind, total_symbols=len(structure.symbols),
+                limit=code_limit, offset=code_offset,
+                max_source_lines=max_source_lines, total_matched=total_matched,
             )
             return {"content": [{"type": "text", "text": text}]}
 

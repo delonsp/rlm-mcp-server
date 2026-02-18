@@ -367,7 +367,8 @@ Exemplo: rlm_search_index(var_name="livro", terms=["medo","ansiedade"], mode="hy
                 "mode": {"type": "string", "enum": ["keyword", "semantic", "hybrid"], "default": "keyword"},
                 "require_all": {"type": "boolean", "default": False, "description": "Exigir TODOS os termos (só keyword)"},
                 "limit": {"type": "integer", "default": 20},
-                "offset": {"type": "integer", "default": 0}
+                "offset": {"type": "integer", "default": 0},
+                "max_results": {"type": "integer", "default": 30, "description": "Cap total de resultados entre todos os termos"}
             },
             "required": ["var_name", "terms"]
         }
@@ -387,7 +388,10 @@ Exemplo: rlm_search_code(var_name="app", query="parse", kind="function", include
                 "query": {"type": "string", "description": "Substring no nome do símbolo"},
                 "kind": {"type": "string", "enum": ["function", "class", "method", "import", "variable"]},
                 "include_source": {"type": "boolean", "default": False},
-                "language": {"type": "string", "description": "Forçar linguagem (auto-detecta se omitido)"}
+                "language": {"type": "string", "description": "Forçar linguagem (auto-detecta se omitido)"},
+                "limit": {"type": "integer", "default": 20, "description": "Max símbolos retornados"},
+                "offset": {"type": "integer", "default": 0, "description": "Offset para paginação"},
+                "max_source_lines": {"type": "integer", "default": 5, "description": "Max linhas de código por símbolo (com include_source)"}
             },
             "required": ["var_name"]
         }

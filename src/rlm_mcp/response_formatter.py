@@ -338,7 +338,8 @@ Criada em: {info.created_at.isoformat()}
 
 def format_search_response(results, terms, require_all: bool, total_results: int,
                             offset: int, limit: int, index_stats: Optional[dict] = None,
-                            verbosity: Optional[Verbosity] = None) -> str:
+                            verbosity: Optional[Verbosity] = None,
+                            max_results: int = 30, total_available: int = 0) -> str:
     """Format rlm_search_index response."""
     v = verbosity or get_verbosity()
 
@@ -350,7 +351,8 @@ def format_search_response(results, terms, require_all: bool, total_results: int
     if v == Verbosity.COMPACT:
         return _format_search_compact(results, terms, require_all, index_stats)
 
-    return _format_search_normal(results, terms, require_all, total_results, offset, limit, index_stats)
+    return _format_search_normal(results, terms, require_all, total_results, offset, limit, index_stats,
+                                  max_results=max_results, total_available=total_available)
 
 
 def _format_search_compact(results, terms, require_all, index_stats) -> str:
@@ -369,28 +371,35 @@ def _format_search_compact(results, terms, require_all, index_stats) -> str:
     return text
 
 
-def _format_search_normal(results, terms, require_all, total_results, offset, limit, index_stats) -> str:
+def _format_search_normal(results, terms, require_all, total_results, offset, limit, index_stats,
+                           max_results: int = 30, total_available: int = 0) -> str:
     """Normal search format."""
+    # Count shown results
+    if require_all:
+        shown_count = len(results)
+    else:
+        shown_count = sum(len(v) for v in results.values())
+
+    # Summary header
+    terms_str = ",".join(f'"{t}"' for t in terms)
+    avail = total_available if total_available else shown_count
+    header = f'[search: {terms_str} | {shown_count} shown / {avail} total | next: max_results={max_results},offset={offset}]'
+
     if require_all:
         paginated = sorted(results.items())[offset:offset + limit]
-        lines = [f"Linhas com todos os termos ({total_results} encontradas, mostrando {offset + 1}-{offset + len(paginated)}):", ""]
+        lines = [header, ""]
         for linha, found_terms in paginated:
             lines.append(f"  Linha {linha}: {found_terms}")
         text = "\n".join(lines)
     else:
-        lines = ["Resultados da busca:", ""]
+        lines = [header, ""]
         for term, matches in results.items():
             total_matches = len(matches)
-            paginated_matches = matches[offset:offset + limit]
-            showing = f"{offset + 1}-{offset + len(paginated_matches)}" if paginated_matches else "0"
-            lines.append(f"📌 '{term}' ({total_matches} ocorrências, mostrando {showing}):")
-            for m in paginated_matches:
-                lines.append(f"    Linha {m['linha']}: {m['contexto'][:80]}...")
+            lines.append(f"'{term}' ({total_matches}):")
+            for m in matches:
+                lines.append(f"  L{m['linha']}: {m['contexto'][:60]}")
             lines.append("")
         text = "\n".join(lines)
-
-    if index_stats:
-        text += f"\n\n📊 Índice: {index_stats['indexed_terms']} termos, {index_stats['total_occurrences']} ocorrências totais"
 
     return text
 
@@ -862,19 +871,29 @@ def format_search_code(
     kind: Optional[str] = None,
     total_symbols: int = 0,
     verbosity: Optional[Verbosity] = None,
+    limit: int = 20,
+    offset: int = 0,
+    max_source_lines: int = 5,
+    total_matched: int = 0,
 ) -> str:
     """Format rlm_search_code response.
 
     Args:
-        results: List of symbol dicts from CodeStructure.search()
+        results: List of symbol dicts from CodeStructure.search() (already sliced)
         var_name: Variable name searched
         language: Detected language
         query: Search query used
         kind: Kind filter used
         total_symbols: Total symbols in the code structure
         verbosity: Override verbosity level
+        limit: Page size used
+        offset: Current offset
+        max_source_lines: Max source lines per symbol
+        total_matched: Total matched before pagination
     """
     v = verbosity or get_verbosity()
+
+    matched = total_matched if total_matched else len(results)
 
     if not results:
         filter_desc = []
@@ -885,8 +904,12 @@ def format_search_code(
         filt = ", ".join(filter_desc) if filter_desc else "no filter"
         return f"No symbols found in {var_name} ({filt})"
 
+    # Summary header
+    query_str = query or "*"
+    header = f'[code: {var_name} | {language} | {len(results)} shown / {matched} matched | next: offset={offset + limit}]'
+
     if v == Verbosity.COMPACT:
-        parts = [f"code:{var_name}", language, f"{len(results)}/{total_symbols} symbols"]
+        parts = [f"code:{var_name}", language, f"{len(results)}/{matched} symbols"]
         # Group by kind
         kinds: dict[str, list[str]] = {}
         for r in results:
@@ -899,23 +922,22 @@ def format_search_code(
         return "[" + " | ".join(parts) + "]"
 
     # Normal/verbose
-    lines = [f"Code search in '{var_name}' ({language}, {total_symbols} total symbols):"]
-    lines.append("")
+    lines = [header, ""]
 
     for r in results:
         icon = {"function": "fn", "class": "cls", "method": "mtd", "import": "imp", "variable": "var"}.get(r["kind"], r["kind"])
         parent = f" ({r['parent']})" if r.get("parent") else ""
         lines.append(f"  [{icon}] {r['name']}{parent}  L{r['line_start']}-{r['line_end']}")
-        lines.append(f"        {r['signature'][:120]}")
+        lines.append(f"        {r['signature'][:80]}")
         if r.get("docstring"):
-            doc = r["docstring"][:100]
+            doc = r["docstring"][:60]
             lines.append(f"        \"{doc}\"")
         if r.get("source"):
             src_lines = r["source"].split("\n")
-            for sl in src_lines[:15]:
+            for sl in src_lines[:max_source_lines]:
                 lines.append(f"        | {sl}")
-            if len(src_lines) > 15:
-                lines.append(f"        | ... (+{len(src_lines)-15} lines)")
+            if len(src_lines) > max_source_lines:
+                lines.append(f"        | ... (+{len(src_lines)-max_source_lines} lines)")
         lines.append("")
 
     return "\n".join(lines)
@@ -932,6 +954,7 @@ def format_hybrid_search(
     offset: int = 0,
     limit: int = 20,
     verbosity: Optional[Verbosity] = None,
+    max_results: int = 30,
 ) -> str:
     """Format hybrid/semantic search results.
 
@@ -942,14 +965,17 @@ def format_hybrid_search(
         offset: Pagination offset
         limit: Max results
         verbosity: Override verbosity
+        max_results: Global cap for results
     """
     v = verbosity or get_verbosity()
     mode = search_result.get("mode", "keyword")
+    terms_str = ",".join(f'"{t}"' for t in terms)
 
     # Semantic mode
     if "semantic" in mode and search_result.get("semantic_results"):
         results = search_result["semantic_results"]
         stats = search_result.get("stats", {}).get("vector", {})
+        header = f'[search: {terms_str} | semantic | {len(results)} shown | {var_name}]'
 
         if v == Verbosity.COMPACT:
             parts = [f"sem:{var_name}", f"mode:{mode}", f"{len(results)} hits"]
@@ -957,18 +983,17 @@ def format_hybrid_search(
                 parts.append(f"L{r['line_start']}({r['score']:.2f})")
             return "[" + " | ".join(parts) + "]"
 
-        lines = [f"Semantic search in '{var_name}' (mode: {mode}):", ""]
+        lines = [header, ""]
         for r in results:
             lines.append(f"  L{r['line_start']}-{r['line_end']} (score: {r['score']:.3f})")
             lines.append(f"    {r['chunk_text'][:120]}...")
             lines.append("")
-        if stats:
-            lines.append(f"Vector index: {stats.get('embedded_chunks', 0)} chunks, {stats.get('total_chars', 0):,} chars")
         return "\n".join(lines)
 
     # Hybrid mode
     if search_result.get("hybrid_results"):
         results = search_result["hybrid_results"]
+        header = f'[search: {terms_str} | hybrid | {len(results)} shown | {var_name}]'
 
         if v == Verbosity.COMPACT:
             parts = [f"hybrid:{var_name}", f"{len(results)} hits"]
@@ -977,7 +1002,7 @@ def format_hybrid_search(
                 parts.append(f"L{r['line']}({src},{r['rrf_score']:.3f})")
             return "[" + " | ".join(parts) + "]"
 
-        lines = [f"Hybrid search in '{var_name}' ({len(results)} results, RRF fusion):", ""]
+        lines = [header, ""]
         for r in results:
             src = ", ".join(r.get("sources", []))
             lines.append(f"  L{r['line']} (RRF: {r['rrf_score']:.4f}, sources: {src})")
@@ -993,6 +1018,7 @@ def format_hybrid_search(
         return format_search_response(
             keyword_results, terms, False, total_results,
             offset, limit, index_stats=stats, verbosity=v,
+            max_results=max_results,
         )
 
     return f"No results for: {', '.join(terms)} (mode: {mode})"
