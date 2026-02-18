@@ -26,7 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
 
-from .repl import SafeREPL, ExecutionResult, INTERNAL_FUNCTION_NAMES
+from .repl import SafeREPL, ExecutionResult, INTERNAL_FUNCTION_NAMES, VariableInfo
 from .s3_client import get_s3_client
 from .pdf_parser import extract_pdf
 from .persistence import get_persistence
@@ -340,11 +340,28 @@ async def lifespan(app: FastAPI):
         saved_vars = persistence.list_variables()
         if saved_vars:
             logger.info(f"Restaurando {len(saved_vars)} variáveis persistidas...")
+            from datetime import datetime
+            now = datetime.now()
             for var_info in saved_vars:
                 name = var_info["name"]
                 value = persistence.load_variable(name)
                 if value is not None:
                     repl.variables[name] = value
+                    # Create variable_metadata so list_variables() works
+                    import sys
+                    size = sys.getsizeof(value)
+                    repl.variable_metadata[name] = VariableInfo(
+                        name=name,
+                        type_name=type(value).__name__,
+                        size_bytes=size,
+                        size_human=repl._human_size(size),
+                        preview=repl._get_preview(value),
+                        created_at=now,
+                        last_accessed=now,
+                        access_count=0,
+                        pinned=False,
+                        source=var_info.get("source", "persisted"),
+                    )
                     # Restaurar índice keyword se existir
                     index_data = persistence.load_index(name)
                     if index_data:
@@ -369,6 +386,48 @@ async def lifespan(app: FastAPI):
                         set_vector_index(name, vi)
                     logger.info(f"  Restaurado: {name} ({var_info['type']})")
             logger.info("Variáveis restauradas com sucesso")
+
+        # Auto-rebuild collection indexes
+        try:
+            collections = persistence.list_collections()
+            if collections:
+                logger.info(f"Reconstruindo índices de {len(collections)} coleção(ões)...")
+                for coll in collections:
+                    coll_name = coll["name"]
+                    all_vars = persistence.get_collection_vars(coll_name)
+                    if not all_vars:
+                        continue
+
+                    combined_parts = []
+                    var_mapping = {}
+                    current_line = 1
+
+                    for vname in all_vars:
+                        if vname in repl.variables:
+                            val = repl.variables[vname]
+                            if isinstance(val, str):
+                                header = f"\n{'='*60}\n=== VARIÁVEL: {vname} ===\n{'='*60}\n"
+                                combined_parts.append(header)
+                                header_lines = header.count('\n')
+                                current_line += header_lines
+                                content_lines = val.split('\n')
+                                for i, _ in enumerate(content_lines):
+                                    var_mapping[current_line + i] = (vname, i + 1)
+                                combined_parts.append(val)
+                                current_line += len(content_lines)
+
+                    if combined_parts:
+                        combined_text = "\n".join(combined_parts)
+                        combined_var_name = f"_coll_{coll_name}_combined"
+                        repl.variables[combined_var_name] = combined_text
+                        combined_index = create_index(combined_text, combined_var_name)
+                        set_index(combined_var_name, combined_index)
+                        repl.variables[f"_coll_{coll_name}_mapping"] = var_mapping
+                        logger.info(f"  Coleção '{coll_name}' reconstruída: {len(combined_text):,} chars, {len(all_vars)} vars")
+                logger.info("Coleções reconstruídas com sucesso")
+        except Exception as e:
+            logger.warning(f"Erro ao reconstruir coleções: {e}")
+
     except Exception as e:
         logger.warning(f"Erro ao restaurar variáveis (pode ser primeira execução): {e}")
 
