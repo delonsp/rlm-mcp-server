@@ -55,31 +55,54 @@ class TextIndex:
     structure: dict = field(default_factory=dict)  # capítulos, seções, etc.
     custom_terms: list = field(default_factory=list)  # termos adicionais indexados
 
-    def search(self, term: str, limit: int = 10) -> list[dict]:
-        """Busca um termo no índice."""
+    def search(self, term: str, limit: int = 10, source_text: str = None,
+               context_chars: int = 100) -> list[dict]:
+        """Busca um termo no índice. Falls back to live scan if term not pre-indexed.
+
+        Args:
+            term: Term to search
+            limit: Max results
+            source_text: Original text for live fallback (if term not in pre-built index)
+            context_chars: Context chars for live scan results
+        """
         term_lower = term.lower()
         if term_lower in self.terms:
             return self.terms[term_lower][:limit]
+
+        # Live search fallback: scan source text and cache results
+        if source_text is not None:
+            matches = _live_scan_term(source_text, term_lower, context_chars)
+            if matches:
+                self.terms[term_lower] = matches  # cache for future lookups
+            return matches[:limit]
+
         return []
 
-    def search_multiple(self, terms: list[str], require_all: bool = False) -> dict:
+    def search_multiple(self, terms: list[str], require_all: bool = False,
+                        source_text: str = None) -> dict:
         """
         Busca múltiplos termos.
 
         Args:
             terms: Lista de termos para buscar
             require_all: Se True, retorna apenas linhas com TODOS os termos
+            source_text: Original text for live fallback
 
         Returns:
             {termo: [matches]} ou {linha: [termos]} se require_all
         """
         if not require_all:
-            return {t: self.search(t) for t in terms if self.search(t)}
+            result = {}
+            for t in terms:
+                hits = self.search(t, source_text=source_text)
+                if hits:
+                    result[t] = hits
+            return result
 
         # Buscar linhas que têm todos os termos
         line_terms = defaultdict(set)
         for term in terms:
-            for match in self.search(term):
+            for match in self.search(term, source_text=source_text):
                 line_terms[match['linha']].add(term.lower())
 
         # Filtrar linhas com todos os termos
@@ -127,6 +150,22 @@ class TextIndex:
             structure=data.get("structure", {}),
             custom_terms=data.get("custom_terms", [])
         )
+
+
+def _live_scan_term(text: str, term_lower: str, context_chars: int = 100) -> list[dict]:
+    """Scan text for a term not in the pre-built index. Returns matches like the indexed format."""
+    matches = []
+    lines = text.split('\n')
+    for i, line in enumerate(lines):
+        if term_lower in line.lower():
+            # Avoid duplicate lines
+            if matches and matches[-1]['linha'] == i:
+                continue
+            matches.append({
+                'linha': i,
+                'contexto': line[:context_chars].strip()
+            })
+    return matches
 
 
 def create_index(
@@ -293,6 +332,7 @@ def hybrid_search(
     require_all: bool = False,
     limit: int = 20,
     offset: int = 0,
+    source_text: str = None,
 ) -> dict:
     """Perform keyword, semantic, or hybrid search.
 
@@ -303,6 +343,7 @@ def hybrid_search(
         require_all: For keyword mode, require all terms in same line
         limit: Max results
         offset: Pagination offset
+        source_text: Original text for live keyword fallback
 
     Returns:
         dict with:
@@ -325,10 +366,17 @@ def hybrid_search(
     # Keyword search
     keyword_results = None
     keyword_index = get_index(var_name)
-    if keyword_index and mode in ("keyword", "hybrid"):
-        keyword_results = keyword_index.search_multiple(terms, require_all=require_all)
-        result["keyword_results"] = keyword_results
-        result["stats"]["keyword"] = keyword_index.get_stats()
+    if mode in ("keyword", "hybrid"):
+        if not keyword_index and source_text:
+            # Create index on-the-fly
+            keyword_index = create_index(source_text, var_name)
+            set_index(var_name, keyword_index)
+        if keyword_index:
+            keyword_results = keyword_index.search_multiple(
+                terms, require_all=require_all, source_text=source_text
+            )
+            result["keyword_results"] = keyword_results
+            result["stats"]["keyword"] = keyword_index.get_stats()
 
     # Semantic search
     semantic_results = None

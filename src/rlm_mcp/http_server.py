@@ -30,7 +30,7 @@ from .repl import SafeREPL, ExecutionResult, INTERNAL_FUNCTION_NAMES
 from .s3_client import get_s3_client
 from .pdf_parser import extract_pdf
 from .persistence import get_persistence
-from .indexer import get_index, set_index, TextIndex, auto_index_if_large, hybrid_search
+from .indexer import get_index, set_index, TextIndex, auto_index_if_large, hybrid_search, create_index
 from .rate_limiter import SlidingWindowRateLimiter, RateLimitResult
 from .tools.schemas import TOOL_SCHEMAS
 from .services.s3_guard import require_s3_configured
@@ -1306,12 +1306,16 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                 }
 
             try:
+                source_var = repl.variables.get(var_name)
+                source_str = source_var if isinstance(source_var, str) else None
+
                 if mode in ("semantic", "hybrid"):
                     # Use hybrid search (supports keyword, semantic, hybrid)
                     search_result = hybrid_search(
                         var_name, terms, mode=mode,
                         require_all=require_all,
                         limit=limit, offset=offset,
+                        source_text=source_str,
                     )
                     text = fmt.format_hybrid_search(
                         search_result, terms, var_name,
@@ -1320,17 +1324,23 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                     )
                     return {"content": [{"type": "text", "text": text}]}
                 else:
-                    # Pure keyword search (original behavior)
+                    # Pure keyword search
                     index = get_index(var_name)
-                    if not index:
+
+                    if not index and source_str:
+                        # Create index on-the-fly for any text variable
+                        index = create_index(source_str, var_name)
+                        set_index(var_name, index)
+                    elif not index:
                         return {
                             "content": [
-                                {"type": "text", "text": f"Erro: Variável '{var_name}' não possui índice. Indexação automática ocorre para textos >= 100k chars."}
+                                {"type": "text", "text": f"Erro: Variável '{var_name}' não possui índice e não é texto."}
                             ],
                             "isError": True
                         }
 
-                    results = index.search_multiple(terms, require_all=require_all)
+                    results = index.search_multiple(terms, require_all=require_all,
+                                                     source_text=source_str)
 
                     # Apply global cap (max_results) across all terms
                     total_available = 0
