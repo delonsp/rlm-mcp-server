@@ -350,17 +350,50 @@ def hybrid_search(
         result["stats"]["vector"] = vector_index.get_stats()
 
     # Hybrid fusion with RRF
-    if mode == "hybrid" and keyword_results and semantic_results:
+    has_keyword = bool(keyword_results) if isinstance(keyword_results, dict) else False
+    has_semantic = bool(semantic_results)
+
+    if mode == "hybrid" and has_keyword and has_semantic:
         result["hybrid_results"] = _reciprocal_rank_fusion(
             keyword_results, semantic_results, terms, limit, offset
         )
+    elif mode == "hybrid" and has_semantic and not has_keyword:
+        # Keyword returned empty but semantic has results — promote semantic to hybrid
+        result["hybrid_results"] = [
+            {
+                "line": sr["line_start"],
+                "rrf_score": sr["score"],
+                "text": sr["chunk_text"][:100],
+                "sources": ["semantic"],
+            }
+            for sr in semantic_results
+        ]
+    elif mode == "hybrid" and has_keyword and not has_semantic:
+        # Semantic unavailable, keyword has results — promote keyword to hybrid
+        fused = []
+        for term, matches in keyword_results.items():
+            for m in matches:
+                fused.append({
+                    "line": m["linha"],
+                    "rrf_score": 0.0,
+                    "text": m.get("contexto", ""),
+                    "sources": ["keyword"],
+                })
+        # Deduplicate by line, keep first occurrence
+        seen = set()
+        deduped = []
+        for f in fused:
+            if f["line"] not in seen:
+                seen.add(f["line"])
+                deduped.append(f)
+        result["hybrid_results"] = deduped[offset:offset + limit]
     elif mode == "semantic" and not vector_index:
         # Fallback: no vector index, try keyword
         if keyword_index:
             result["mode"] = "keyword (fallback)"
             result["keyword_results"] = keyword_index.search_multiple(terms, require_all=require_all)
-    elif mode == "hybrid" and not vector_index:
-        # Fallback: no vector index, keyword only
+    elif mode == "hybrid" and not vector_index and not has_keyword:
+        # Fallback: nothing available
         result["mode"] = "keyword (no embeddings)"
 
     return result
