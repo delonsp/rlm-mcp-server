@@ -2,381 +2,179 @@
 
 ## Arquitetura
 
-Este é um servidor MCP que roda em **Docker na VPS** (não local).
+Servidor MCP que roda em **Docker na VPS** (não local).
 
 ```
-Local (Claude Code) ──── SSH/HTTPS ────► VPS (Docker: rlm-mcp-server)
-                                              │
-                                              ├── /data/ (volume para arquivos)
-                                              ├── Minio/S3 (storage externo)
-                                              └── REPL Python (variáveis em memória)
+Local (Claude Code) ──── HTTPS ────► VPS (Docker: rlm-mcp-server)
+                                          │
+                                          ├── /data/ (volume read-only)
+                                          ├── /persist/ (SQLite: variáveis + índices)
+                                          ├── Minio/S3 (storage externo)
+                                          └── REPL Python (variáveis em memória)
 ```
+
+**Startup automático:** variáveis são restauradas do SQLite, metadata recriado, e índices de coleções reconstruídos automaticamente. Não requer intervenção manual após restart/redeploy.
 
 ## Deployment
 
-- **Plataforma**: Dokploy na VPS
+- **Plataforma**: Dokploy na VPS (CI/CD: push `main` → deploy automático)
 - **Domínio**: rlm.drsolution.online (via Traefik)
 - **Rede**: dokploy-network
-- **CI/CD**: Dokploy sincroniza automaticamente com o repositório GitHub
-  - Push para `main` → Deploy automático
-  - Não precisa de SSH manual para atualizar
-
-## Como adicionar arquivos para processamento
-
-### Método principal: Minio CLI (mc)
-
-O CLI do Minio (`mc`) já está instalado e configurado.
-
-### Estrutura de pastas no bucket `claude-code`
-
-| Pasta | Tipo de arquivo | Extensões |
-|-------|-----------------|-----------|
-| `data/` | Dados estruturados | `.csv`, `.json`, `.txt`, `.xml` |
-| `pdfs/` | Documentos PDF | `.pdf` |
-| `logs/` | Arquivos de log | `.log` |
-
-### Exemplos de upload
-
-```bash
-# Dados estruturados → data/
-mc cp planilha.csv minio/claude-code/data/
-mc cp config.json minio/claude-code/data/
-
-# PDFs → pdfs/
-mc cp relatorio.pdf minio/claude-code/pdfs/
-mc cp documento-escaneado.pdf minio/claude-code/pdfs/
-
-# Logs → logs/
-mc cp app.log minio/claude-code/logs/
-
-# Listar arquivos
-mc ls minio/claude-code/ --recursive
-```
-
-### Exemplos de carregamento no Claude Code
-
-```
-# Dados estruturados
-rlm_load_s3(key="data/planilha.csv", name="dados", data_type="csv")
-rlm_load_s3(key="data/config.json", name="config", data_type="json")
-
-# PDFs (auto-detecta se precisa OCR)
-rlm_load_s3(key="pdfs/relatorio.pdf", name="doc", data_type="pdf")
-
-# PDFs escaneados (força OCR - requer MISTRAL_API_KEY)
-rlm_load_s3(key="pdfs/escaneado.pdf", name="doc", data_type="pdf_ocr")
-
-# Logs
-rlm_load_s3(key="logs/app.log", name="logs", data_type="lines")
-```
-
-**Nota:** O bucket padrão é `claude-code`, não precisa especificar.
-
-### Alternativa: URL assinada (rlm_upload_url)
-```
-# Gera URL para upload direto (sem precisar de mc)
-rlm_upload_url(bucket="docs", key="arquivo.pdf")
-
-# Retorna URL para fazer upload via curl
-curl -X PUT -T arquivo.pdf "URL_ASSINADA"
-```
-
-### Alternativa: SCP/SFTP para a VPS
-```bash
-# Do local para a VPS (se bind mount estiver configurado)
-scp arquivo.pdf user@vps:/caminho/para/rlm-data/
-
-# No container, estará em /data/arquivo.pdf
-```
-
-## Variáveis de Ambiente
-
-| Variável | Obrigatória | Uso | Padrão |
-|----------|-------------|-----|--------|
-| `RLM_API_KEY` | Recomendado | Autenticação Bearer token | — |
-| `OPENAI_API_KEY` | Para llm_query | Sub-chamadas LLM | — |
-| `MISTRAL_API_KEY` | Para OCR | PDFs escaneados | — |
-| `MINIO_*` | Opcional | Storage S3 | — |
-| `RLM_PERSIST_DIR` | Opcional | Diretório SQLite | `/persist` |
-| `RLM_MAX_MEMORY_MB` | Opcional | Memória total do REPL | `1024` |
-| `RLM_MAX_VAR_SIZE_MB` | Opcional | Limite por variável individual | `50` |
-| `RLM_CORS_ORIGINS` | Opcional | Origens CORS (vírgula-separadas) | `localhost` |
-| `RLM_SSE_RATE_LIMIT` | Opcional | Requests por janela | `100` |
-| `RLM_SSE_RATE_WINDOW` | Opcional | Janela em segundos | `60` |
-| `RLM_UPLOAD_RATE_LIMIT` | Opcional | Uploads por janela | `10` |
-| `RLM_UPLOAD_RATE_WINDOW` | Opcional | Janela em segundos | `60` |
-
-## Tools Disponíveis (19 tools)
-
-### Carregamento de dados
-- `rlm_load_data` - Dados diretos (string)
-- `rlm_load_file` - Arquivo do volume /data (text, json, csv, lines, **pdf**, **pdf_ocr**, **code**)
-- `rlm_load_s3` - Arquivo(s) do Minio/S3 (unitário ou batch via `keys[]`)
-
-### Execução
-- `rlm_execute` - Código Python no REPL
-
-### Gerenciamento
-- `rlm_list_vars` - Lista variáveis (suporta paginação: `offset`, `limit`)
-- `rlm_var_info` - Info de uma variável
-- `rlm_clear` - Limpa variáveis
-- `rlm_memory` - Uso de memória + estatísticas de persistência
-- `rlm_pin_var` - Protege variável do garbage collector
-
-### S3/Minio
-- `rlm_list_buckets` - Lista buckets
-- `rlm_list_s3` - Lista objetos (suporta paginação: `offset`, `limit`)
-- `rlm_upload_url` - Upload de URL para bucket (rate limited: 10/min)
-- `rlm_save_to_s3` - Salva variável(eis) no S3 (unitário ou batch via `vars[]`)
-
-### Busca
-- `rlm_search_index` - Busca keyword/semantic/hybrid no índice
-- `rlm_search_code` - Busca estrutural em código (tree-sitter)
-
-### Coleções (Multi-assunto)
-- `rlm_collection` - Gerencia coleções via `action`: create, add, list, info, rebuild, search
-
-### PDF e Tasks
-- `rlm_process_pdf` - Extrai texto de PDF e salva .txt no bucket
-- `rlm_task` - Gerencia tasks assíncronas via `action`: list, status, cancel
-
-### Ajuda
-- `rlm_help` - Documentação integrada. Tópicos: `workflows`, `s3`, `search`, `code`, `pdf`, `collections`, `execute`, `security`, `config`
-
-## Paginação
-
-Endpoints que retornam listas grandes suportam paginação via `offset` e `limit`:
-
-```python
-# Listar variáveis (primeiras 10)
-rlm_list_vars(offset=0, limit=10)
-
-# Listar mais variáveis (próximas 10)
-rlm_list_vars(offset=10, limit=10)
-
-# Busca com paginação
-rlm_search_index(var_name="texto", terms=["erro"], offset=0, limit=20)
-
-# Listar objetos S3 com paginação
-rlm_list_s3(bucket="claude-code", prefix="data/", offset=0, limit=50)
-
-# Busca em coleção com paginação
-rlm_collection(action="search", name="docs", terms=["termo"], offset=0, limit=10)
-```
-
-## MCP Resources
-
-O servidor expõe resources conforme a especificação MCP:
-
-| Resource URI | Descrição |
-|--------------|-----------|
-| `rlm://variables` | Lista variáveis persistidas com metadados |
-| `rlm://memory` | Uso de memória do REPL (total, usada, livre) |
-| `rlm://collections` | Lista de coleções com contagem de variáveis |
-
-Resources são acessíveis via `resources/list` e `resources/read` no protocolo MCP.
-
-## Helper Functions no REPL
-
-O REPL Python inclui funções auxiliares pré-definidas para facilitar análise de textos:
-
-### `buscar(texto, termo)` → list[dict]
-Busca um termo no texto (case-insensitive).
-```python
-# Retorna: [{'posicao': int, 'linha': int, 'contexto': str}]
-resultados = buscar(meu_texto, "erro")
-for r in resultados:
-    print(f"Linha {r['linha']}: {r['contexto']}")
-```
-
-### `contar(texto, termo)` → dict
-Conta ocorrências de um termo (case-insensitive).
-```python
-# Retorna: {'total': int, 'por_linha': {linha: count}}
-stats = contar(meu_texto, "warning")
-print(f"Total: {stats['total']}")
-```
-
-### `extrair_secao(texto, inicio, fim)` → list[dict]
-Extrai seções entre marcadores (case-insensitive).
-```python
-# Retorna: [{'conteudo': str, 'posicao_inicio': int, 'posicao_fim': int, 'linha_inicio': int, 'linha_fim': int}]
-secoes = extrair_secao(doc, "## Introdução", "## Conclusão")
-for s in secoes:
-    print(s['conteudo'][:200])
-```
-
-### `resumir_tamanho(bytes)` → str
-Converte bytes para formato humanizado.
-```python
-# Retorna: string como "1.5 MB", "256 KB"
-print(resumir_tamanho(1048576))  # → "1.0 MB"
-print(resumir_tamanho(1536))     # → "1.5 KB"
-```
+- Ver seção "Dokploy + Traefik" no final para troubleshooting
 
 ## Estrutura do Código
 
 ```
 src/rlm_mcp/
-├── http_server.py        # Servidor HTTP/SSE FastAPI (MCP protocol)
-├── repl.py               # REPL Python sandboxed (variáveis em memória)
-├── rate_limiter.py       # Sliding window rate limiting
-├── persistence.py        # Persistência SQLite (variáveis + índices)
-├── indexer.py            # Indexação semântica automática
-├── pdf_parser.py         # Extração PDF (pdfplumber + Mistral OCR)
-├── s3_client.py          # Cliente Minio/S3
-├── llm_client.py         # Cliente para sub-chamadas LLM
+├── http_server.py         # Servidor HTTP/SSE FastAPI (MCP protocol, lifespan auto-restore)
+├── repl.py                # REPL Python sandboxed (variáveis em memória)
+├── response_formatter.py  # Formatação de respostas (compact/normal/verbose)
+├── indexer.py             # Indexação keyword + live scan fallback + hybrid/RRF search
+├── vector_index.py        # Índice vetorial para busca semântica (embeddings)
+├── embeddings.py          # Cliente de embeddings (OpenAI API)
+├── code_parser.py         # Parse estrutural com tree-sitter (busca em código)
+├── persistence.py         # Persistência SQLite (variáveis + índices + coleções)
+├── task_manager.py        # Tasks assíncronas (batch ops, PDFs grandes)
+├── rate_limiter.py        # Sliding window rate limiting
+├── pdf_parser.py          # Extração PDF (pdfplumber + Mistral OCR)
+├── s3_client.py           # Cliente Minio/S3
+├── llm_client.py          # Cliente para sub-chamadas LLM
 ├── services/
 │   ├── persistence_service.py  # Auto-persist + index helper
 │   └── s3_guard.py             # Validação config S3
 └── tools/
-    ├── base.py           # text_response/error_response helpers
-    └── schemas.py        # Definições de tools MCP (~540 linhas)
-
-tests/                    # 1880 testes (pytest)
-├── test_http_server.py   # Integração HTTP (1514 testes)
-├── test_repl.py          # Sandbox REPL (366 testes)
-├── test_rate_limiter.py
-├── test_persistence.py
-├── test_indexer.py
-├── ...
+    ├── base.py            # text_response/error_response helpers
+    └── schemas.py         # Definições de tools MCP (19 tools)
 ```
+
+## Tools Disponíveis (19 tools)
+
+| Categoria | Tool | Descrição |
+|-----------|------|-----------|
+| **Dados** | `rlm_load_data` | Dados diretos (string) |
+| | `rlm_load_file` | Arquivo do volume /data |
+| | `rlm_load_s3` | Arquivo(s) do Minio/S3 (unitário ou batch) |
+| **Execução** | `rlm_execute` | Código Python no REPL |
+| **Gerenciamento** | `rlm_list_vars` | Lista variáveis (paginação: offset/limit) |
+| | `rlm_var_info` | Info de uma variável |
+| | `rlm_clear` | Limpa variáveis |
+| | `rlm_memory` | Uso de memória + stats persistência |
+| | `rlm_pin_var` | Protege variável do GC |
+| **S3** | `rlm_list_buckets` | Lista buckets |
+| | `rlm_list_s3` | Lista objetos (paginação) |
+| | `rlm_upload_url` | Upload de URL para bucket |
+| | `rlm_save_to_s3` | Salva variável(eis) no S3 |
+| **Busca** | `rlm_search_index` | Keyword/semantic/hybrid (max_results, paginação) |
+| | `rlm_search_code` | Busca estrutural em código (limit/offset/max_source_lines) |
+| **Coleções** | `rlm_collection` | create, add, list, info, rebuild, search |
+| **PDF/Tasks** | `rlm_process_pdf` | Extrai texto de PDF |
+| | `rlm_task` | Gerencia tasks assíncronas |
+| **Ajuda** | `rlm_help` | Documentação integrada |
+
+## Busca — 3 Modos
+
+### Keyword (padrão)
+- 64 termos pré-indexados automaticamente (emoções, relações, corpo, etc.)
+- **Qualquer outro termo** funciona via live scan + cache (transparente)
+- `rlm_search_index(var_name="livro", terms=["karma", "perdão"])`
+
+### Semantic (vetorial)
+- Requer `OPENAI_API_KEY` no servidor
+- `rlm_search_index(var_name="livro", terms=["por que o Criador se experimenta"], mode="semantic")`
+
+### Hybrid (keyword + semantic via RRF)
+- Combina as duas pernas com Reciprocal Rank Fusion
+- **Dica:** usar termos separados no array para hybrid (`["karma", "perdão"]` em vez de `["karma perdão"]`)
+- `rlm_search_index(var_name="livro", terms=["karma", "perdão"], mode="hybrid")`
+
+### Parâmetros de controle de output
+| Parâmetro | Tool | Default | Função |
+|-----------|------|---------|--------|
+| `max_results` | search_index | 30 | Cap global entre todos os termos |
+| `limit` | search_code | 20 | Max símbolos retornados |
+| `offset` | search_code | 0 | Paginação |
+| `max_source_lines` | search_code | 5 | Max linhas de código por símbolo |
 
 ## Persistência e Indexação
 
-### Persistência automática (SQLite)
-- Variáveis carregadas com `rlm_load_s3` ou `rlm_load_data` são **automaticamente persistidas**
-- Ao reiniciar o servidor, variáveis são restauradas automaticamente
-- Dados ficam em `/persist/rlm_data.db` (volume Docker)
+### Auto-restore no startup (lifespan)
+1. Restaura variáveis do SQLite → `repl.variables` + `variable_metadata`
+2. Restaura índices keyword e embeddings vetoriais
+3. Reconstrói índices combinados de todas as coleções (`_coll_*_combined`)
 
 ### Indexação automática
-- Textos com **100k+ caracteres** são **indexados automaticamente**
-- Índice permite busca rápida por termos sem varrer o texto todo
-- Termos padrão: emoções, relações, trabalho, sintomas físicos, partes do corpo
-- Use `rlm_search_index(var_name, terms)` para buscar
+- Textos >= 100K chars: índice criado automaticamente com 64 termos padrão
+- Textos menores: índice criado on-the-fly na primeira busca
+- Termos fora do vocabulário pré-indexado: live scan + cache no `TextIndex.terms`
 
-### Exemplos de uso
+### Coleções
+```python
+rlm_collection(action="create", name="docs", description="Documentação")
+rlm_collection(action="add", name="docs", vars=["doc1", "doc2"])
+rlm_collection(action="search", name="docs", terms=["instalação"])
 ```
-# Busca simples em uma variável
-rlm_search_index(var_name="scholten1", terms=["medo", "trabalho"])
+- Índice combinado reconstruído automaticamente no startup
+- Busca usa índice combinado + full-text fallback para termos não indexados
 
-# Busca com todos os termos (AND)
-rlm_search_index(var_name="scholten1", terms=["medo", "fracasso"], require_all=True)
+## Variáveis de Ambiente
 
-# Ver estatísticas de persistência (incluído no rlm_memory)
-rlm_memory()
+| Variável | Uso | Padrão |
+|----------|-----|--------|
+| `RLM_API_KEY` | Autenticação Bearer token | — |
+| `OPENAI_API_KEY` | Busca semântica/hybrid | — |
+| `MISTRAL_API_KEY` | OCR para PDFs escaneados | — |
+| `MINIO_*` | Storage S3 | — |
+| `RLM_PERSIST_DIR` | Diretório SQLite | `/persist` |
+| `RLM_MAX_MEMORY_MB` | Memória total do REPL | `1024` |
+| `RLM_MAX_VAR_SIZE_MB` | Limite por variável | `50` |
+| `RLM_RESPONSE_VERBOSITY` | compact/normal/verbose | `compact` |
+
+## Upload de Arquivos
+
+```bash
+# Via Minio CLI (principal)
+mc cp arquivo.csv minio/claude-code/data/
+mc cp relatorio.pdf minio/claude-code/pdfs/
+
+# Carregar no REPL
+rlm_load_s3(key="data/arquivo.csv", name="dados", data_type="csv")
+rlm_load_s3(key="pdfs/relatorio.pdf", name="doc", data_type="pdf")
 ```
 
-### Usando Coleções (Multi-assunto)
-```
-# Criar coleção de homeopatia
-rlm_collection(action="create", name="homeopatia", description="Materiais de homeopatia unicista")
+Tipos: text, json, lines, csv, code, pdf, pdf_ocr. Bucket padrão: `claude-code`.
 
-# Adicionar documentos à coleção
-rlm_collection(action="add", name="homeopatia", vars=["scholten1", "scholten2", "kent", "banerji"])
+## Helper Functions no REPL
 
-# Buscar em TODOS os documentos da coleção de uma vez
-rlm_collection(action="search", name="homeopatia", terms=["medo", "ansiedade"])
-
-# Listar coleções disponíveis
-rlm_collection(action="list")
-```
-
-Você pode ter múltiplas coleções no mesmo servidor:
-- `homeopatia`: scholten, kent, banerji, matéria médica
-- `nutrição`: protocolos, suplementos, dietas
-- `fitoterapia`: plantas, formulações
+| Função | Retorno | Uso |
+|--------|---------|-----|
+| `buscar(texto, termo)` | `[{posicao, linha, contexto}]` | Busca case-insensitive |
+| `contar(texto, termo)` | `{total, por_linha}` | Conta ocorrências |
+| `extrair_secao(texto, inicio, fim)` | `[{conteudo, linha_inicio, linha_fim}]` | Extrai entre marcadores |
+| `resumir_tamanho(bytes)` | `"1.5 MB"` | Humaniza bytes |
 
 ## Segurança
 
-### Rate Limiting
-Todos os endpoints MCP têm rate limiting (sliding window por IP/session). HTTP 429 quando excedido.
-
-| Endpoint | Limite | Janela |
-|----------|--------|--------|
-| `/message` (SSE) | 100 req | 60s (por session) |
-| `/mcp` (direto) | 100 req | 60s (por IP) |
-| `rlm_upload_url` | 10 uploads | 60s |
-
-### Memory Protection
-Variáveis individuais limitadas a `RLM_MAX_VAR_SIZE_MB` (padrão: 50MB). Aplica tanto em `load_data()` quanto em variáveis criadas via `execute()`. Auto-cleanup remove variáveis mais antigas quando memória total atinge threshold (80%).
-
-### CORS
-Origens restritas via `RLM_CORS_ORIGINS`. Padrão: `localhost` (portas 80, 3000, 8080). Para produção: `RLM_CORS_ORIGINS=https://rlm.drsolution.online`
-
-### Sandbox
-REPL bloqueia: `os`, `subprocess`, `socket`, `open()`, `exec()`, `eval()`, dunder attrs. Whitelist de imports seguros (re, json, math, collections, etc).
+- **Rate limiting**: SSE 100/60s, MCP 100/60s, uploads 10/60s
+- **Memory protection**: auto-cleanup em 80% do limite, variáveis individuais max 50MB
+- **Sandbox**: bloqueia os, subprocess, socket, open, exec, eval, dunders
+- **CORS**: restrito via `RLM_CORS_ORIGINS`
 
 ## Observabilidade
 
-- **`/health`** — Status, memória, versão
-- **`/metrics`** — Request counts, latência (p50/p95/p99), tool calls, rate limit rejections
-- **`X-Request-Id`** header em todas as respostas para tracing
-- Logging: `LOG_FORMAT=json|text`, `LOG_LEVEL=INFO|DEBUG|WARNING`
+- `/health` — status, memória, versão
+- `/metrics` — request counts, latência (p50/p95/p99), tool calls
+- `X-Request-Id` header em todas as respostas
+- `LOG_FORMAT=json|text`, `LOG_LEVEL=INFO|DEBUG|WARNING`
 
-## Notas Importantes
+## Dokploy + Traefik — Regras
 
-- Volume `/data` é **read-only** por segurança
-- Volume `/persist` guarda SQLite com variáveis e índices
-- REPL Python roda em **sandbox** (imports limitados)
-- PDFs machine readable usam **pdfplumber** (local, rápido)
-- PDFs escaneados usam **Mistral OCR API** (requer API key)
+1. **NÃO usar `container_name`** — causa conflito no redeploy
+2. **Configurar domínios pela UI do Dokploy** (aba Domains)
+3. **NÃO duplicar routers** HTTP + HTTPS — Dokploy gerencia redirecionamento
+4. **Cache busting**: incrementar `CACHE_BUST` ARG no Dockerfile para forçar rebuild
 
-## ⚠️ Dokploy + Traefik - Lições Aprendidas
-
-### docker-compose.yml - Regras para Dokploy
-
-1. **NÃO usar `container_name`** - Causa conflito no redeploy
-   ```yaml
-   # ERRADO - causa "container name already in use"
-   container_name: rlm-mcp-server
-
-   # CERTO - deixar Docker gerar nome automático
-   # (não colocar container_name)
-   ```
-
-2. **Configurar domínios pela UI do Dokploy** (recomendado)
-   - Aba "Domains" no painel do Dokploy
-   - Dokploy adiciona labels Traefik automaticamente
-   - Referência: https://docs.dokploy.com/docs/core/docker-compose/domains
-
-3. **Se usar labels manuais**, manter simples:
-   ```yaml
-   labels:
-     - "traefik.enable=true"
-     - "traefik.docker.network=dokploy-network"
-     - "traefik.http.services.NOME.loadbalancer.server.port=PORTA"
-   ```
-
-4. **NÃO duplicar routers** (HTTP + HTTPS separados causa conflito)
-   - Dokploy/Traefik gerencia redirecionamento HTTP→HTTPS automaticamente
-
-### Dockerfile - Cache busting
-
-Para forçar rebuild quando código Python muda:
-```dockerfile
-# No builder stage
-ARG CACHE_BUST=YYYYMMDDHH
-
-# No runtime stage (também!)
-ARG CACHE_BUST=YYYYMMDDHH
-RUN echo "Version: ${CACHE_BUST}" && pip install ...
-```
-
-Incrementar `CACHE_BUST` força rebuild completo.
-
-### Troubleshooting comum
-
-| Erro | Causa | Solução |
-|------|-------|---------|
-| 502 Bad Gateway | Container não na dokploy-network | Adicionar `traefik.docker.network=dokploy-network` |
-| Container name conflict | `container_name` no compose | Remover diretiva |
-| Código antigo após deploy | Docker cache | Incrementar CACHE_BUST |
-| MCP não aparece em /mcp | Servidor 502 | Verificar health endpoint |
-| Multiple services conflict | Labels Traefik duplicadas | Usar UI do Dokploy para domínios |
-
-### Referências
-
-- [Dokploy Domains](https://docs.dokploy.com/docs/core/docker-compose/domains)
-- [Issue #3435 - Traefik routing](https://github.com/Dokploy/dokploy/issues/3435)
-- [Traefik Docker docs](https://doc.traefik.io/traefik/reference/routing-configuration/other-providers/docker/)
+| Erro | Solução |
+|------|---------|
+| 502 Bad Gateway | Verificar `traefik.docker.network=dokploy-network` |
+| Container name conflict | Remover `container_name` do compose |
+| Código antigo após deploy | Incrementar `CACHE_BUST` |
