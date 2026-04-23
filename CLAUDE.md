@@ -154,7 +154,7 @@ Tipos: text, json, lines, csv, code, pdf, pdf_ocr. Bucket padrão: `claude-code`
 
 ## Segurança
 
-- **Rate limiting**: SSE 100/60s, MCP 100/60s, uploads 10/60s
+- **Rate limiting**: SSE 100/60s, uploads 10/60s (configurável via `RLM_SSE_RATE_LIMIT`, `RLM_UPLOAD_RATE_LIMIT`)
 - **Memory protection**: auto-cleanup em 80% do limite, variáveis individuais max 50MB
 - **Sandbox**: bloqueia os, subprocess, socket, open, exec, eval, dunders
 - **CORS**: restrito via `RLM_CORS_ORIGINS`
@@ -164,7 +164,7 @@ Tipos: text, json, lines, csv, code, pdf, pdf_ocr. Bucket padrão: `claude-code`
 - `/health` — status, memória, versão
 - `/metrics` — request counts, latência (p50/p95/p99), tool calls
 - `X-Request-Id` header em todas as respostas
-- `LOG_FORMAT=json|text`, `LOG_LEVEL=INFO|DEBUG|WARNING`
+- `RLM_LOG_FORMAT=json|text`, `RLM_LOG_LEVEL=INFO|DEBUG|WARNING`
 
 ## Dokploy + Traefik — Regras
 
