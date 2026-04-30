@@ -23,7 +23,11 @@ services:
       # API Key (opcional, mas recomendado em produção)
       - RLM_API_KEY=${RLM_API_KEY:-}
       # Sub-chamadas LLM (RLM - Recursive Language Model)
+      # Provider OpenAI-compat: setar DEEPSEEK_API_KEY + RLM_LLM_BASE_URL para DeepSeek;
+      # senão usa OPENAI_API_KEY com endpoint padrão da OpenAI.
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - RLM_LLM_BASE_URL=${RLM_LLM_BASE_URL:-}
       - RLM_SUB_MODEL=${RLM_SUB_MODEL:-gpt-4o-mini}
       - RLM_MAX_SUB_CALLS=${RLM_MAX_SUB_CALLS:-100}
       # Mistral OCR para PDFs escaneados
@@ -61,7 +65,7 @@ services:
       resources:
         limits:
           cpus: '2'
-          memory: 2G
+          memory: 3G
         reservations:
           cpus: '0.25'
           memory: 256M

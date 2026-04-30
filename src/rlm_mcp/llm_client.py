@@ -17,7 +17,10 @@ class LLMClient:
     """Cliente para sub-chamadas LLM de dentro do REPL."""
 
     def __init__(self):
-        self.api_key = os.getenv("OPENAI_API_KEY", "")
+        # Prefere DEEPSEEK_API_KEY se setada (provider OpenAI-compat),
+        # senão cai para OPENAI_API_KEY. RLM_LLM_BASE_URL aponta o endpoint.
+        self.api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY", "")
+        self.base_url = os.getenv("RLM_LLM_BASE_URL") or None
         self.default_model = os.getenv("RLM_SUB_MODEL", "gpt-4o-mini")
         self.max_calls = int(os.getenv("RLM_MAX_SUB_CALLS", "100"))
         self.call_count = 0
@@ -25,16 +28,20 @@ class LLMClient:
 
         if not self.api_key:
             logger.warning(
-                "OPENAI_API_KEY não configurada. llm_query() não funcionará."
+                "Nenhuma chave LLM configurada (DEEPSEEK_API_KEY ou OPENAI_API_KEY). "
+                "llm_query() não funcionará."
             )
 
     @property
     def client(self):
-        """Lazy initialization do cliente OpenAI."""
+        """Lazy initialization do cliente OpenAI-compat."""
         if self._client is None:
             try:
                 import openai
-                self._client = openai.OpenAI(api_key=self.api_key)
+                kwargs = {"api_key": self.api_key}
+                if self.base_url:
+                    kwargs["base_url"] = self.base_url
+                self._client = openai.OpenAI(**kwargs)
             except ImportError:
                 raise RuntimeError(
                     "Pacote 'openai' não instalado. "
@@ -69,7 +76,7 @@ class LLMClient:
         # Validações
         if not self.api_key:
             raise RuntimeError(
-                "OPENAI_API_KEY não configurada. "
+                "Nenhuma chave LLM configurada (DEEPSEEK_API_KEY ou OPENAI_API_KEY). "
                 "Configure no .env do servidor RLM."
             )
 
