@@ -122,28 +122,40 @@ class EmbeddingService:
     def _embed_openai(self, texts: list[str]) -> list[list[float]]:
         """Embed texts using OpenAI API.
 
-        Handles batching for large input (max 2048 texts per call).
+        Batches by both count (max 2048 texts/call) and token budget
+        (max 250k tokens/call, leaving margin under the 300k API cap).
         """
         if not self._client:
             return [[] for _ in texts]
 
-        all_embeddings = []
-        batch_size = 2048  # OpenAI max batch size
+        # Truncate individual texts up front (~8000 chars ≈ 2000 tokens)
+        truncated = [t[:8000] for t in texts]
 
+        # Pack into sub-batches that respect both limits
+        MAX_BATCH = 2048
+        MAX_TOKENS = 250_000
+        sub_batches: list[list[str]] = []
+        cur: list[str] = []
+        cur_tokens = 0
+        for t in truncated:
+            n = max(1, len(t) // 4)  # rough char→token estimate
+            if cur and (len(cur) >= MAX_BATCH or cur_tokens + n > MAX_TOKENS):
+                sub_batches.append(cur)
+                cur, cur_tokens = [], 0
+            cur.append(t)
+            cur_tokens += n
+        if cur:
+            sub_batches.append(cur)
+
+        all_embeddings: list[list[float]] = []
         try:
-            for i in range(0, len(texts), batch_size):
-                batch = texts[i:i + batch_size]
-                # Truncate individual texts to avoid token limits
-                batch = [t[:8000] for t in batch]
-
+            for batch in sub_batches:
                 response = self._client.embeddings.create(
                     input=batch,
                     model=self._model,
                 )
-
                 for item in response.data:
                     all_embeddings.append(item.embedding)
-
             return all_embeddings
 
         except Exception as e:
