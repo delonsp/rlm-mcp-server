@@ -5,6 +5,7 @@ Cria índices semânticos automaticamente ao carregar documentos grandes,
 permitindo buscas rápidas sem varrer o texto todo.
 """
 
+import os
 import re
 import logging
 from collections import defaultdict
@@ -407,15 +408,21 @@ def hybrid_search(
         )
     elif mode == "hybrid" and has_semantic and not has_keyword:
         # Keyword returned empty but semantic has results — promote semantic to hybrid
-        result["hybrid_results"] = [
+        promoted = [
             {
                 "line": sr["line_start"],
                 "rrf_score": sr["score"],
                 "text": sr["chunk_text"][:100],
                 "sources": ["semantic"],
+                "_overlap_text": sr["chunk_text"],
             }
             for sr in semantic_results
         ]
+        promoted = _apply_gravity_dampening(promoted, terms)
+        promoted.sort(key=lambda x: -x["rrf_score"])
+        for r in promoted:
+            r.pop("_overlap_text", None)
+        result["hybrid_results"] = promoted[offset:offset + limit]
     elif mode == "hybrid" and has_keyword and not has_semantic:
         # Semantic unavailable, keyword has results — promote keyword to hybrid
         fused = []
@@ -445,6 +452,75 @@ def hybrid_search(
         result["mode"] = "keyword (no embeddings)"
 
     return result
+
+
+# =============================================================================
+# Gravity dampening (insight portado do Matryoshka / Ori-Mnemos)
+# Rebaixa "cosine ghosts": resultados de score alto que não contêm nenhum
+# termo da query no texto. Ablation-validated no Ori-Mnemos (P@5 delta -0.256).
+# =============================================================================
+
+_DAMPENING_ENABLED = os.getenv("RLM_GRAVITY_DAMPENING", "true").lower() in ("true", "1", "yes")
+_DAMPENING_PENALTY = float(os.getenv("RLM_DAMPENING_PENALTY", "0.5"))
+_DAMPENING_THRESHOLD_RATIO = float(os.getenv("RLM_DAMPENING_THRESHOLD_RATIO", "0.3"))
+
+# Stopwords mínimas (PT+EN) para extração de termos — evita que uma stopword
+# na query satisfaça o overlap trivialmente.
+_QUERY_STOPWORDS = {
+    "a", "o", "e", "de", "da", "do", "das", "dos", "em", "no", "na", "nos", "nas",
+    "um", "uma", "que", "com", "por", "para", "se", "os", "as", "ao", "aos", "à",
+    "às", "ou", "the", "of", "and", "to", "in", "is", "it", "for", "on", "with", "at", "by",
+}
+
+_KEY_TERM_RE = re.compile(r"[^0-9a-zà-ÿ]+", re.UNICODE)
+
+
+def _extract_key_terms(text: str) -> set[str]:
+    """Extrai termos de conteúdo (lowercase, sem stopwords, len>1)."""
+    if not text:
+        return set()
+    words = _KEY_TERM_RE.split(text.lower())
+    return {w for w in words if len(w) > 1 and w not in _QUERY_STOPWORDS}
+
+
+def _apply_gravity_dampening(
+    results: list[dict],
+    terms: list[str],
+    score_key: str = "rrf_score",
+    text_key: str = "_overlap_text",
+    penalty: float = None,
+    threshold_ratio: float = None,
+) -> list[dict]:
+    """Aplica gravity dampening in-place sobre uma lista de resultados.
+
+    Multiplica por `penalty` o score de qualquer resultado cujo score esteja
+    acima de `threshold_ratio * max_score` E cujo texto não compartilhe nenhum
+    termo da query. Threshold adaptativo funciona em qualquer escala de score.
+    Lados keyword nunca são afetados (o contexto sempre contém o termo).
+    """
+    if not _DAMPENING_ENABLED or not results:
+        return results
+    penalty = _DAMPENING_PENALTY if penalty is None else penalty
+    threshold_ratio = _DAMPENING_THRESHOLD_RATIO if threshold_ratio is None else threshold_ratio
+
+    query_terms: set[str] = set()
+    for t in terms:
+        query_terms |= _extract_key_terms(t)
+    if not query_terms:
+        return results
+
+    max_score = max((r.get(score_key, 0.0) for r in results), default=0.0)
+    if max_score <= 0:
+        return results
+    threshold = max_score * threshold_ratio
+
+    for r in results:
+        if r.get(score_key, 0.0) <= threshold:
+            continue
+        text_terms = _extract_key_terms(r.get(text_key, ""))
+        if query_terms.isdisjoint(text_terms):
+            r[score_key] = r.get(score_key, 0.0) * penalty
+    return results
 
 
 def _reciprocal_rank_fusion(
@@ -483,6 +559,8 @@ def _reciprocal_rank_fusion(
                     "rrf_score": 0.0,
                     "text": match.get("contexto", ""),
                     "sources": set(),
+                    # keyword context sempre contém o termo → protege da dampening
+                    "_overlap_text": match.get("contexto", ""),
                 }
             rrf_scores[line]["rrf_score"] += 1.0 / (k + rank)
             rrf_scores[line]["sources"].add("keyword")
@@ -497,15 +575,21 @@ def _reciprocal_rank_fusion(
                 "rrf_score": 0.0,
                 "text": sr["chunk_text"][:100],
                 "sources": set(),
+                # texto completo do chunk (não truncado) para checagem de overlap
+                "_overlap_text": sr["chunk_text"],
             }
         rrf_scores[line]["rrf_score"] += 1.0 / (k + rank)
         rrf_scores[line]["sources"].add("semantic")
 
-    # Sort by RRF score
-    sorted_results = sorted(rrf_scores.values(), key=lambda x: -x["rrf_score"])
+    # Gravity dampening antes do sort (rebaixa cosine ghosts)
+    fused_list = _apply_gravity_dampening(list(rrf_scores.values()), terms)
 
-    # Convert sources set to list for JSON serialization
+    # Sort by RRF score
+    sorted_results = sorted(fused_list, key=lambda x: -x["rrf_score"])
+
+    # Convert sources set to list for JSON serialization; drop overlap helper
     for r in sorted_results:
         r["sources"] = list(r["sources"])
+        r.pop("_overlap_text", None)
 
     return sorted_results[offset:offset + limit]
