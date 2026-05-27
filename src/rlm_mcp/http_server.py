@@ -34,7 +34,7 @@ from .indexer import get_index, set_index, TextIndex, auto_index_if_large, hybri
 from .rate_limiter import SlidingWindowRateLimiter, RateLimitResult
 from .tools.schemas import TOOL_SCHEMAS
 from .services.s3_guard import require_s3_configured
-from .services.persistence_service import persist_and_index
+from .services.persistence_service import persist_and_index, ensure_embeddings
 from .task_manager import TaskManager
 from . import response_formatter as fmt
 from . import code_parser
@@ -1369,6 +1369,12 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                 source_str = source_var if isinstance(source_var, str) else None
 
                 if mode in ("semantic", "hybrid"):
+                    # Lazy-build embeddings se faltarem (var criado via rlm_execute
+                    # ou cujo embed falhou no load). Persiste server-side: o custo
+                    # é pago uma vez, e mesmo que o client dê timeout no 1º build
+                    # grande, os embeddings ficam salvos e a 2ª busca volta rápida.
+                    if source_str:
+                        ensure_embeddings(var_name, source_str)
                     # Use hybrid search (supports keyword, semantic, hybrid)
                     search_result = hybrid_search(
                         var_name, terms, mode=mode,

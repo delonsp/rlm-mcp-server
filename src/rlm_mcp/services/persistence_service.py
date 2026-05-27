@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from ..persistence import get_persistence
 from ..indexer import auto_index_if_large, set_index
 from ..embeddings import get_embedding_service
-from ..vector_index import VectorIndex, set_vector_index
+from ..vector_index import VectorIndex, set_vector_index, get_vector_index
 
 if TYPE_CHECKING:
     from ..repl import PythonREPL
@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 
 # Minimum text size for auto-embedding (100k chars, same as keyword indexing)
 AUTO_EMBED_MIN_CHARS = 100000
+# Upper bound for synchronous lazy embedding. Above this, the on-demand build
+# would block a search request too long; skip and let the user retry/load.
+# ~25M chars ≈ 50 API batches. Tudo abaixo (inclusive os ReCODE de 11MB) entra.
+LAZY_EMBED_MAX_CHARS = 25_000_000
 
 
 def persist_and_index(var_name: str, value, repl: "PythonREPL") -> tuple[str, str, str]:
@@ -67,6 +71,36 @@ def persist_and_index(var_name: str, value, repl: "PythonREPL") -> tuple[str, st
         error_msg = f"\n⚠️ Erro de persistência: {e}"
 
     return persist_msg, index_msg, error_msg
+
+
+def ensure_embeddings(var_name: str, value) -> str:
+    """Constrói embeddings sob demanda para um var que ainda não os tem.
+
+    Cobre vars nascidos no `rlm_execute` (que não passam por persist_and_index)
+    e vars cujo embed falhou no load (ex: antes do batching em embeddings.py).
+    Idempotente: se o índice vetorial já existe em memória, não faz nada.
+    Persiste o resultado no SQLite, então o custo é pago uma única vez.
+
+    Returns:
+        Status string (ex: "🔮 Embedded (...)"), ou "" se nada foi feito.
+    """
+    if get_vector_index(var_name) is not None:
+        return ""
+    if not isinstance(value, str) or len(value) < AUTO_EMBED_MIN_CHARS:
+        return ""
+    if len(value) > LAZY_EMBED_MAX_CHARS:
+        logger.warning(
+            f"Lazy embed pulado para '{var_name}': {len(value):,} chars > "
+            f"limite {LAZY_EMBED_MAX_CHARS:,}"
+        )
+        return ""
+    service = get_embedding_service()
+    if not service.is_available:
+        return ""
+
+    persistence = get_persistence()
+    logger.info(f"Lazy-embedding '{var_name}' ({len(value):,} chars) sob demanda...")
+    return _auto_embed(var_name, value, persistence)
 
 
 def _auto_embed(var_name: str, text: str, persistence) -> str:
