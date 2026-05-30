@@ -148,19 +148,23 @@ class EmbeddingService:
             sub_batches.append(cur)
 
         all_embeddings: list[list[float]] = []
-        try:
-            for batch in sub_batches:
+        for batch in sub_batches:
+            try:
                 response = self._client.embeddings.create(
                     input=batch,
                     model=self._model,
                 )
-                for item in response.data:
+                # Ordena por .index: a API não garante que data venha na ordem
+                # do input, e o resultado é casado posicionalmente com os chunks.
+                for item in sorted(response.data, key=lambda d: d.index):
                     all_embeddings.append(item.embedding)
-            return all_embeddings
-
-        except Exception as e:
-            logger.error(f"OpenAI embedding error: {e}")
-            return [[] for _ in texts]
+            except Exception as e:
+                # Falha de UM sub-batch não descarta os demais: preenche vazios
+                # só para este batch (mantém alinhamento) e segue. Antes, qualquer
+                # falha jogava fora todos os embeddings já computados.
+                logger.error(f"OpenAI embedding error (batch de {len(batch)}): {e}")
+                all_embeddings.extend([[] for _ in batch])
+        return all_embeddings
 
 
 # Singleton

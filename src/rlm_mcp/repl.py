@@ -28,7 +28,11 @@ logger = logging.getLogger("rlm-mcp.repl")
 ALLOWED_IMPORTS = {
     # Builtins seguros
     "re", "json", "math", "statistics", "collections", "itertools",
-    "functools", "operator", "string", "textwrap", "unicodedata",
+    "textwrap", "unicodedata",
+    # REMOVIDOS por segurança (vetores de sandbox escape):
+    #   operator  → operator.attrgetter("__class__...") burla o bloqueio de dunder
+    #   functools → functools.partial(getattr, o, "__class__") burla o bloqueio de getattr
+    #   string    → string.Formatter().vformat("{0.__class__}", ...) idem str.format
     # Data/Time
     "datetime", "time", "calendar",
     # Estruturas de dados
@@ -54,7 +58,7 @@ BLOCKED_IMPORTS = {
 # Funções bloqueadas
 BLOCKED_BUILTINS = {
     "exec", "eval", "compile", "__import__",
-    "open", "input", "breakpoint",
+    "open", "input", "breakpoint", "help",
     "globals", "locals", "vars",
     "getattr", "setattr", "delattr",
     "exit", "quit",
@@ -390,6 +394,20 @@ class SafeREPL:
                         raise SecurityError(
                             f"Funcao bloqueada: '{node.func.id}'"
                         )
+                # Bloqueia .format()/.format_map(): o protocolo de format string
+                # acessa atributos via string (ex: "{0.__class__}".format(x)),
+                # contornando o bloqueio de dunder que só vê nós ast.Attribute.
+                # Use f-strings — nelas os dunders viram nós AST e SÃO bloqueados.
+                elif isinstance(node.func, ast.Attribute):
+                    if node.func.attr in ("format", "format_map"):
+                        raise SecurityError(
+                            f"Metodo bloqueado: '.{node.func.attr}()' (use f-string)"
+                        )
+
+            # Bloqueia QUALQUER referência (não só chamada) a builtin perigoso —
+            # fecha o bypass por aliasing: `g = getattr; g(o, '__class__')`.
+            if isinstance(node, ast.Name) and node.id in BLOCKED_BUILTINS:
+                raise SecurityError(f"Nome bloqueado: '{node.id}'")
 
             # Bloqueia acesso a atributos dunder
             if isinstance(node, ast.Attribute):
@@ -399,18 +417,30 @@ class SafeREPL:
                             f"Acesso a atributo bloqueado: '{node.attr}'"
                         )
 
-    def _estimate_size(self, obj: Any) -> int:
-        """Estima tamanho de um objeto em bytes"""
+    def _estimate_size(self, obj: Any, _seen: set = None) -> int:
+        """Estima tamanho de um objeto em bytes (com detecção de ciclo).
+
+        Sem _seen, uma estrutura auto-referente (a=[]; a.append(a)) causava
+        RecursionError → o except retornava 0 → a var passava no guard de
+        tamanho sem limite (DoS de memória). _seen quebra o ciclo.
+        """
+        if _seen is None:
+            _seen = set()
+        obj_id = id(obj)
+        if obj_id in _seen:
+            return 0
         try:
             if isinstance(obj, str):
                 return len(obj.encode('utf-8'))
             elif isinstance(obj, (bytes, bytearray)):
                 return len(obj)
             elif isinstance(obj, (list, tuple)):
-                return sum(self._estimate_size(x) for x in obj)
+                _seen.add(obj_id)
+                return sum(self._estimate_size(x, _seen) for x in obj)
             elif isinstance(obj, dict):
+                _seen.add(obj_id)
                 return sum(
-                    self._estimate_size(k) + self._estimate_size(v)
+                    self._estimate_size(k, _seen) + self._estimate_size(v, _seen)
                     for k, v in obj.items()
                 )
             else:

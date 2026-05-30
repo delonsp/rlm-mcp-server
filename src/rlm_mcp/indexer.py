@@ -373,8 +373,12 @@ def hybrid_search(
             keyword_index = create_index(source_text, var_name)
             set_index(var_name, keyword_index)
         if keyword_index:
+            # require_all=False SEMPRE aqui: com require_all=True, search_multiple
+            # retorna {linha:[termos]} (formato diferente de {termo:[matches]}) e
+            # _reciprocal_rank_fusion quebra com TypeError ("str"["linha"]).
+            # require_all só faz sentido no modo keyword puro (tratado no handler).
             keyword_results = keyword_index.search_multiple(
-                terms, require_all=require_all, source_text=source_text
+                terms, require_all=False, source_text=source_text
             )
             result["keyword_results"] = keyword_results
             result["stats"]["keyword"] = keyword_index.get_stats()

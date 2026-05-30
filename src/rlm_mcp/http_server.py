@@ -317,10 +317,13 @@ async def verify_api_key(request: Request):
         if hmac.compare_digest(token, API_KEY):
             return True
 
-    # Também aceita como query param para SSE (browsers não enviam headers custom em EventSource)
-    token = request.query_params.get("token", "")
-    if token and hmac.compare_digest(token, API_KEY):
-        return True
+    # Aceita token via query param SOMENTE no endpoint SSE (EventSource não
+    # envia headers custom). NÃO nos endpoints RPC (/mcp, /message): query
+    # string vaza em access-log/proxy/Referer — caminho de leak da credencial.
+    if request.url.path == "/sse":
+        token = request.query_params.get("token", "")
+        if token and hmac.compare_digest(token, API_KEY):
+            return True
 
     raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
@@ -1890,12 +1893,16 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
             # If task completed, return the original result directly
             if task_info.status == "completed" and task_info.result:
                 result_content = task_info.result.get("content", [])
+                # Preserva o flag isError: uma task que RETORNA erro (ex: PDF
+                # cuja extração falhou) é marcada "completed" pelo TaskManager,
+                # mas não pode ser reportada como sucesso ao cliente.
+                is_error = task_info.result.get("isError", False)
                 meta = fmt.format_task_status(task_info)
                 # Prepend task meta to the original result
                 if result_content:
                     original_text = result_content[0].get("text", "")
-                    return {"content": [{"type": "text", "text": original_text}]}
-                return {"content": [{"type": "text", "text": meta}]}
+                    return {"content": [{"type": "text", "text": original_text}], "isError": is_error}
+                return {"content": [{"type": "text", "text": meta}], "isError": is_error}
 
             text = fmt.format_task_status(task_info)
             return {"content": [{"type": "text", "text": text}]}

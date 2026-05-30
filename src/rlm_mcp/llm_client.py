@@ -131,9 +131,13 @@ class LLMClient:
                 params["max_tokens"] = max_tokens
                 params["temperature"] = temperature
 
+            params["timeout"] = 60.0  # evita worker pendurado em rede lenta/API travada
+
             response = self.client.chat.completions.create(**params)
 
-            result = response.choices[0].message.content
+            # content pode vir None (refusal, ou modelo de reasoning sem content)
+            # → len(None) crashava e era remascarado como "erro de API".
+            result = response.choices[0].message.content or ""
             logger.info(f"Sub-chamada LLM #{self.call_count} concluída: {len(result)} chars")
 
             return result
