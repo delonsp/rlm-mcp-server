@@ -337,6 +337,24 @@ async def lifespan(app: FastAPI):
     """Lifecycle hooks"""
     logger.info(f"RLM MCP Server iniciando (max_memory={MAX_MEMORY_MB}MB)")
 
+    # Inicializa o forkserver do sandbox ANTES de abrir conexões (SQLite/minio/
+    # openai) — assim o template do forkserver não herda FDs sensíveis e os
+    # filhos do rlm_execute partem de uma superfície mínima.
+    if getattr(repl, "sandbox_mode", "subprocess") == "subprocess":
+        try:
+            from .sandbox_worker import init_forkserver
+            init_forkserver()
+            logger.info("Sandbox: isolamento por subprocesso ATIVO (modo subprocess)")
+        except Exception as e:
+            logger.error(f"Falha ao inicializar o forkserver do sandbox: {e}")
+    else:
+        logger.warning(
+            "⚠️  Sandbox em modo INSEGURO (in-process): RLM_SANDBOX_MODE=%s. "
+            "O código do rlm_execute roda no mesmo processo do servidor (reabre a "
+            "classe de sandbox-escape). Use apenas como break-glass.",
+            getattr(repl, "sandbox_mode", "?"),
+        )
+
     # Restaurar variáveis persistidas
     try:
         persistence = get_persistence()

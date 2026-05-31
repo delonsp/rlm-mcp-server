@@ -9,9 +9,11 @@ permitindo sub-chamadas a LLMs de dentro do código Python.
 """
 
 import ast
+import os
 import sys
 import traceback
 import signal
+import threading
 from io import StringIO
 from typing import Any, Optional
 from dataclasses import dataclass, field
@@ -41,8 +43,12 @@ ALLOWED_IMPORTS = {
     "csv", "html", "xml.etree.ElementTree",
     # Hashing (read-only)
     "hashlib", "base64",
-    # Compressão (para ler arquivos)
-    "gzip", "zipfile", "tarfile",
+    # REMOVIDOS por segurança (task #13 do plano de isolamento do sandbox):
+    #   gzip/zipfile/tarfile fazem I/O de arquivo REAL — abrem paths usando o
+    #   builtins.open verdadeiro (não o do namespace), burlando o bloqueio de
+    #   open(). Mesmo sob o isolamento por subprocesso (B1) o filho enxerga
+    #   /persist e /data, então estes módulos permitiriam ler/gravar arquivos
+    #   sem nem precisar de um escape. Descompressão de corpora é server-side.
 }
 
 # Imports bloqueados (perigosos)
@@ -312,6 +318,158 @@ def _timeout_handler(signum, frame):
     raise ExecutionTimeoutError("Execution timed out")
 
 
+# ============================================================================
+# Funções de sandbox reutilizáveis (nível de módulo)
+#
+# Extraídas dos métodos de SafeREPL para serem importáveis pelo processo-filho
+# do sandbox (sandbox_worker._sandbox_entry) SEM instanciar SafeREPL/LLMClient
+# (que carrega a API key). Os métodos de SafeREPL delegam para estas funções,
+# preservando comportamento idêntico.
+# ============================================================================
+
+def safe_import(name: str, *args, **kwargs):
+    """Import customizado que valida contra a whitelist ALLOWED_IMPORTS."""
+    base_module = name.split('.')[0]
+
+    if base_module in BLOCKED_IMPORTS:
+        raise SecurityError(f"Import bloqueado por seguranca: '{name}'")
+
+    if base_module not in ALLOWED_IMPORTS:
+        raise SecurityError(
+            f"Import nao permitido: '{name}'. "
+            f"Permitidos: {', '.join(sorted(ALLOWED_IMPORTS))}"
+        )
+
+    return __import__(name, *args, **kwargs)
+
+
+def create_safe_builtins() -> dict:
+    """Cria o conjunto de builtins seguros (sem os perigosos) com __import__ validado."""
+    import builtins
+    safe = {}
+    for name in dir(builtins):
+        if not name.startswith('_') and name not in BLOCKED_BUILTINS:
+            safe[name] = getattr(builtins, name)
+
+    # __import__ customizado que valida contra a whitelist
+    safe['__import__'] = safe_import
+    return safe
+
+
+def validate_code(code: str) -> None:
+    """Valida código por análise estática da AST (deny-list, defense-in-depth).
+
+    NÃO é a fronteira de segurança — é só a 1ª camada barata. A fronteira real
+    é o isolamento de processo (ver sandbox_worker). Mantida porque rejeita os
+    vetores conhecidos antes mesmo de spawnar o filho.
+    """
+    # Parse AST para análise estática
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as e:
+        raise SecurityError(f"Erro de sintaxe: {e}")
+
+    # Verifica nodes perigosos
+    for node in ast.walk(tree):
+        # Bloqueia chamadas a funções perigosas
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                if node.func.id in BLOCKED_BUILTINS:
+                    raise SecurityError(
+                        f"Funcao bloqueada: '{node.func.id}'"
+                    )
+            # Bloqueia .format()/.format_map(): o protocolo de format string
+            # acessa atributos via string (ex: "{0.__class__}".format(x)),
+            # contornando o bloqueio de dunder que só vê nós ast.Attribute.
+            # Use f-strings — nelas os dunders viram nós AST e SÃO bloqueados.
+            elif isinstance(node.func, ast.Attribute):
+                if node.func.attr in ("format", "format_map"):
+                    raise SecurityError(
+                        f"Metodo bloqueado: '.{node.func.attr}()' (use f-string)"
+                    )
+
+        # Bloqueia QUALQUER referência (não só chamada) a builtin perigoso —
+        # fecha o bypass por aliasing: `g = getattr; g(o, '__class__')`.
+        if isinstance(node, ast.Name) and node.id in BLOCKED_BUILTINS:
+            raise SecurityError(f"Nome bloqueado: '{node.id}'")
+
+        # Bloqueia acesso a atributos dunder
+        if isinstance(node, ast.Attribute):
+            if node.attr.startswith('__') and node.attr.endswith('__'):
+                if node.attr not in ('__len__', '__str__', '__repr__', '__iter__'):
+                    raise SecurityError(
+                        f"Acesso a atributo bloqueado: '{node.attr}'"
+                    )
+
+
+def estimate_size(obj: Any, _seen: set = None) -> int:
+    """Estima tamanho de um objeto em bytes (com detecção de ciclo).
+
+    Sem _seen, uma estrutura auto-referente (a=[]; a.append(a)) causava
+    RecursionError → o except retornava 0 → a var passava no guard de
+    tamanho sem limite (DoS de memória). _seen quebra o ciclo.
+    """
+    if _seen is None:
+        _seen = set()
+    obj_id = id(obj)
+    if obj_id in _seen:
+        return 0
+    try:
+        if isinstance(obj, str):
+            return len(obj.encode('utf-8'))
+        elif isinstance(obj, (bytes, bytearray)):
+            return len(obj)
+        elif isinstance(obj, (list, tuple)):
+            _seen.add(obj_id)
+            return sum(estimate_size(x, _seen) for x in obj)
+        elif isinstance(obj, dict):
+            _seen.add(obj_id)
+            return sum(
+                estimate_size(k, _seen) + estimate_size(v, _seen)
+                for k, v in obj.items()
+            )
+        else:
+            return sys.getsizeof(obj)
+    except Exception:
+        return 0
+
+
+def human_size(size_bytes: float) -> str:
+    """Converte bytes para formato legível."""
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if size_bytes < 1024:
+            return f"{size_bytes:.1f} {unit}"
+        size_bytes /= 1024
+    return f"{size_bytes:.1f} TB"
+
+
+def get_preview(obj: Any, max_length: int = 200) -> str:
+    """Gera preview de um objeto."""
+    try:
+        if isinstance(obj, str):
+            if len(obj) > max_length:
+                return obj[:max_length] + f"... [{len(obj)} chars total]"
+            return obj
+        elif isinstance(obj, (list, tuple)):
+            preview = str(obj[:5])
+            if len(obj) > 5:
+                preview = preview[:-1] + f", ... ] ({len(obj)} items)"
+            return preview
+        elif isinstance(obj, dict):
+            keys = list(obj.keys())[:5]
+            preview = str({k: obj[k] for k in keys})
+            if len(obj) > 5:
+                preview = preview[:-1] + f", ... }} ({len(obj)} keys)"
+            return preview
+        else:
+            s = str(obj)
+            if len(s) > max_length:
+                return s[:max_length] + "..."
+            return s
+    except Exception:
+        return f"<{type(obj).__name__}>"
+
+
 class SafeREPL:
     """
     REPL Python com sandbox de segurança.
@@ -350,137 +508,43 @@ class SafeREPL:
         # Namespace seguro para execução
         self._safe_builtins = self._create_safe_builtins()
 
-    def _create_safe_builtins(self) -> dict:
-        """Cria conjunto de builtins seguros"""
-        import builtins
-        safe = {}
-        for name in dir(builtins):
-            if not name.startswith('_') and name not in BLOCKED_BUILTINS:
-                safe[name] = getattr(builtins, name)
+        # Lock serializando snapshot+merge de variables. Os task workers rodam
+        # em ThreadPoolExecutor (threads reais) → dois executes concorrentes
+        # corromperiam variables/variable_metadata sem isto. Ver R9.
+        self._execute_lock = threading.Lock()
 
-        # Adiciona __import__ customizado que valida imports
-        safe['__import__'] = self._safe_import
-        return safe
+        # Configuração do sandbox por subprocesso (ver sandbox_worker.py)
+        self.sandbox_mode = os.getenv("RLM_SANDBOX_MODE", "subprocess").strip().lower()
+        self.execute_timeout = float(os.getenv("RLM_EXECUTE_TIMEOUT", "60"))
+        self.sandbox_mem_mb = int(os.getenv("RLM_SANDBOX_MEM_MB", "2048"))
+        self.sandbox_cpu_s = int(os.getenv("RLM_SANDBOX_CPU_S", "60"))
+        self.sandbox_shm_threshold = int(
+            os.getenv("RLM_SANDBOX_SHM_THRESHOLD", str(256 * 1024))
+        )
+
+    def _create_safe_builtins(self) -> dict:
+        """Cria conjunto de builtins seguros (delega para create_safe_builtins)."""
+        return create_safe_builtins()
 
     def _safe_import(self, name: str, *args, **kwargs):
-        """Import customizado que valida contra whitelist"""
-        base_module = name.split('.')[0]
-
-        if base_module in BLOCKED_IMPORTS:
-            raise SecurityError(f"Import bloqueado por seguranca: '{name}'")
-
-        if base_module not in ALLOWED_IMPORTS:
-            raise SecurityError(
-                f"Import nao permitido: '{name}'. "
-                f"Permitidos: {', '.join(sorted(ALLOWED_IMPORTS))}"
-            )
-
-        return __import__(name, *args, **kwargs)
+        """Import validado contra whitelist (delega para safe_import)."""
+        return safe_import(name, *args, **kwargs)
 
     def _validate_code(self, code: str) -> None:
-        """Valida código antes de executar"""
-        # Parse AST para análise estática
-        try:
-            tree = ast.parse(code)
-        except SyntaxError as e:
-            raise SecurityError(f"Erro de sintaxe: {e}")
-
-        # Verifica nodes perigosos
-        for node in ast.walk(tree):
-            # Bloqueia chamadas a funções perigosas
-            if isinstance(node, ast.Call):
-                if isinstance(node.func, ast.Name):
-                    if node.func.id in BLOCKED_BUILTINS:
-                        raise SecurityError(
-                            f"Funcao bloqueada: '{node.func.id}'"
-                        )
-                # Bloqueia .format()/.format_map(): o protocolo de format string
-                # acessa atributos via string (ex: "{0.__class__}".format(x)),
-                # contornando o bloqueio de dunder que só vê nós ast.Attribute.
-                # Use f-strings — nelas os dunders viram nós AST e SÃO bloqueados.
-                elif isinstance(node.func, ast.Attribute):
-                    if node.func.attr in ("format", "format_map"):
-                        raise SecurityError(
-                            f"Metodo bloqueado: '.{node.func.attr}()' (use f-string)"
-                        )
-
-            # Bloqueia QUALQUER referência (não só chamada) a builtin perigoso —
-            # fecha o bypass por aliasing: `g = getattr; g(o, '__class__')`.
-            if isinstance(node, ast.Name) and node.id in BLOCKED_BUILTINS:
-                raise SecurityError(f"Nome bloqueado: '{node.id}'")
-
-            # Bloqueia acesso a atributos dunder
-            if isinstance(node, ast.Attribute):
-                if node.attr.startswith('__') and node.attr.endswith('__'):
-                    if node.attr not in ('__len__', '__str__', '__repr__', '__iter__'):
-                        raise SecurityError(
-                            f"Acesso a atributo bloqueado: '{node.attr}'"
-                        )
+        """Valida código antes de executar (delega para validate_code)."""
+        return validate_code(code)
 
     def _estimate_size(self, obj: Any, _seen: set = None) -> int:
-        """Estima tamanho de um objeto em bytes (com detecção de ciclo).
-
-        Sem _seen, uma estrutura auto-referente (a=[]; a.append(a)) causava
-        RecursionError → o except retornava 0 → a var passava no guard de
-        tamanho sem limite (DoS de memória). _seen quebra o ciclo.
-        """
-        if _seen is None:
-            _seen = set()
-        obj_id = id(obj)
-        if obj_id in _seen:
-            return 0
-        try:
-            if isinstance(obj, str):
-                return len(obj.encode('utf-8'))
-            elif isinstance(obj, (bytes, bytearray)):
-                return len(obj)
-            elif isinstance(obj, (list, tuple)):
-                _seen.add(obj_id)
-                return sum(self._estimate_size(x, _seen) for x in obj)
-            elif isinstance(obj, dict):
-                _seen.add(obj_id)
-                return sum(
-                    self._estimate_size(k, _seen) + self._estimate_size(v, _seen)
-                    for k, v in obj.items()
-                )
-            else:
-                return sys.getsizeof(obj)
-        except Exception:
-            return 0
+        """Estima tamanho de um objeto em bytes (delega para estimate_size)."""
+        return estimate_size(obj, _seen)
 
     def _human_size(self, size_bytes: int) -> str:
-        """Converte bytes para formato legível"""
-        for unit in ['B', 'KB', 'MB', 'GB']:
-            if size_bytes < 1024:
-                return f"{size_bytes:.1f} {unit}"
-            size_bytes /= 1024
-        return f"{size_bytes:.1f} TB"
+        """Converte bytes para formato legível (delega para human_size)."""
+        return human_size(size_bytes)
 
     def _get_preview(self, obj: Any, max_length: int = 200) -> str:
-        """Gera preview de um objeto"""
-        try:
-            if isinstance(obj, str):
-                if len(obj) > max_length:
-                    return obj[:max_length] + f"... [{len(obj)} chars total]"
-                return obj
-            elif isinstance(obj, (list, tuple)):
-                preview = str(obj[:5])
-                if len(obj) > 5:
-                    preview = preview[:-1] + f", ... ] ({len(obj)} items)"
-                return preview
-            elif isinstance(obj, dict):
-                keys = list(obj.keys())[:5]
-                preview = str({k: obj[k] for k in keys})
-                if len(obj) > 5:
-                    preview = preview[:-1] + f", ... }} ({len(obj)} keys)"
-                return preview
-            else:
-                s = str(obj)
-                if len(s) > max_length:
-                    return s[:max_length] + "..."
-                return s
-        except Exception:
-            return f"<{type(obj).__name__}>"
+        """Gera preview de um objeto (delega para get_preview)."""
+        return get_preview(obj, max_length)
 
     def _llm_query_wrapper(
         self,
@@ -512,17 +576,39 @@ class SafeREPL:
         """
         return self.llm_client.query(prompt, data, model, max_tokens, temperature)
 
-    def execute(self, code: str, timeout_seconds: float = 30.0) -> ExecutionResult:
+    def execute(self, code: str, timeout_seconds: float = None) -> ExecutionResult:
         """
         Executa código Python no sandbox.
 
+        Em modo 'subprocess' (default, SEGURO) delega para run_sandboxed: o
+        código roda num processo-filho isolado (forkserver) sem credenciais no
+        env, sem FDs herdados, com setrlimit + killpg. Ver sandbox_worker.
+
+        Em modo 'inprocess' (INSEGURO, break-glass via RLM_SANDBOX_MODE=inprocess)
+        usa o caminho legado: exec no mesmo processo, timeout via SIGALRM (que só
+        funciona na main thread). Reabre a classe de sandbox-escape — não usar em
+        produção.
+
         Args:
             code: Código Python para executar
-            timeout_seconds: Timeout máximo para execução (default: 30s)
+            timeout_seconds: Timeout máximo (default: RLM_EXECUTE_TIMEOUT = 60s)
 
         Returns:
             ExecutionResult com stdout, stderr e metadados
         """
+        effective_timeout = (
+            timeout_seconds if timeout_seconds is not None else self.execute_timeout
+        )
+        if self.sandbox_mode == "subprocess":
+            from .sandbox_worker import run_sandboxed
+            return run_sandboxed(
+                code, self, effective_timeout,
+                self.sandbox_mem_mb, self.sandbox_cpu_s,
+            )
+        return self._execute_inprocess(code, effective_timeout)
+
+    def _execute_inprocess(self, code: str, timeout_seconds: float = 30.0) -> ExecutionResult:
+        """Caminho legado in-process (INSEGURO — break-glass). Ver execute()."""
         import time
         start_time = time.perf_counter()
 
