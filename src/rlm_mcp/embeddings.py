@@ -9,6 +9,7 @@ Provides cosine similarity for vector comparison.
 """
 
 import os
+import re
 import logging
 import math
 from typing import Optional
@@ -19,6 +20,19 @@ logger = logging.getLogger("rlm-mcp.embeddings")
 DEFAULT_OPENAI_MODEL = "text-embedding-3-small"
 # Dimension for text-embedding-3-small
 DEFAULT_DIMENSION = 1536
+
+# Caracteres de controle C0 exceto \t \n \r — lixo de extração de PDF (páginas-
+# imagem cujos bytes vazam no "texto"). A OpenAI Embeddings API REJEITA strings
+# com NUL (\x00): sem remover, o embed do chunk inteiro falha → o índice vetorial
+# não constrói → busca semântica/hybrid cai p/ keyword silenciosamente.
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def sanitize_text(text: str) -> str:
+    """Remove NUL bytes e caracteres de controle não-imprimíveis (preserva \\t \\n \\r)."""
+    if not text:
+        return text
+    return _CONTROL_CHARS_RE.sub("", text)
 
 
 def _cosine_similarity(v1: list[float], v2: list[float]) -> float:
@@ -129,7 +143,7 @@ class EmbeddingService:
             return [[] for _ in texts]
 
         # Truncate individual texts up front (~8000 chars ≈ 2000 tokens)
-        truncated = [t[:8000] for t in texts]
+        truncated = [sanitize_text(t)[:8000] for t in texts]
 
         # Pack into sub-batches that respect both limits
         MAX_BATCH = 2048

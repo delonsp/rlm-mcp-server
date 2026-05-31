@@ -9,7 +9,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Optional
 
-from .embeddings import get_embedding_service, _cosine_similarity
+from .embeddings import get_embedding_service, _cosine_similarity, sanitize_text
 
 logger = logging.getLogger("rlm-mcp.vector_index")
 
@@ -68,6 +68,11 @@ class VectorIndex:
         """
         if not text:
             return False
+
+        # Saneia NUL/controle (lixo de extração de PDF) ANTES de chunkar: chunks
+        # ficam limpos no índice (display da busca semântica) e o input ao embed
+        # é válido (a OpenAI rejeita NUL). Ver embeddings.sanitize_text.
+        text = sanitize_text(text)
 
         self.total_chars = len(text)
         self.total_lines = text.count('\n') + 1

@@ -16,6 +16,8 @@ import logging
 from typing import Optional, Callable
 from dataclasses import dataclass
 
+from .embeddings import sanitize_text
+
 logger = logging.getLogger("rlm-mcp.pdf")
 
 
@@ -68,7 +70,7 @@ def extract_with_pdfplumber(
                         f"pdfplumber: page {i + 1}/{page_count}"
                     )
 
-        full_text = "\n\n".join(text_parts)
+        full_text = sanitize_text("\n\n".join(text_parts))
 
         if progress_callback:
             progress_callback(1.0, "pdfplumber: done")
@@ -156,7 +158,7 @@ def extract_with_mistral_ocr(
             if page_text.strip():
                 text_parts.append(f"--- Página {i + 1} ---\n{page_text}")
 
-        full_text = "\n\n".join(text_parts)
+        full_text = sanitize_text("\n\n".join(text_parts))
         page_count = len(ocr_response.pages)
 
         if progress_callback:
