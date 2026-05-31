@@ -52,5 +52,6 @@ Thumbs.db
 docker-compose.override.yml
 .mcp.json
 
-# Tests (não versionar)
-tests/
+# Tests (não versionar — exceto a regressão de segurança do sandbox)
+tests/*
+!tests/test_sandbox.py

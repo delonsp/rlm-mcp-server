@@ -15,7 +15,10 @@ TOOL_SCHEMAS: list[dict] = [
         "name": "rlm_execute",
         "description": """Executa código Python no REPL persistente.
 
-As variáveis criadas persistem entre execuções. Use print() para retornar dados.
+As variáveis criadas persistem entre execuções — mas APENAS dados (str/dict/list/
+números/etc). O código roda ISOLADO em subprocesso: funções/objetos definidos e
+mutação in-place de vars existentes NÃO voltam (reatribua: x = x + [novo]).
+Use print() para retornar dados.
 
 IMPORTANTE: O código roda em sandbox seguro:
 - Imports permitidos: re, json, math, collections, datetime, csv, etc.

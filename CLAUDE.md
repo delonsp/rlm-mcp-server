@@ -27,7 +27,8 @@ Local (Claude Code) ──── HTTPS ────► VPS (Docker: rlm-mcp-serv
 ```
 src/rlm_mcp/
 ├── http_server.py         # Servidor HTTP/SSE FastAPI (MCP protocol, lifespan auto-restore)
-├── repl.py                # REPL Python sandboxed (variáveis em memória)
+├── repl.py                # REPL: dispatch p/ sandbox subprocess ou in-process (legado)
+├── sandbox_worker.py      # Isolamento do rlm_execute por subprocesso (forkserver)
 ├── response_formatter.py  # Formatação de respostas (compact/normal/verbose)
 ├── indexer.py             # Indexação keyword + live scan fallback + hybrid/RRF search
 ├── vector_index.py        # Índice vetorial para busca semântica (embeddings)
@@ -121,13 +122,19 @@ rlm_collection(action="search", name="docs", terms=["instalação"])
 | Variável | Uso | Padrão |
 |----------|-----|--------|
 | `RLM_API_KEY` | Autenticação Bearer token | — |
-| `OPENAI_API_KEY` | Busca semântica/hybrid | — |
+| `OPENAI_API_KEY` | Embeddings + sub-chamadas LLM (fallback) | — |
+| `DEEPSEEK_API_KEY` | Sub-chamadas LLM `llm_query` (precede OPENAI) | — |
+| `RLM_LLM_BASE_URL` | Endpoint LLM OpenAI-compat | — |
+| `RLM_SUB_MODEL` | Modelo das sub-chamadas | `gpt-4o-mini` |
 | `MISTRAL_API_KEY` | OCR para PDFs escaneados | — |
 | `MINIO_*` | Storage S3 | — |
 | `RLM_PERSIST_DIR` | Diretório SQLite | `/persist` |
 | `RLM_MAX_MEMORY_MB` | Memória total do REPL | `1024` |
 | `RLM_MAX_VAR_SIZE_MB` | Limite por variável | `50` |
 | `RLM_RESPONSE_VERBOSITY` | compact/normal/verbose | `compact` |
+| `RLM_SANDBOX_MODE` | `subprocess` (seguro) / `inprocess` (INSEGURO) | `subprocess` |
+| `RLM_EXECUTE_TIMEOUT` | Timeout do execute em s (wall-clock + killpg) | `60` |
+| `RLM_SANDBOX_MEM_MB` | RLIMIT_AS do processo-filho | `2048` |
 
 ## Upload de Arquivos
 
@@ -156,7 +163,7 @@ Tipos: text, json, lines, csv, code, pdf, pdf_ocr. Bucket padrão: `claude-code`
 
 - **Rate limiting**: SSE 100/60s, uploads 10/60s (configurável via `RLM_SSE_RATE_LIMIT`, `RLM_UPLOAD_RATE_LIMIT`)
 - **Memory protection**: auto-cleanup em 80% do limite, variáveis individuais max 50MB
-- **Sandbox**: bloqueia os, subprocess, socket, open, exec, eval, dunders
+- **Sandbox (rlm_execute)**: isolamento por **subprocesso** `forkserver` (`sandbox_worker.py`) — código do user roda em filho efêmero com env scrubado (sem chaves), FDs fechados, `setrlimit`+`killpg` (timeout funciona fora da main thread). Trust assimétrico: o retorno filho→pai nunca executa código (JSON + unpickler com allowlist de tipos → fecha RCE-reverso por pickle). Deny-list AST (`repl.validate_code`) é só a 1ª camada. **Só dados** persistem entre execuções (funções/objetos/mutação in-place, não). Break-glass inseguro: `RLM_SANDBOX_MODE=inprocess`. Resíduo B1: um escape ainda lê `/persist`+`/data` (fechar exige B2/namespaces).
 - **CORS**: restrito via `RLM_CORS_ORIGINS`
 
 ## Observabilidade

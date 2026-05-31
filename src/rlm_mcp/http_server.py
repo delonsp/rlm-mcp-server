@@ -809,7 +809,10 @@ Se a busca parar de funcionar após atualização:
 
     "execute": """## REPL Python
 
-Variáveis persistem entre execuções e sobrevivem a restarts do servidor.
+Variáveis persistem entre execuções na sessão, mas SÓ dados (funções/objetos e
+mutação in-place não voltam — o execute roda isolado em subprocesso). Vars
+carregadas via load_* são persistidas no SQLite (sobrevivem a restart); vars
+criadas no execute ficam só em memória.
 
 **Helpers pré-definidos:**
   buscar(texto, termo) → [{posicao, linha, contexto}]
@@ -820,8 +823,8 @@ Variáveis persistem entre execuções e sobrevivem a restarts do servidor.
 **Sub-chamada LLM** (requer OPENAI_API_KEY):
   resposta = llm_query("Resuma:", contexto=texto[:5000])
 
-**Imports permitidos**: re, json, math, statistics, collections, itertools, functools, operator, string, textwrap, unicodedata, datetime, time, calendar, dataclasses, typing, enum, csv, html, xml.etree.ElementTree, hashlib, base64, gzip, zipfile, tarfile
-**Bloqueados**: os, subprocess, socket, requests, open(), exec(), eval()
+**Imports permitidos**: re, json, math, statistics, collections, itertools, textwrap, unicodedata, datetime, time, calendar, dataclasses, typing, enum, csv, html, xml.etree.ElementTree, hashlib, base64
+**Bloqueados**: os, subprocess, socket, requests, open(), exec(), eval(), functools/operator/string (vetores de escape), gzip/zipfile/tarfile (I/O de arquivo)
 
 **GC**: Quando memória atinge 80%, variáveis menos usadas são removidas.
   rlm_pin_var(name="importante") protege do GC.
