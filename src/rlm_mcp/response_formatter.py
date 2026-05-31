@@ -947,6 +947,45 @@ def format_search_code(
 # Hybrid/Semantic search formatting
 # =============================================================================
 
+def format_bm25_results(
+    ranked: list,
+    terms: list[str],
+    var_name: str,
+    offset: int = 0,
+    limit: int = 20,
+    verbosity: Optional[Verbosity] = None,
+    max_results: int = 30,
+) -> str:
+    """Formata resultados keyword ranqueados por BM25.
+
+    `ranked` é a lista de search_bm25 [{line, line_end, score, text, ...}], já
+    paginada. Compact mostra L+score; verbose mostra L-ref, score e snippet.
+    """
+    v = verbosity or get_verbosity()
+    terms_str = ",".join(f'"{t}"' for t in terms)
+
+    if not ranked:
+        return f"[search: {terms_str} | keyword/BM25 | 0 hits | {var_name}]"
+
+    shown = ranked[:max_results] if max_results else ranked
+
+    if v == Verbosity.COMPACT:
+        parts = [f"kw:{var_name}", f"{len(shown)} hits"]
+        for r in shown[:5]:
+            parts.append(f"L{r['line']}({r['score']:.2f})")
+        return "[" + " | ".join(parts) + "]"
+
+    header = f'[search: {terms_str} | keyword/BM25 | {len(shown)} shown | {var_name}]'
+    lines = [header, ""]
+    for r in shown:
+        le = r.get("line_end", r["line"])
+        lref = f"L{r['line']}" if le == r["line"] else f"L{r['line']}-{le}"
+        lines.append(f"  {lref} (BM25: {r['score']:.3f})")
+        lines.append(f"    {r.get('text', '')[:120]}")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def format_hybrid_search(
     search_result: dict,
     terms: list[str],
@@ -1010,7 +1049,16 @@ def format_hybrid_search(
             lines.append("")
         return "\n".join(lines)
 
-    # Fallback to keyword formatting
+    # Keyword/BM25 ranqueado (modo keyword default, ou semantic→keyword fallback).
+    # `is not None` p/ que 0 hits exiba a mensagem BM25, não caia no genérico.
+    keyword_ranked = search_result.get("keyword_ranked")
+    if keyword_ranked is not None:
+        return format_bm25_results(
+            keyword_ranked, terms, var_name,
+            offset=offset, limit=limit, verbosity=v, max_results=max_results,
+        )
+
+    # Fallback to keyword formatting (legacy dict — frase literal)
     keyword_results = search_result.get("keyword_results")
     if keyword_results:
         stats = search_result.get("stats", {}).get("keyword")

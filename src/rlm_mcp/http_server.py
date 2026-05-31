@@ -1413,20 +1413,37 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                     )
                     return {"content": [{"type": "text", "text": text}]}
                 else:
-                    # Pure keyword search
+                    # Keyword: BM25-ranked por default. Substring legacy fica só
+                    # para FRASE literal (termo com espaço → match exato). require_all
+                    # (sem frase) vai pelo BM25 com pós-filtro de interseção.
                     index = get_index(var_name)
-
-                    if not index and source_str:
-                        # Create index on-the-fly for any text variable
-                        index = create_index(source_str, var_name)
-                        set_index(var_name, index)
-                    elif not index:
+                    if not index and not source_str:
                         return {
                             "content": [
                                 {"type": "text", "text": f"Erro: Variável '{var_name}' não possui índice e não é texto."}
                             ],
                             "isError": True
                         }
+
+                    is_phrase = any(' ' in t.strip() for t in terms)
+                    if not is_phrase:
+                        search_result = hybrid_search(
+                            var_name, terms, mode="keyword",
+                            require_all=require_all,
+                            limit=limit, offset=offset,
+                            source_text=source_str,
+                        )
+                        text = fmt.format_hybrid_search(
+                            search_result, terms, var_name,
+                            offset=offset, limit=limit,
+                            max_results=max_results,
+                        )
+                        return {"content": [{"type": "text", "text": text}]}
+
+                    # Frase literal → substring legacy
+                    if not index and source_str:
+                        index = create_index(source_str, var_name)
+                        set_index(var_name, index)
 
                     results = index.search_multiple(terms, require_all=require_all,
                                                      source_text=source_str)
@@ -1769,9 +1786,39 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                 terms_via_index = []
                 terms_via_fallback = []
                 indexed_terms_count = 0
+                used_bm25 = False
+                is_phrase_coll = any(' ' in t.strip() for t in terms)
 
-                if combined_index and mapping_var in repl.variables:
-                    # Usar índice combinado + fallback híbrido
+                # === BM25 sobre o índice combinado (cobre TODO o vocabulário) ===
+                # Substitui o split indexado-vs-fulltext. Frase literal cai no legacy.
+                if (combined_index and not is_phrase_coll
+                        and mapping_var in repl.variables
+                        and combined_var_name in repl.variables):
+                    var_mapping = repl.variables[mapping_var]
+                    combined_text = repl.variables[combined_var_name]
+                    bm25_hits = combined_index.search_bm25(
+                        terms, combined_text, limit=(limit + offset + 50), offset=0
+                    )
+                    if combined_index._bm25_built and not combined_index._bm25_degraded:
+                        used_bm25 = True
+                        index_stats = combined_index.get_stats()
+                        indexed_terms_count = index_stats.get('indexed_terms', 0)
+                        label = " ".join(terms)
+                        for h in bm25_hits:
+                            # BM25 é 0-indexed; var_mapping é 1-indexed (convenção
+                            # full-text correta) → +1. Sentinel garante que o segmento
+                            # não cruza fronteira de var.
+                            mapped = var_mapping.get(h["line"] + 1)
+                            if not mapped:
+                                continue
+                            orig_var, orig_linha = mapped
+                            all_results.setdefault(orig_var, {}).setdefault(label, []).append({
+                                'linha': orig_linha,
+                                'contexto': h.get("text", "")[:120],
+                            })
+
+                if not used_bm25 and combined_index and mapping_var in repl.variables:
+                    # Usar índice combinado + fallback híbrido (legacy)
                     var_mapping = repl.variables[mapping_var]
                     index_stats = combined_index.get_stats()
                     indexed_terms_count = index_stats.get('indexed_terms', 0)
@@ -1819,7 +1866,7 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                                             'linha': orig_linha,
                                             'contexto': line.strip()
                                         })
-                else:
+                elif not used_bm25:
                     # Fallback total: buscar em índices individuais ou full-text
                     terms_via_fallback = terms[:]
                     for var_name in var_names:
@@ -1857,7 +1904,10 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                     lines = [f"🔍 Busca em '{coll_name}': {', '.join(terms)}", ""]
 
                     # Stats de busca híbrida
-                    if terms_via_index and terms_via_fallback:
+                    if used_bm25:
+                        lines.append(f"🔎 Ranking BM25 por relevância ({len(var_names)} vars na coleção)")
+                        lines.append("")
+                    elif terms_via_index and terms_via_fallback:
                         lines.append(f"📊 Busca híbrida: {len(terms_via_index)} via índice, {len(terms_via_fallback)} via full-text")
                         lines.append(f"   ✅ Indexados: {', '.join(terms_via_index)}")
                         lines.append(f"   🔄 Full-text: {', '.join(terms_via_fallback)}")
