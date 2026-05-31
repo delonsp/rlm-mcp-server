@@ -1,5 +1,5 @@
 """
-Isolamento do sandbox do rlm_execute por subprocesso (modo B1).
+Isolamento do sandbox do rlm_execute por subprocesso (B1) + lockdown FS/rede (B2).
 
 O código do usuário (potencialmente comprometido por prompt-injection de um
 documento ingerido) roda num processo-filho EFÊMERO criado via ``forkserver``,
@@ -7,7 +7,9 @@ com:
   - env scrubado (sem OPENAI/MINIO/RLM_API_KEY) — não há credencial para exfiltrar;
   - FDs herdados fechados — não há socket/conexão viva do pai para reusar;
   - ``setrlimit`` (memória/CPU) e ``os.setsid()`` + ``killpg`` no deadline;
-  - ``llm_query`` proxied para o pai (que é quem tem a chave LLM).
+  - ``llm_query`` proxied para o pai (que é quem tem a chave LLM);
+  - (B2) **lockdown por-filho ANTES do ``exec``**: Landlock (allowlist de FS) +
+    seccomp (corte de rede), via ``sandbox_lockdown.apply_child_lockdown``.
 
 PONTO CRÍTICO DE SEGURANÇA — *trust assimétrico*:
   - pai → filho (params/input_vars/llm_reply): o pai é confiável → pickle normal OK.
@@ -20,9 +22,13 @@ PONTO CRÍTICO DE SEGURANÇA — *trust assimétrico*:
 A fronteira de segurança é o limite de processo + a desserialização restrita.
 A deny-list AST (``repl.validate_code``) é só 1ª camada barata, defense-in-depth.
 
-RESÍDUO HONESTO (B1, não B2): um escape ainda pode LER ``/persist`` e ``/data``
-(dados do próprio usuário) pelo filesystem e abrir rede nova (sem credencial).
-Isolar FS/rede exige namespaces/seccomp (B2) — fora deste módulo.
+LOCKDOWN B2 (FS/rede): quando ativo (``RLM_SANDBOX_LOCKDOWN`` != off e em Linux),
+o filho aplica Landlock + seccomp logo após materializar os inputs e montar o
+namespace, ANTES de validar/exec o código. A partir daí um escape que fure a
+deny-list AST NÃO LÊ ``/persist``/``/data`` nem abre socket novo. Resíduo pós-B2:
+os dados que o pai já enviou seguem em memória do filho (por design); sem cgroup
+dedicado por-filho (CPU/mem via RLIMIT/deadline do B1); em ``warn``/``off`` ou
+kernel sem Landlock, reverte ao resíduo B1.
 """
 
 import ast
@@ -56,6 +62,7 @@ from .repl import (
     human_size,
     validate_code,
 )
+from .sandbox_lockdown import LockdownError, apply_child_lockdown
 
 logger = logging.getLogger("rlm-mcp.sandbox")
 
@@ -393,25 +400,45 @@ def _sandbox_entry(conn, params: dict) -> None:
 
     success = True
     result_vars, rejected = {}, []
+    lockdown_summary = None
     try:
         input_vars = _materialize_inputs(params)
         ns = _build_namespace(input_vars, conn)
         originals = dict(input_vars)
         code = params["code"]
-        # 6. validate (defense-in-depth — o pai já validou antes de spawnar).
+        # 5b. (B2) Lockdown FS/rede POR-FILHO — inputs já materializados (shm já
+        #     lido), namespace já montado; só então a porteira fecha, ANTES de exec.
+        proceed = True
         try:
-            validate_code(code)
-        except SecurityError as e:
-            sys.stderr.write(f"SecurityError: {e}\n")
+            status = apply_child_lockdown(
+                mode=params.get("lockdown_mode", "warn"),
+                fs=params.get("lockdown_fs", True),
+                net=params.get("lockdown_net", True),
+            )
+            lockdown_summary = status.as_dict()
+        except LockdownError as e:
+            # Só ocorre em modo 'required': fail-closed (não executa o código).
+            sys.stderr.write(f"LockdownError: {e}\n")
+            lockdown_summary = {"mode": params.get("lockdown_mode", "warn"),
+                                "fs": False, "net": False, "abi": None,
+                                "reasons": [f"required falhou: {e}"]}
             success = False
-        else:
-            # 7. Executa o código do usuário.
+            proceed = False
+        if proceed:
+            # 6. validate (defense-in-depth — o pai já validou antes de spawnar).
             try:
-                exec(code, ns)
-            except Exception as e:
-                sys.stderr.write(f"{type(e).__name__}: {e}\n")
-                sys.stderr.write(traceback.format_exc())
+                validate_code(code)
+            except SecurityError as e:
+                sys.stderr.write(f"SecurityError: {e}\n")
                 success = False
+            else:
+                # 7. Executa o código do usuário.
+                try:
+                    exec(code, ns)
+                except Exception as e:
+                    sys.stderr.write(f"{type(e).__name__}: {e}\n")
+                    sys.stderr.write(traceback.format_exc())
+                    success = False
         # 8. Coleta vars de saída.
         result_vars, rejected = _collect_result_vars(
             ns, originals, params.get("max_var_mb", 50)
@@ -441,7 +468,7 @@ def _sandbox_entry(conn, params: dict) -> None:
     try:
         _send_json(conn, {
             "t": "done", "success": success, "stdout": stdout, "stderr": stderr,
-            "vars": specs, "rejected": rejected,
+            "vars": specs, "rejected": rejected, "lockdown": lockdown_summary,
         })
         for blob in blobs:
             conn.send_bytes(blob)
@@ -486,6 +513,10 @@ def _build_params(code: str, input_vars: dict, repl):
         "mem_mb": getattr(repl, "sandbox_mem_mb", 2048),
         "cpu_s": getattr(repl, "sandbox_cpu_s", 60),
         "max_var_mb": getattr(repl, "max_var_size_mb", 50),
+        # (B2) config do lockdown FS/rede aplicado no filho (ver sandbox_lockdown).
+        "lockdown_mode": getattr(repl, "sandbox_lockdown_mode", "warn"),
+        "lockdown_fs": getattr(repl, "sandbox_lockdown_fs", True),
+        "lockdown_net": getattr(repl, "sandbox_lockdown_net", True),
     }
     return params, shms
 
@@ -552,6 +583,25 @@ def _kill_group(proc) -> None:
         pass
 
 
+def _log_lockdown(summary) -> None:
+    """Loga o status do lockdown B2 reportado pelo filho (logging confiável do pai).
+
+    O filho roda sob forkserver (logging não-confiável lá); por isso o status do
+    Landlock/seccomp volta no envelope ``done`` e é logado AQUI, no pai. Degradação
+    (modo warn sem Landlock/seccomp) → WARNING; lockdown ativo → INFO.
+    """
+    if not summary:
+        return
+    reasons = summary.get("reasons") or []
+    if reasons:
+        logger.warning("sandbox B2 lockdown degradado (mode=%s): %s",
+                       summary.get("mode"), "; ".join(str(r) for r in reasons))
+    else:
+        logger.info("sandbox B2 lockdown ativo: fs=%s net=%s abi=%s mode=%s",
+                    summary.get("fs"), summary.get("net"),
+                    summary.get("abi"), summary.get("mode"))
+
+
 def _service_loop(parent_conn, proc, repl, deadline: float) -> dict:
     """Loop de serviço do pai: atende llm, lê `done`, vigia morte e deadline.
 
@@ -608,6 +658,7 @@ def _service_loop(parent_conn, proc, repl, deadline: float) -> dict:
                 stderr = msg.get("stderr", "")
                 rejected = list(msg.get("rejected", []))
                 specs = msg.get("vars", [])
+                _log_lockdown(msg.get("lockdown"))
                 rv = {}
                 for spec in specs:
                     rem = deadline - time.monotonic()

@@ -55,6 +55,9 @@ ENV RLM_MAX_MEMORY_MB=1024
 ENV RLM_API_KEY=""
 ENV MISTRAL_API_KEY=""
 ENV PYTHONUNBUFFERED=1
+# Cosmético (NÃO é medida de segurança): evita tentativas de escrita de .pyc que,
+# pós-Landlock (lockdown B2), dariam EPERM benigno em /usr.
+ENV PYTHONDONTWRITEBYTECODE=1
 
 # Expõe porta (não necessária para MCP stdio, mas útil para health checks)
 EXPOSE 8080

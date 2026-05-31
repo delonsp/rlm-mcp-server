@@ -522,6 +522,28 @@ class SafeREPL:
             os.getenv("RLM_SANDBOX_SHM_THRESHOLD", str(256 * 1024))
         )
 
+        # Lockdown B2 (Landlock FS + seccomp rede) — aplicado POR-FILHO no worker
+        # (ver sandbox_lockdown.py). Default 'warn' no ship inicial: degrada p/ B1
+        # + WARNING se Landlock/seccomp indisponível. Flipar p/ 'required'
+        # (fail-closed) só após validar live que engata. Linux-only (no-op no Mac).
+        _lockdown_mode = os.getenv("RLM_SANDBOX_LOCKDOWN", "warn").strip().lower()
+        if _lockdown_mode not in ("required", "warn", "off"):
+            # Typo num toggle de segurança NÃO pode virar fail-open silencioso.
+            logging.getLogger("rlm-mcp.repl").warning(
+                "RLM_SANDBOX_LOCKDOWN=%r inválido (válidos: required/warn/off); "
+                "usando 'warn'", _lockdown_mode,
+            )
+            _lockdown_mode = "warn"
+        self.sandbox_lockdown_mode = _lockdown_mode
+        self.sandbox_lockdown_fs = (
+            os.getenv("RLM_SANDBOX_FS_LOCKDOWN", "true").strip().lower()
+            not in ("0", "false", "no", "off")
+        )
+        self.sandbox_lockdown_net = (
+            os.getenv("RLM_SANDBOX_NET_LOCKDOWN", "true").strip().lower()
+            not in ("0", "false", "no", "off")
+        )
+
     def _create_safe_builtins(self) -> dict:
         """Cria conjunto de builtins seguros (delega para create_safe_builtins)."""
         return create_safe_builtins()

@@ -135,6 +135,9 @@ rlm_collection(action="search", name="docs", terms=["instalação"])
 | `RLM_SANDBOX_MODE` | `subprocess` (seguro) / `inprocess` (INSEGURO) | `subprocess` |
 | `RLM_EXECUTE_TIMEOUT` | Timeout do execute em s (wall-clock + killpg) | `60` |
 | `RLM_SANDBOX_MEM_MB` | RLIMIT_AS do processo-filho | `2048` |
+| `RLM_SANDBOX_LOCKDOWN` | Lockdown B2 do filho: `required`/`warn`/`off` (Linux-only) | `warn` |
+| `RLM_SANDBOX_FS_LOCKDOWN` | Liga/desliga o Landlock (FS) do lockdown B2 | `true` |
+| `RLM_SANDBOX_NET_LOCKDOWN` | Liga/desliga o seccomp (rede) do lockdown B2 | `true` |
 
 ## Upload de Arquivos
 
@@ -163,7 +166,8 @@ Tipos: text, json, lines, csv, code, pdf, pdf_ocr. Bucket padrão: `claude-code`
 
 - **Rate limiting**: SSE 100/60s, uploads 10/60s (configurável via `RLM_SSE_RATE_LIMIT`, `RLM_UPLOAD_RATE_LIMIT`)
 - **Memory protection**: auto-cleanup em 80% do limite, variáveis individuais max 50MB
-- **Sandbox (rlm_execute)**: isolamento por **subprocesso** `forkserver` (`sandbox_worker.py`) — código do user roda em filho efêmero com env scrubado (sem chaves), FDs fechados, `setrlimit`+`killpg` (timeout funciona fora da main thread). Trust assimétrico: o retorno filho→pai nunca executa código (JSON + unpickler com allowlist de tipos → fecha RCE-reverso por pickle). Deny-list AST (`repl.validate_code`) é só a 1ª camada. **Só dados** persistem entre execuções (funções/objetos/mutação in-place, não). Break-glass inseguro: `RLM_SANDBOX_MODE=inprocess`. Resíduo B1: um escape ainda lê `/persist`+`/data` (fechar exige B2/namespaces).
+- **Sandbox (rlm_execute)**: isolamento por **subprocesso** `forkserver` (`sandbox_worker.py`) — código do user roda em filho efêmero com env scrubado (sem chaves), FDs fechados, `setrlimit`+`killpg` (timeout funciona fora da main thread). Trust assimétrico: o retorno filho→pai nunca executa código (JSON + unpickler com allowlist de tipos → fecha RCE-reverso por pickle). Deny-list AST (`repl.validate_code`) é só a 1ª camada. **Só dados** persistem entre execuções (funções/objetos/mutação in-place, não). Break-glass inseguro: `RLM_SANDBOX_MODE=inprocess`.
+- **Lockdown B2 (FS/rede)** (`sandbox_lockdown.py`): quando ativo (Linux + `RLM_SANDBOX_LOCKDOWN`≠`off`), o filho aplica **Landlock** (allowlist de FS: `/usr…` RO + `/dev/shm` RW; nega `/persist`/`/data`/resto) + **seccomp** (corte de rede: `socket`/`connect`/… → `EPERM`) logo antes do `exec`, via `ctypes` *unprivileged* (sem mudar a postura do container). Default `warn` (degrada p/ B1 + WARNING se Landlock/seccomp indisponível); `required` = fail-closed; `off` = break-glass. Resíduo pós-B2: dados que o pai já enviou seguem em memória do filho (por design); sem cgroup por-filho (CPU/mem via RLIMIT/deadline); em `warn`/`off` ou kernel sem Landlock, reverte ao resíduo B1 (escape lê `/persist`+`/data`).
 - **CORS**: restrito via `RLM_CORS_ORIGINS`
 
 ## Observabilidade
