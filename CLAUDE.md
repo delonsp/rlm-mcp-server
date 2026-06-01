@@ -132,6 +132,7 @@ rlm_collection(action="search", name="docs", terms=["instalação"])
 | `RLM_MAX_MEMORY_MB` | Memória total do REPL | `1024` |
 | `RLM_MAX_VAR_SIZE_MB` | Limite por variável | `50` |
 | `RLM_RESPONSE_VERBOSITY` | compact/normal/verbose | `compact` |
+| `RLM_BOILERPLATE_PENALTY` | Multiplicador de score `[0,1]` p/ chunks de bibliografia/cabeçalho na busca semântica; `1.0` = desligado | `1.0` |
 | `RLM_SANDBOX_MODE` | `subprocess` (seguro) / `inprocess` (INSEGURO) | `subprocess` |
 | `RLM_EXECUTE_TIMEOUT` | Timeout do execute em s (wall-clock + killpg) | `60` |
 | `RLM_SANDBOX_MEM_MB` | RLIMIT_AS do processo-filho | `2048` |

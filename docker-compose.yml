@@ -47,6 +47,10 @@ services:
       - RLM_BATCH_MAX_WORKERS=${RLM_BATCH_MAX_WORKERS:-4}
       # Embedding mode for vector search (openai|disabled)
       - RLM_EMBEDDING_MODE=${RLM_EMBEDDING_MODE:-openai}
+      # Rebaixa chunks de bibliografia/cabeçalho na busca semântica. Multiplicador
+      # de score em [0,1]; default 1.0 = desligado (produção byte-idêntica). Flipar
+      # p/ ~0.6 só após validar live que melhora sem regredir prosa limpa.
+      - RLM_BOILERPLATE_PENALTY=${RLM_BOILERPLATE_PENALTY:-1.0}
       # Lockdown B2 do sandbox (Landlock FS + seccomp rede) aplicado por-filho.
       # Default 'warn' (degrada p/ B1 + WARNING se indisponível). Flipar p/
       # 'required' (fail-closed) só após validar live que engata. off = break-glass.
