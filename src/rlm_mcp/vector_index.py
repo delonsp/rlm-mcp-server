@@ -30,6 +30,7 @@ DEFAULT_CHUNK_OVERLAP = 50  # overlap between chunks
 
 _MIN_BOILERPLATE_LINES = 3        # need at least this many non-empty lines to judge
 _REFERENCE_LINE_FRACTION = 0.6    # >= this fraction of lines are strong citations
+_MIN_CITATION_TOKENS = 3          # >= this many strong citation tokens => reference list
 _HEADER_CONTENT_FRACTION = 0.5    # >= this fraction of lines are headers/markers
 
 # A line counts as a reference ONLY with a STRONG citation co-signal: a DOI or a
@@ -71,9 +72,17 @@ def _classify_boilerplate(text: str) -> bool:
     if len(lines) < _MIN_BOILERPLATE_LINES:
         return False
 
-    # Reference list: fraction of lines carrying a strong citation co-signal.
+    # Reference list. Two complementary signals, both immune to the v1 false
+    # positives (recipes / clinical protocols / "et al" prose never carry these
+    # tokens):
+    #  (a) an ABSOLUTE count of strong citation tokens — catches Vancouver lists
+    #      whose entries WRAP across lines, so the "year;vol:page" token lands on
+    #      only ~half the lines and the per-line ratio stays under threshold (live
+    #      finding 2026-06-01: real ref chunks L10626/L11566 were missed by ratio);
+    #  (b) the per-line ratio — catches short blocks of one-line entries.
+    ref_token_count = sum(len(_RE_CITATION_STRONG.findall(ln)) for ln in lines)
     ref_lines = sum(1 for ln in lines if _RE_CITATION_STRONG.search(ln))
-    if ref_lines / len(lines) >= _REFERENCE_LINE_FRACTION:
+    if ref_token_count >= _MIN_CITATION_TOKENS or ref_lines / len(lines) >= _REFERENCE_LINE_FRACTION:
         return True
 
     # Header/marker block: fraction of lines that are page markers / chapter headers.
