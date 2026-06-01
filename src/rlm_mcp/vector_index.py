@@ -6,6 +6,8 @@ and provides similarity-based search.
 """
 
 import logging
+import os
+import re
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -18,6 +20,95 @@ DEFAULT_CHUNK_SIZE = 512  # characters per chunk
 DEFAULT_CHUNK_OVERLAP = 50  # overlap between chunks
 
 
+# --- Boilerplate chunk classification (reference lists / chapter headers / page
+# markers). Conservative by design: only a chunk that is PREDOMINANTLY boilerplate
+# is flagged — a single stray marker inside prose never trips it. The flag is
+# COMPUTED from the chunk text (in _chunk_text and on from_serializable), never
+# persisted, so existing indexes pick it up on load without re-embedding. It is
+# used to DOWN-WEIGHT (not drop) such chunks in semantic search via the
+# RLM_BOILERPLATE_PENALTY env. See plans/20260601-filter-boilerplate-chunks.md ---
+
+_MIN_BOILERPLATE_LINES = 3        # need at least this many non-empty lines to judge
+_REFERENCE_LINE_FRACTION = 0.6    # >= this fraction of lines are strong citations
+_HEADER_CONTENT_FRACTION = 0.5    # >= this fraction of lines are headers/markers
+
+# A line counts as a reference ONLY with a STRONG citation co-signal: a DOI or a
+# Vancouver-style "year;volume:page". Bare line-numbering ("1. ") and a bare
+# "et al" are deliberately NOT signals — they fire on recipes, clinical protocols
+# (e.g. ReCODE steps) and narrative prose that merely names authors. (Red-team
+# 2026-06-01 on the real corpus: numbering-alone + et-al-alone produced 23 false
+# positives, the worst error class.) Cost: misses APA/ABNT/book refs that lack a
+# DOI or a year;vol:page — a tolerable false-negative, since the flag only
+# down-weights a chunk's semantic score, never drops it.
+_RE_CITATION_STRONG = re.compile(
+    r"\bdoi:\s*10\.\d"                          # "doi:10.1038/..."
+    r"|\bdoi\.org/10\.\d"                       # "https://doi.org/10.1038/..."
+    r"|\b(?:19|20)\d{2}\s*;\s*\d+\s*:\s*\d",    # Vancouver "2016;8:1250"
+    re.IGNORECASE,
+)
+# Page markers — PT extraction "--- Página 12 ---" and EN "--- page 12 ---" — and
+# chapter headers. The all-caps-title rule was DROPPED: it fired on lab panels,
+# code constants, staging glossaries ("ESTÁGIO I/II") and emphatic prose (9 of the
+# red-team false positives). Structural headers are still caught via these markers.
+_RE_PAGE_MARKER = re.compile(r"-{2,}\s*(?:p[áa]gina|page)\s*\d+", re.IGNORECASE)
+_RE_CHAPTER_HEADER = re.compile(r"^\s*(?:Chapter|Cap[íi]tulo)\s+\d+", re.IGNORECASE)
+
+
+def _classify_boilerplate(text: str) -> bool:
+    """True if a chunk is predominantly a reference list or a header/page marker.
+
+    Conservative: requires a DENSITY of STRONG boilerplate signals across the
+    chunk's lines, never a single stray marker. Short or ambiguous chunks default
+    to prose (False). The result only down-weights the chunk's semantic score, so a
+    false negative just keeps current behaviour and a false positive only mildly
+    demotes one chunk — never data loss. Tuned against an adversarial red-team of
+    the real corpus to drive false positives ~to zero (see _RE_CITATION_STRONG).
+    """
+    if not text:
+        return False
+
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if len(lines) < _MIN_BOILERPLATE_LINES:
+        return False
+
+    # Reference list: fraction of lines carrying a strong citation co-signal.
+    ref_lines = sum(1 for ln in lines if _RE_CITATION_STRONG.search(ln))
+    if ref_lines / len(lines) >= _REFERENCE_LINE_FRACTION:
+        return True
+
+    # Header/marker block: fraction of lines that are page markers / chapter headers.
+    header_lines = sum(
+        1 for ln in lines
+        if _RE_PAGE_MARKER.search(ln) or _RE_CHAPTER_HEADER.match(ln)
+    )
+    if header_lines / len(lines) >= _HEADER_CONTENT_FRACTION:
+        return True
+
+    return False
+
+
+def _boilerplate_penalty() -> float:
+    """Score multiplier for boilerplate chunks in semantic search.
+
+    Read from RLM_BOILERPLATE_PENALTY (default 1.0 = disabled, no effect). Values
+    outside [0.0, 1.0] are rejected back to 1.0 with a warning — a multiplier > 1
+    would boost boilerplate, which is never intended.
+    """
+    raw = os.getenv("RLM_BOILERPLATE_PENALTY", "1.0").strip()
+    try:
+        val = float(raw)
+    except ValueError:
+        logger.warning("RLM_BOILERPLATE_PENALTY=%r inválido; usando 1.0 (desligado)", raw)
+        return 1.0
+    if not (0.0 <= val <= 1.0):
+        logger.warning("RLM_BOILERPLATE_PENALTY=%r fora de [0,1]; usando 1.0", raw)
+        return 1.0
+    return val
+
+
+_BOILERPLATE_PENALTY = _boilerplate_penalty()
+
+
 @dataclass
 class ChunkInfo:
     """A text chunk with its metadata."""
@@ -26,6 +117,9 @@ class ChunkInfo:
     line_start: int
     line_end: int
     embedding: list[float] = field(default_factory=list)
+    # Computed (not persisted): True for reference-list / header / page-marker
+    # chunks, used to down-weight them in semantic search. See _classify_boilerplate.
+    is_boilerplate: bool = False
 
 
 @dataclass
@@ -132,6 +226,10 @@ class VectorIndex:
             if not chunk.embedding:
                 continue
             score = _cosine_similarity(query_embedding, chunk.embedding)
+            # Down-weight reference/header chunks (no-op when penalty == 1.0, the
+            # default — production scoring stays byte-identical until flipped).
+            if chunk.is_boilerplate and _BOILERPLATE_PENALTY != 1.0:
+                score *= _BOILERPLATE_PENALTY
             scored.append((chunk, score))
 
         # Sort by score descending
@@ -192,6 +290,9 @@ class VectorIndex:
                 line_start=c["line_start"],
                 line_end=c["line_end"],
                 embedding=c.get("embedding", []),
+                # Recompute from text on load: persisted indexes gain the flag
+                # without any schema change or re-embedding.
+                is_boilerplate=_classify_boilerplate(c["text"]),
             )
             for c in data.get("chunks", [])
         ]
@@ -252,6 +353,7 @@ def _chunk_text(
             text=chunk_text,
             line_start=line_start,
             line_end=line_end,
+            is_boilerplate=_classify_boilerplate(chunk_text),
         ))
         chunk_idx += 1
 
