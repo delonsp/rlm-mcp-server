@@ -390,7 +390,9 @@ async def lifespan(app: FastAPI):
                     # Restaurar embeddings vetoriais se existirem
                     emb_data = persistence.load_embeddings(name)
                     if emb_data:
-                        from .vector_index import VectorIndex, ChunkInfo, set_vector_index
+                        from .vector_index import (
+                            VectorIndex, ChunkInfo, set_vector_index, _classify_boilerplate,
+                        )
                         vi = VectorIndex(var_name=name)
                         vi.total_chars = len(value) if isinstance(value, str) else 0
                         vi.total_lines = value.count('\n') + 1 if isinstance(value, str) else 0
@@ -401,6 +403,10 @@ async def lifespan(app: FastAPI):
                                 line_start=c["line_start"],
                                 line_end=c["line_end"],
                                 embedding=c["embedding"],
+                                # Recompute the boilerplate flag on restore: this is
+                                # the REAL load path (from_serializable is not used at
+                                # runtime), so the down-weight in search() depends on it.
+                                is_boilerplate=_classify_boilerplate(c["chunk_text"]),
                             )
                             for c in emb_data
                         ]
