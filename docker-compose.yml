@@ -57,6 +57,10 @@ services:
       - RLM_SANDBOX_LOCKDOWN=${RLM_SANDBOX_LOCKDOWN:-warn}
       # Diretório de persistência SQLite
       - RLM_PERSIST_DIR=/persist
+      # Tuning do alocador glibc: limita arenas e baixa o threshold de trim
+      # para devolver memória ao SO mais cedo (reduz RSS sob carga).
+      - MALLOC_ARENA_MAX=${MALLOC_ARENA_MAX:-2}
+      - MALLOC_TRIM_THRESHOLD_=${MALLOC_TRIM_THRESHOLD_:-100000}
 
     volumes:
       # Monte seus dados aqui - serão acessíveis via /data no container
