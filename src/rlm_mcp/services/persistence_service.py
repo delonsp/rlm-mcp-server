@@ -126,19 +126,8 @@ def _auto_embed(var_name: str, text: str, persistence) -> str:
 
         set_vector_index(var_name, vi)
 
-        # Persist embeddings to SQLite
-        chunks_data = [
-            {
-                "chunk_index": c.chunk_index,
-                "chunk_text": c.text,
-                "line_start": c.line_start,
-                "line_end": c.line_end,
-                "embedding": c.embedding,
-            }
-            for c in vi.chunks
-            if c.embedding
-        ]
-        persistence.save_embeddings(var_name, chunks_data)
+        # Persist embeddings to SQLite (só chunks com vetor; payload vem da matriz)
+        persistence.save_embeddings(var_name, vi.persist_payload())
 
         stats = vi.get_stats()
         logger.info(f"Auto-embedded '{var_name}': {stats['embedded_chunks']} chunks")

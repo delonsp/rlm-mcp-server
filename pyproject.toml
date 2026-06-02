@@ -11,6 +11,7 @@ dependencies = [
     "pydantic>=2.10.0",
     "fastapi>=0.115.0",
     "openai>=2.0.0",  # v2.x requerido para GPT-5 family
+    "numpy>=1.26",    # Matriz float32 compacta p/ embeddings (RAM ~8x menor + busca vetorizada)
     "minio>=7.2.0",   # Cliente S3/Minio para rlm_load_s3
     "pdfplumber>=0.11.0",  # Extração de texto de PDFs machine readable
     "mistralai>=1.0.0",    # Mistral OCR para PDFs escaneados

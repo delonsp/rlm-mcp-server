@@ -387,30 +387,17 @@ async def lifespan(app: FastAPI):
                     index_data = persistence.load_index(name)
                     if index_data:
                         set_index(name, TextIndex.from_dict(index_data))
-                    # Restaurar embeddings vetoriais se existirem
+                    # Restaurar embeddings vetoriais se existirem. from_persisted
+                    # funde tudo na matriz float32 compacta e descarta as listas
+                    # cruas; o flag is_boilerplate é recomputado do texto lá dentro
+                    # (este é o caminho REAL de restore — from_serializable não roda
+                    # em runtime — então o down-weight em search() depende disso).
                     emb_data = persistence.load_embeddings(name)
                     if emb_data:
-                        from .vector_index import (
-                            VectorIndex, ChunkInfo, set_vector_index, _classify_boilerplate,
+                        from .vector_index import VectorIndex, set_vector_index
+                        set_vector_index(
+                            name, VectorIndex.from_persisted(name, value, emb_data)
                         )
-                        vi = VectorIndex(var_name=name)
-                        vi.total_chars = len(value) if isinstance(value, str) else 0
-                        vi.total_lines = value.count('\n') + 1 if isinstance(value, str) else 0
-                        vi.chunks = [
-                            ChunkInfo(
-                                chunk_index=c["chunk_index"],
-                                text=c["chunk_text"],
-                                line_start=c["line_start"],
-                                line_end=c["line_end"],
-                                embedding=c["embedding"],
-                                # Recompute the boilerplate flag on restore: this is
-                                # the REAL load path (from_serializable is not used at
-                                # runtime), so the down-weight in search() depends on it.
-                                is_boilerplate=_classify_boilerplate(c["chunk_text"]),
-                            )
-                            for c in emb_data
-                        ]
-                        set_vector_index(name, vi)
                     logger.info(f"  Restaurado: {name} ({var_info['type']})")
             logger.info("Variáveis restauradas com sucesso")
 

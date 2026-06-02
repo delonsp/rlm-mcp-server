@@ -8,12 +8,26 @@ and provides similarity-based search.
 import logging
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 from .embeddings import get_embedding_service, _cosine_similarity, sanitize_text
 
 logger = logging.getLogger("rlm-mcp.vector_index")
+
+# numpy é opcional por design (degrada para o caminho Python puro se ausente),
+# mas em produção é o que dá a economia de ~8x de RAM: os embeddings ficam numa
+# matriz float32 contígua em vez de N listas de floats boxed do CPython.
+try:
+    import numpy as np
+    _HAS_NUMPY = True
+except ImportError:  # pragma: no cover - produção sempre tem numpy
+    np = None
+    _HAS_NUMPY = False
+    logger.warning(
+        "numpy ausente: índice vetorial cai no fallback list[float] (RAM ~8x maior, "
+        "busca mais lenta). Instale numpy para o caminho otimizado."
+    )
 
 # Default chunking parameters
 DEFAULT_CHUNK_SIZE = 512  # characters per chunk
@@ -120,12 +134,17 @@ _BOILERPLATE_PENALTY = _boilerplate_penalty()
 
 @dataclass
 class ChunkInfo:
-    """A text chunk with its metadata."""
+    """A text chunk with its metadata.
+
+    O embedding NÃO mora aqui: vive em VectorIndex como uma única matriz
+    float32 contígua (ver VectorIndex._ingest_embeddings). Guardar 1536 floats
+    boxed do Python por chunk custava ~8x a RAM de uma linha float32 e era o
+    dreno de memória #1 do servidor.
+    """
     chunk_index: int
     text: str
     line_start: int
     line_end: int
-    embedding: list[float] = field(default_factory=list)
     # Computed (not persisted): True for reference-list / header / page-marker
     # chunks, used to down-weight them in semantic search. See _classify_boilerplate.
     is_boilerplate: bool = False
@@ -152,6 +171,14 @@ class VectorIndex:
         self.chunks: list[ChunkInfo] = []
         self.total_chars: int = 0
         self.total_lines: int = 0
+        # Store de embeddings, alinhado 1:1 com self.chunks.
+        #  - numpy: matriz float32 contígua (N, dim) L2-normalizada; linhas de
+        #    chunks sem embedding ficam todo-zero.
+        #  - fallback (sem numpy): lista de vetores crus por chunk ([] = ausente).
+        self._matrix = None                                  # Optional[np.ndarray]
+        self._vectors: Optional[list[list[float]]] = None
+        self._has_vec: list[bool] = []
+        self._dim: int = 0
 
     def build(
         self,
@@ -199,17 +226,60 @@ class VectorIndex:
             logger.error(f"Embedding count mismatch: {len(embeddings)} vs {len(self.chunks)} chunks")
             return False
 
-        for chunk, emb in zip(self.chunks, embeddings):
-            chunk.embedding = emb
+        self._ingest_embeddings(embeddings)
 
-        # Filter out chunks with empty embeddings
-        valid_chunks = [c for c in self.chunks if c.embedding]
-        if not valid_chunks:
+        embedded = sum(self._has_vec)
+        if embedded == 0:
             logger.warning(f"No valid embeddings for '{self.var_name}'")
             return False
 
-        logger.info(f"Vector index built for '{self.var_name}': {len(valid_chunks)}/{len(self.chunks)} chunks embedded")
+        logger.info(f"Vector index built for '{self.var_name}': {embedded}/{len(self.chunks)} chunks embedded")
         return True
+
+    def _ingest_embeddings(self, vectors: list[list[float]]) -> None:
+        """Funde vetores por-chunk (alinhados 1:1 com self.chunks) no store.
+
+        Caminho numpy: uma matriz float32 contígua L2-normalizada — ~8x menos
+        RAM que N listas de floats boxed, e a busca vira um produto matriz-vetor.
+        Sem numpy, mantém as listas cruas e usa o loop de cosseno em Python puro
+        (mais lento, mas nunca quebra). Cosseno é invariante a escala e os
+        embeddings da OpenAI já são unit-norm, então normalizar aqui não muda
+        ranking nenhum.
+        """
+        n = len(self.chunks)
+        # Alinhamento defensivo: a contagem de chunks é a fonte da verdade.
+        if len(vectors) != n:
+            vectors = (list(vectors) + [[]] * n)[:n]
+        self._has_vec = [bool(v) for v in vectors]
+        self._dim = next((len(v) for v in vectors if v), 0)
+
+        if not _HAS_NUMPY:
+            self._vectors = [list(v) if v else [] for v in vectors]
+            self._matrix = None
+            return
+
+        self._vectors = None
+        if self._dim == 0:
+            self._matrix = None
+            return
+        mat = np.zeros((n, self._dim), dtype=np.float32)
+        for i, v in enumerate(vectors):
+            if v and len(v) == self._dim:
+                mat[i] = v
+        # L2-normaliza as linhas in-place; linhas todo-zero continuam zero.
+        norms = np.linalg.norm(mat, axis=1, keepdims=True)
+        np.divide(mat, norms, out=mat, where=norms > 0)
+        self._matrix = mat
+
+    def _vector_at(self, i: int) -> list[float]:
+        """Vetor cru do chunk i como list[float] ([] se ausente). Para persistência."""
+        if i < 0 or i >= len(self._has_vec) or not self._has_vec[i]:
+            return []
+        if self._matrix is not None:
+            return self._matrix[i].astype(float).tolist()
+        if self._vectors is not None:
+            return list(self._vectors[i])
+        return []
 
     def search(self, query: str, top_k: int = 10) -> list[VectorSearchResult]:
         """Search the index for similar chunks.
@@ -229,37 +299,71 @@ class VectorIndex:
         if not query_embedding:
             return []
 
-        # Compute similarities
+        n_vec = sum(self._has_vec)
+        if n_vec == 0:
+            return []
+        # Down-weight de chunks de referência/cabeçalho: no-op quando == 1.0 (o
+        # default — scoring de produção fica idêntico até flipar).
+        penalize = _BOILERPLATE_PENALTY != 1.0
+
+        # --- Caminho numpy: cosseno = matriz_normalizada @ query_normalizada ---
+        if self._matrix is not None:
+            q = np.asarray(query_embedding, dtype=np.float32)
+            if q.shape[0] != self._matrix.shape[1]:
+                return []
+            qn = float(np.linalg.norm(q))
+            if qn == 0.0:
+                return []
+            scores = self._matrix @ (q / qn)
+            if penalize:
+                pen = np.fromiter(
+                    (_BOILERPLATE_PENALTY if c.is_boilerplate else 1.0 for c in self.chunks),
+                    dtype=np.float32, count=len(self.chunks),
+                )
+                scores = scores * pen
+            # Exclui chunks sem vetor real (linha zero pontuaria 0): -inf nunca rankeia.
+            has = np.fromiter(self._has_vec, dtype=bool, count=len(self._has_vec))
+            scores = np.where(has, scores, -np.inf)
+            k = min(top_k, n_vec)
+            order = np.argsort(-scores, kind="stable")[:k]
+            results = []
+            for idx in order:
+                i = int(idx)
+                c = self.chunks[i]
+                results.append(VectorSearchResult(
+                    chunk_text=c.text,
+                    line_start=c.line_start,
+                    line_end=c.line_end,
+                    score=float(scores[i]),
+                    chunk_index=c.chunk_index,
+                ))
+            return results
+
+        # --- Fallback Python puro: loop de cosseno sobre os vetores crus ---
         scored = []
-        for chunk in self.chunks:
-            if not chunk.embedding:
+        for i, vec in enumerate(self._vectors or []):
+            if not vec:
                 continue
-            score = _cosine_similarity(query_embedding, chunk.embedding)
-            # Down-weight reference/header chunks (no-op when penalty == 1.0, the
-            # default — production scoring stays byte-identical until flipped).
-            if chunk.is_boilerplate and _BOILERPLATE_PENALTY != 1.0:
+            score = _cosine_similarity(query_embedding, vec)
+            if penalize and self.chunks[i].is_boilerplate:
                 score *= _BOILERPLATE_PENALTY
-            scored.append((chunk, score))
-
-        # Sort by score descending
+            scored.append((i, score))
         scored.sort(key=lambda x: -x[1])
-
-        # Return top_k
         results = []
-        for chunk, score in scored[:top_k]:
+        for i, score in scored[:top_k]:
+            c = self.chunks[i]
             results.append(VectorSearchResult(
-                chunk_text=chunk.text,
-                line_start=chunk.line_start,
-                line_end=chunk.line_end,
+                chunk_text=c.text,
+                line_start=c.line_start,
+                line_end=c.line_end,
                 score=score,
-                chunk_index=chunk.chunk_index,
+                chunk_index=c.chunk_index,
             ))
-
         return results
 
     def get_stats(self) -> dict:
         """Return index statistics."""
-        embedded = sum(1 for c in self.chunks if c.embedding)
+        embedded = sum(self._has_vec)
         return {
             "var_name": self.var_name,
             "total_chunks": len(self.chunks),
@@ -267,6 +371,21 @@ class VectorIndex:
             "total_chars": self.total_chars,
             "total_lines": self.total_lines,
         }
+
+    def persist_payload(self) -> list[dict]:
+        """Linhas para persistence.save_embeddings() (só chunks com vetor)."""
+        payload = []
+        for i, c in enumerate(self.chunks):
+            if i >= len(self._has_vec) or not self._has_vec[i]:
+                continue
+            payload.append({
+                "chunk_index": c.chunk_index,
+                "chunk_text": c.text,
+                "line_start": c.line_start,
+                "line_end": c.line_end,
+                "embedding": self._vector_at(i),
+            })
+        return payload
 
     def to_serializable(self) -> dict:
         """Convert to serializable dict for persistence."""
@@ -280,9 +399,9 @@ class VectorIndex:
                     "text": c.text,
                     "line_start": c.line_start,
                     "line_end": c.line_end,
-                    "embedding": c.embedding,
+                    "embedding": self._vector_at(i),
                 }
-                for c in self.chunks
+                for i, c in enumerate(self.chunks)
             ],
         }
 
@@ -292,19 +411,46 @@ class VectorIndex:
         vi = cls(var_name=data["var_name"])
         vi.total_chars = data.get("total_chars", 0)
         vi.total_lines = data.get("total_lines", 0)
+        chunk_dicts = data.get("chunks", [])
         vi.chunks = [
             ChunkInfo(
                 chunk_index=c["chunk_index"],
                 text=c["text"],
                 line_start=c["line_start"],
                 line_end=c["line_end"],
-                embedding=c.get("embedding", []),
                 # Recompute from text on load: persisted indexes gain the flag
                 # without any schema change or re-embedding.
                 is_boilerplate=_classify_boilerplate(c["text"]),
             )
-            for c in data.get("chunks", [])
+            for c in chunk_dicts
         ]
+        vi._ingest_embeddings([c.get("embedding", []) for c in chunk_dicts])
+        return vi
+
+    @classmethod
+    def from_persisted(cls, var_name: str, text_value, loaded_chunks: list[dict]) -> "VectorIndex":
+        """Reconstrói a partir das linhas de persistence.load_embeddings().
+
+        Este é o caminho REAL de restore no startup (from_serializable não roda
+        em runtime). loaded_chunks trazem 'chunk_text' (nome da coluna do DB) e
+        um 'embedding' cru; os embeddings são fundidos na matriz float32 compacta
+        e as listas por-linha são descartadas — o pico de RAM no boot deixa de
+        ser O(N listas de floats) e passa a O(matriz).
+        """
+        vi = cls(var_name=var_name)
+        vi.total_chars = len(text_value) if isinstance(text_value, str) else 0
+        vi.total_lines = text_value.count('\n') + 1 if isinstance(text_value, str) else 0
+        vi.chunks = [
+            ChunkInfo(
+                chunk_index=c["chunk_index"],
+                text=c["chunk_text"],
+                line_start=c["line_start"],
+                line_end=c["line_end"],
+                is_boilerplate=_classify_boilerplate(c["chunk_text"]),
+            )
+            for c in loaded_chunks
+        ]
+        vi._ingest_embeddings([c.get("embedding", []) for c in loaded_chunks])
         return vi
 
 
