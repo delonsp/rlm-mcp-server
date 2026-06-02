@@ -116,6 +116,18 @@ rlm_collection(action="search", name="docs", terms=["instalação"])
 ```
 - Índice combinado reconstruído automaticamente no startup
 - Busca usa índice combinado + full-text fallback para termos não indexados
+- **Busca de coleção é LEXICAL (token), sem perna semântica.** Passar termos como array
+  de palavras, não frase: `terms=["calor","ar","livre"]`, não `["pior no calor ar livre"]`
+  (frase casa substring literal numa linha → quase zero). Quando uma frase não casa, o
+  handler tokeniza e re-busca (AND→OR, word-boundary via `tokenized_collection_scan`) e
+  **avisa que é fallback** (não a busca exata — preserva rastreabilidade de citação).
+- Frase literal forçada: aspas no termo → `terms=['"open air"']`. `snippet_len` (default
+  150, clamp 40–400) controla o trecho exibido.
+- Recall por significado/sinônimo/cross-idioma **não existe na coleção**; usar
+  `rlm_search_index(var=..., mode="hybrid")` por fonte. Decisão de NÃO portar semântica
+  p/ coleção é empírica (benchmark Carcinosinum 2026-06): embedding multilíngue fraco no
+  corpus homeopático erra o alvo cross-idioma; e as rubricas "perdidas" eram recuperáveis
+  só com tokenização. Ver memória `project_collection_phrase_trap`.
 
 ## Variáveis de Ambiente
 

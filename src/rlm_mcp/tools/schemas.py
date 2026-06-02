@@ -409,12 +409,25 @@ Ações:
 - list: Lista todas as coleções
 - info: Info de uma coleção. Params: name
 - rebuild: Reconstrói índice. Params: name
-- search: Busca em toda a coleção. Params: name, terms[], limit, offset
+- search: Busca em TODA a coleção de uma vez. Params: name, terms[], limit, offset, snippet_len
+
+BUSCA (search) — leia antes de usar:
+• É LEXICAL (casa palavras/tokens), NÃO semântica. Não acha sinônimo nem cruza idioma.
+• Passe termos como ARRAY de palavras: terms=["calor","ar","livre"]. NÃO passe frase:
+  terms=["pior no calor melhor ao ar livre"] casa a string literal numa linha → quase
+  sempre zero. Se uma frase não casar, o servidor tokeniza e re-busca automaticamente
+  (AND→OR), mas avisa que o resultado é de fallback, não da sua busca exata.
+• Para forçar frase LITERAL, use aspas dentro do termo: terms=['"open air"'].
+• snippet_len controla o tamanho do trecho exibido (default 150; suba p/ mais contexto,
+  baixe p/ economizar janela).
+• Quer recall por SIGNIFICADO/sinônimo/cross-idioma? Use rlm_search_index(var=..., mode=
+  "hybrid") fonte por fonte — a busca de coleção não tem perna semântica.
 
 Exemplos:
   rlm_collection(action="create", name="docs", description="Documentação")
   rlm_collection(action="add", name="docs", vars=["doc1","doc2"])
-  rlm_collection(action="search", name="docs", terms=["instalação"])
+  rlm_collection(action="search", name="docs", terms=["instalação","config"])
+  rlm_collection(action="search", name="docs", terms=['"erro fatal"'], snippet_len=250)
   rlm_collection(action="list")""",
         "inputSchema": {
             "type": "object",
@@ -437,7 +450,8 @@ Exemplos:
                     "description": "Termos para buscar (para search)"
                 },
                 "limit": {"type": "integer", "default": 20, "description": "Max resultados (para search)"},
-                "offset": {"type": "integer", "default": 0, "description": "Paginação (para search)"}
+                "offset": {"type": "integer", "default": 0, "description": "Paginação (para search)"},
+                "snippet_len": {"type": "integer", "default": 150, "description": "Tamanho do trecho exibido por ocorrência na search (clamp 40–400)"}
             },
             "required": ["action"]
         }

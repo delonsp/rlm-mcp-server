@@ -914,3 +914,145 @@ def _reciprocal_rank_fusion(
         r.pop("_text_source", None)
 
     return sorted_results[offset:offset + limit]
+
+
+# =============================================================================
+# Auto-tokenize fallback para busca de COLEÇÃO (phrase-trap mitigation).
+# Contexto: a busca de coleção é lexical. Quando recebe uma FRASE (termo com
+# espaço), o handler casa a string inteira numa única linha (substring) — então
+# "hot patient worse heat better open air" volta zero, mesmo com o conteúdo
+# presente espalhado pelas fontes. Validado empiricamente (Carcinosinum, 2026-06):
+# as 3 rubricas "perdidas" estavam TODAS lexicalmente presentes; o que matou foi
+# o trap de frase, não falta de semântica.
+#
+# Quando a frase não casa, quebramos em tokens e re-buscamos. Guardas (pedido de
+# revisão externa — preservam a rastreabilidade das citações):
+#   (a) AND antes de OR: linhas com TODOS os tokens primeiro; OR só se AND vazio.
+#   (b) Transparência: o handler sinaliza que o resultado veio de fallback, NÃO da
+#       busca exata pedida (o consumidor não pode citar como se fosse a busca dele).
+#   (c) Busca exata explícita: termos entre aspas não são tokenizados (handler).
+# Bônus: o match é com fronteira de palavra (accent-fold), então elimina o ruído
+# de substring do caminho full-text legado (ex.: "fish" casando em "selfish").
+# =============================================================================
+
+def tokenize_for_fallback(terms: list[str]) -> list[str]:
+    """Quebra termos-frase em tokens ÚNICOS (accent-fold, sem stopwords, min-len),
+    preservando ordem. Reusa _bm25_tokenize p/ consistência com o resto da busca."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for t in terms:
+        for tok in _bm25_tokenize(t):
+            if tok not in seen:
+                seen.add(tok)
+                out.append(tok)
+    return out
+
+
+def _compile_token(token: str) -> "re.Pattern":
+    """Pattern word-boundary (accent-fold) compilado p/ um token. Fronteira =
+    caractere fora da classe de 'palavra' do _KEY_TERM_RE."""
+    return re.compile(r"(?<![0-9a-zà-ÿ])" + re.escape(token) + r"(?![0-9a-zà-ÿ])")
+
+
+def _token_in_folded_line(folded_line: str, token: str) -> bool:
+    """`token` (já folded) presente em `folded_line` com fronteira de palavra."""
+    return _compile_token(token).search(folded_line) is not None
+
+
+def tokenized_collection_scan(
+    combined_text: str,
+    var_mapping: dict,
+    tokens: list[str],
+    snippet_len: int = 150,
+    per_label_cap: int = 200,
+) -> tuple[dict, Optional[str]]:
+    """Varredura linha-a-linha do texto combinado da coleção por `tokens`
+    (word-boundary + accent-fold). Honra guard (a): AND antes de OR.
+
+    Args:
+        combined_text: texto combinado da coleção (`_coll_<nome>_combined`).
+        var_mapping: linha-combinada(1-idx) → (var_original, linha_original).
+        tokens: tokens já normalizados (saída de tokenize_for_fallback).
+        snippet_len: corte do trecho exibido.
+        per_label_cap: teto de ocorrências por label (anti-payload-explosion).
+
+    Returns:
+        (all_results, mode) — all_results no shape {var: {label: [{linha, contexto}]}}
+        que o handler já formata; mode ∈ {"AND", "OR", None}.
+    """
+    if not tokens or not combined_text:
+        return {}, None
+
+    # Perf: compila os N patterns UMA vez (fora do loop de linhas). O fallback é
+    # o caminho lento e o corpus pode ser grande — recompilar por linha×token
+    # custaria segundos.
+    compiled = [(tok, _compile_token(tok)) for tok in tokens]
+
+    lines = combined_text.split("\n")
+    and_pairs: list[tuple[int, str]] = []
+    or_pairs: dict[str, list[tuple[int, str]]] = {tok: [] for tok in tokens}
+
+    # NOTA (cross-lingual): se o array mistura idiomas (["medo de multidões",
+    # "fear of crowds"]), os tokens PT e EN nunca coexistem na mesma linha → o AND
+    # não casa e cai sempre no OR (mais ruído). O banner avisa; precisão por-idioma
+    # ou por-janela fica como evolução futura.
+    for idx, raw in enumerate(lines, start=1):
+        folded = _fold_accents(raw.lower())
+        present = [tok for tok, crx in compiled if crx.search(folded)]
+        if not present:
+            continue
+        if len(present) == len(tokens):
+            and_pairs.append((idx, raw.strip()))
+        else:
+            for tok in present:
+                or_pairs[tok].append((idx, raw.strip()))
+
+    def _emit(pairs_by_label: dict) -> dict:
+        res: dict = {}
+        for label, pairs in pairs_by_label.items():
+            for ln, txt in pairs[:per_label_cap]:
+                mapped = var_mapping.get(ln)
+                if not mapped:
+                    continue
+                orig_var, orig_linha = mapped
+                res.setdefault(orig_var, {}).setdefault(label, []).append(
+                    {"linha": orig_linha, "contexto": txt[:snippet_len]}
+                )
+        return res
+
+    if and_pairs:
+        return _emit({" & ".join(tokens): and_pairs}), "AND"
+    if any(or_pairs.values()):
+        return _emit({tok: p for tok, p in or_pairs.items() if p}), "OR"
+    return {}, None
+
+
+def parse_quoted_terms(raw_terms: list[str]) -> tuple[list[str], list[bool], bool]:
+    """Guard (c): termo entre aspas duplas = busca exata explícita (não tokeniza).
+
+    Returns:
+        (terms, quoted_flags, all_quoted) — terms com as aspas removidas; quoted_flags[i]
+        True se raw_terms[i] estava entre aspas; all_quoted True se TODOS estavam (e a
+        lista não é vazia) → o handler desliga o auto-tokenize.
+    """
+    quoted_flags = [len(t) >= 2 and t[0] == '"' and t[-1] == '"' for t in raw_terms]
+    terms = [t[1:-1] if q else t for t, q in zip(raw_terms, quoted_flags)]
+    all_quoted = bool(raw_terms) and all(quoted_flags)
+    return terms, quoted_flags, all_quoted
+
+
+def format_fallback_banner(mode: str, tokens: list[str], orig: str) -> list[str]:
+    """Guard (b): banner de transparência do fallback tokenizado. Deixa explícito
+    que o resultado NÃO é da busca exata pedida (protege rastreabilidade de citação)."""
+    join = ("todos na mesma linha (AND)" if mode == "AND"
+            else "qualquer um por linha (OR)")
+    return [
+        f"⚠️ FALLBACK TOKENIZADO ({mode}) — a frase '{orig}' não teve "
+        f"correspondência literal na coleção.",
+        f"   Re-busquei pelos tokens {tokens} casando {join} (fronteira de palavra).",
+        "   ⚠️ Estes resultados NÃO são da sua busca exata — confirme o trecho "
+        "antes de citar como fonte.",
+        f"   💡 Da próxima, passe array (ex.: {tokens}); use aspas (\"...\") "
+        "se quiser mesmo a frase literal.",
+        "",
+    ]

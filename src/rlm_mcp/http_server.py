@@ -30,7 +30,11 @@ from .repl import SafeREPL, ExecutionResult, INTERNAL_FUNCTION_NAMES, VariableIn
 from .s3_client import get_s3_client
 from .pdf_parser import extract_pdf
 from .persistence import get_persistence
-from .indexer import get_index, set_index, TextIndex, auto_index_if_large, hybrid_search, create_index
+from .indexer import (
+    get_index, set_index, TextIndex, auto_index_if_large, hybrid_search, create_index,
+    tokenize_for_fallback, tokenized_collection_scan,
+    parse_quoted_terms, format_fallback_banner,
+)
 from .rate_limiter import SlidingWindowRateLimiter, RateLimitResult
 from .tools.schemas import TOOL_SCHEMAS
 from .services.s3_guard import require_s3_configured
@@ -750,7 +754,10 @@ Exemplos:
 
 **Textos < 100k chars**: Use rlm_execute com buscar(texto, termo) ou Python direto.
 
-**Busca em coleção**: rlm_search_collection busca em TODOS os docs da coleção.""",
+**Busca em coleção** (rlm_collection action="search"): varre TODOS os docs de uma vez,
+porém é LEXICAL (token), sem perna semântica. Passe termos como array de palavras, não
+frase (frase casa literal → quase sempre zero; há auto-tokenize de fallback com aviso).
+Para recall semântico/cross-idioma, rode rlm_search_index(mode="hybrid") fonte por fonte.""",
 
     "code": """## Análise de Código-Fonte
 
@@ -790,8 +797,14 @@ Criar e popular:
   rlm_collection(action="create", name="docs", description="Documentação técnica")
   rlm_collection(action="add", name="docs", vars=["manual1", "manual2", "manual3"])
 
-Buscar em todos de uma vez:
+Buscar em todos de uma vez (LEXICAL — casa palavras/tokens, não significado):
   rlm_collection(action="search", name="docs", terms=["configuração", "instalação"])
+  • Termos = ARRAY de palavras. Frase ("a b c") casa literal numa linha → quase zero;
+    se não casar, o servidor tokeniza e re-busca (AND→OR) avisando que é fallback.
+  • Frase literal mesmo? Use aspas no termo: terms=['"erro fatal"'].
+  • snippet_len ajusta o tamanho do trecho (default 150).
+  • Recall por significado/sinônimo/cross-idioma NÃO existe aqui: use
+    rlm_search_index(var=..., mode="hybrid") por fonte.
 
 Listar e inspecionar:
   rlm_collection(action="list")
@@ -1756,9 +1769,13 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
             try:
                 persistence = get_persistence()
                 coll_name = arguments["collection"]
-                terms = arguments["terms"]
+                raw_terms = arguments["terms"]
                 limit = arguments.get("limit", 10)
                 offset = arguments.get("offset", 0)
+                # Guard #3: snippet configurável (default 150; clamp p/ não inflar contexto).
+                snippet_len = max(40, min(400, int(arguments.get("snippet_len", 150))))
+                # Guard (c): termo entre aspas = busca exata explícita → não tokeniza.
+                terms, quoted_flags, all_quoted = parse_quoted_terms(raw_terms)
 
                 # Obter variáveis da coleção
                 var_names = persistence.get_collection_vars(coll_name)
@@ -1807,7 +1824,7 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                             orig_var, orig_linha = mapped
                             all_results.setdefault(orig_var, {}).setdefault(label, []).append({
                                 'linha': orig_linha,
-                                'contexto': h.get("text", "")[:120],
+                                'contexto': h.get("text", "")[:snippet_len],
                             })
 
                 if not used_bm25 and combined_index and mapping_var in repl.variables:
@@ -1889,12 +1906,47 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                                             'contexto': line.strip()
                                         })
 
+                # === Auto-tokenize fallback (phrase-trap) — guardas a/b/c ===
+                # A busca acima casa a FRASE literalmente (substring numa linha). Se a
+                # frase não bateu mas havia frase, quebramos em tokens e re-buscamos
+                # (AND antes de OR, word-boundary). Não dispara se o usuário pediu
+                # busca exata via aspas (all_quoted).
+                fallback_note = None
+                if (not all_results and is_phrase_coll and not all_quoted
+                        and combined_var_name in repl.variables
+                        and mapping_var in repl.variables):
+                    tok_source = [t for t, q in zip(terms, quoted_flags) if not q]
+                    tokens = tokenize_for_fallback(tok_source)
+                    if tokens:
+                        scan_results, scan_mode = tokenized_collection_scan(
+                            repl.variables[combined_var_name],
+                            repl.variables[mapping_var],
+                            tokens,
+                            snippet_len=snippet_len,
+                        )
+                        if scan_results:
+                            all_results = scan_results
+                            used_bm25 = False
+                            terms_via_index = []
+                            terms_via_fallback = tokens
+                            fallback_note = (scan_mode, tokens, " ".join(terms))
+
                 if not all_results:
-                    # Nenhum resultado nem no índice nem no fallback
+                    # Nenhum resultado nem no índice nem no fallback nem na tokenização
                     text = f"Nenhum resultado para {terms} na coleção '{coll_name}'\n"
-                    text += f"\n💡 Dica: Verifique se os termos estão corretos ou use rlm_execute com Python para busca avançada"
+                    if all_quoted:
+                        text += ("\n(busca exata por aspas — não tokenizei. Remova as aspas "
+                                 "para tentar por tokens.)")
+                    text += ("\n💡 A busca de coleção é LEXICAL (casa palavras/tokens). "
+                             "Passe termos como array — [\"a\",\"b\"] — em vez de frase. "
+                             "Para recall por significado/sinônimo/cross-idioma, use "
+                             "rlm_search_index(var=..., mode=\"hybrid\") por fonte.")
                 else:
                     lines = [f"🔍 Busca em '{coll_name}': {', '.join(terms)}", ""]
+                    # Guard (b): transparência — deixa explícito que NÃO foi a busca exata.
+                    if fallback_note:
+                        _mode, _toks, _orig = fallback_note
+                        lines = format_fallback_banner(_mode, _toks, _orig) + lines
 
                     # Stats de busca híbrida
                     if used_bm25:
@@ -1925,7 +1977,7 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                             end_idx = offset + len(paginated)
                             lines.append(f"  📌 '{term}' ({total_term} ocorrências, mostrando {start_idx}-{end_idx})")
                             for m in paginated:
-                                lines.append(f"      L{m['linha']}: {m['contexto'][:60]}...")
+                                lines.append(f"      L{m['linha']}: {m['contexto'][:snippet_len]}...")
                         lines.append("")
 
                     total_matches = sum(
@@ -1933,6 +1985,11 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                         for results in all_results.values()
                     )
                     lines.append(f"📊 Total: {total_matches} ocorrências em {len(all_results)} documento(s)")
+                    if not fallback_note:
+                        lines.append(
+                            "ℹ️ Busca lexical (tokens). Recall por significado/cross-idioma: "
+                            "rlm_search_index(var=..., mode=\"hybrid\") por fonte."
+                        )
                     text = "\n".join(lines)
 
                 return {"content": [{"type": "text", "text": text}]}
