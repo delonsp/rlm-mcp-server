@@ -70,3 +70,5 @@ tests/*
 !tests/test_search_output.py
 !tests/test_auth_failclosed.py
 !tests/test_tool_registry.py
+!tests/test_vector_index_boilerplate.py
+!tests/__init__.py
