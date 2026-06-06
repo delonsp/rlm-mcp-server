@@ -38,6 +38,24 @@ class RateLimitResult:
     retry_after: Optional[float] = None  # Segundos até poder fazer próxima requisição
 
 
+class RateLimitExceeded(Exception):
+    """Exception raised when a rate limit is exceeded.
+
+    Attributes:
+        limit: Maximum allowed requests in the window
+        window_seconds: Time window in seconds
+        retry_after: Seconds to wait before retrying
+        message: Human-readable error message
+    """
+    def __init__(self, result: RateLimitResult, message: str = None):
+        self.limit = result.limit
+        self.window_seconds = result.window_seconds
+        self.retry_after = result.retry_after or 1
+        self.current_count = result.current_count
+        self.message = message or f"Rate limit exceeded: {result.limit} requests per {result.window_seconds} seconds"
+        super().__init__(self.message)
+
+
 class SlidingWindowRateLimiter:
     """
     Rate limiter usando algoritmo de sliding window.

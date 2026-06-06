@@ -69,3 +69,4 @@ tests/*
 !tests/test_collection_search_line_mapping.py
 !tests/test_search_output.py
 !tests/test_auth_failclosed.py
+!tests/test_tool_registry.py
