@@ -439,10 +439,13 @@ def sec_collection(c: RlmClient, r: Reporter):
             f"citações={n_citations}: {t[:250]}")
 
     # P1 2026-06-06: termo quoted inexistente é filtro OBRIGATÓRIO no fallback
-    # (antes: era dropado e vinham linhas só com os tokens soltos)
+    # tokenizado. CUIDADO na construção: o 2º termo NÃO pode existir como
+    # substring literal (senão o caminho exato casa e o fallback nem dispara —
+    # 'jaspion anoitecer' não é substring de '...jaspion melancolico agg ao
+    # anoitecer', mas os TOKENS casam → fallback ativa → quoted filtra → zero).
     ok, t, _ = c.tool("rlm_collection", {"action": "search", "name": QA_COLLECTION,
-                                         "terms": ['"frase inexistente xyzqa"', "jaspion melancolico"]})
-    r.check("collection", "mixed-quoted: literal inexistente zera o resultado",
+                                         "terms": ['"frase inexistente xyzqa"', "jaspion anoitecer"]})
+    r.check("collection", "mixed-quoted: literal inexistente zera o fallback",
             ok and "Nenhum resultado" in t, t[:250])
 
     ok, t, _ = c.tool("rlm_collection", {"action": "search", "name": "colecao_inexistente_qa",
