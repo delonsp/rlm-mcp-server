@@ -385,11 +385,13 @@ def _format_search_normal(results, terms, require_all, total_results, offset, li
     avail = total_available if total_available else shown_count
     header = f'[search: {terms_str} | {shown_count} shown / {avail} total | next: max_results={max_results},offset={offset}]'
 
+    # Display 1-indexed: matches do TextIndex são 0-indexed internamente; a
+    # conversão +1 acontece SÓ aqui na borda de exibição (fix 2026-06-06).
     if require_all:
         paginated = sorted(results.items())[offset:offset + limit]
         lines = [header, ""]
         for linha, found_terms in paginated:
-            lines.append(f"  Linha {linha}: {found_terms}")
+            lines.append(f"  Linha {linha + 1}: {found_terms}")
         text = "\n".join(lines)
     else:
         lines = [header, ""]
@@ -397,7 +399,7 @@ def _format_search_normal(results, terms, require_all, total_results, offset, li
             total_matches = len(matches)
             lines.append(f"'{term}' ({total_matches}):")
             for m in matches:
-                lines.append(f"  L{m['linha']}: {m['contexto'][:60]}")
+                lines.append(f"  L{m['linha'] + 1}: {m['contexto'][:60]}")
             lines.append("")
         text = "\n".join(lines)
 
@@ -969,17 +971,21 @@ def format_bm25_results(
 
     shown = ranked[:max_results] if max_results else ranked
 
+    # Display 1-indexed: produtores internos (search_bm25) são 0-indexed; a
+    # conversão +1 acontece SÓ aqui na borda de exibição (fix 2026-06-06 —
+    # alinha com as citações de coleção, que já eram 1-indexed via mapping).
     if v == Verbosity.COMPACT:
         parts = [f"kw:{var_name}", f"{len(shown)} hits"]
         for r in shown[:5]:
-            parts.append(f"L{r['line']}({r['score']:.2f})")
+            parts.append(f"L{r['line'] + 1}({r['score']:.2f})")
         return "[" + " | ".join(parts) + "]"
 
     header = f'[search: {terms_str} | keyword/BM25 | {len(shown)} shown | {var_name}]'
     lines = [header, ""]
     for r in shown:
-        le = r.get("line_end", r["line"])
-        lref = f"L{r['line']}" if le == r["line"] else f"L{r['line']}-{le}"
+        ls = r["line"] + 1
+        le = r.get("line_end", r["line"]) + 1
+        lref = f"L{ls}" if le == ls else f"L{ls}-{le}"
         lines.append(f"  {lref} (BM25: {r['score']:.3f})")
         lines.append(f"    {r.get('text', '')[:120]}")
         lines.append("")
@@ -1016,15 +1022,16 @@ def format_hybrid_search(
         stats = search_result.get("stats", {}).get("vector", {})
         header = f'[search: {terms_str} | semantic | {len(results)} shown | {var_name}]'
 
+        # Display 1-indexed (+1 na borda; chunks internos são 0-indexed)
         if v == Verbosity.COMPACT:
             parts = [f"sem:{var_name}", f"mode:{mode}", f"{len(results)} hits"]
             for r in results[:5]:
-                parts.append(f"L{r['line_start']}({r['score']:.2f})")
+                parts.append(f"L{r['line_start'] + 1}({r['score']:.2f})")
             return "[" + " | ".join(parts) + "]"
 
         lines = [header, ""]
         for r in results:
-            lines.append(f"  L{r['line_start']}-{r['line_end']} (score: {r['score']:.3f})")
+            lines.append(f"  L{r['line_start'] + 1}-{r['line_end'] + 1} (score: {r['score']:.3f})")
             lines.append(f"    {r['chunk_text'][:120]}...")
             lines.append("")
         return "\n".join(lines)
@@ -1034,17 +1041,18 @@ def format_hybrid_search(
         results = search_result["hybrid_results"]
         header = f'[search: {terms_str} | hybrid | {len(results)} shown | {var_name}]'
 
+        # Display 1-indexed (+1 na borda; pernas BM25/semantic são 0-indexed)
         if v == Verbosity.COMPACT:
             parts = [f"hybrid:{var_name}", f"{len(results)} hits"]
             for r in results[:5]:
                 src = "+".join(r.get("sources", []))
-                parts.append(f"L{r['line']}({src},{r['rrf_score']:.3f})")
+                parts.append(f"L{r['line'] + 1}({src},{r['rrf_score']:.3f})")
             return "[" + " | ".join(parts) + "]"
 
         lines = [header, ""]
         for r in results:
             src = ", ".join(r.get("sources", []))
-            lines.append(f"  L{r['line']} (RRF: {r['rrf_score']:.4f}, sources: {src})")
+            lines.append(f"  L{r['line'] + 1} (RRF: {r['rrf_score']:.4f}, sources: {src})")
             lines.append(f"    {r['text'][:120]}...")
             lines.append("")
         return "\n".join(lines)

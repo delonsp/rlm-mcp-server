@@ -67,3 +67,4 @@ tests/*
 !tests/test_bm25.py
 !tests/test_collection_builder.py
 !tests/test_collection_search_line_mapping.py
+!tests/test_search_output.py
