@@ -1064,6 +1064,14 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
 
             # Set source on metadata
             result = repl.load_data(name=var_name, data=data, data_type=actual_type)
+            if not result.success:
+                # Sem isto, JSON inválido etc. retornava resposta de SUCESSO
+                # ([var | ? | json]) com a var inexistente — erro mascarado
+                # (achado do harness QA 2026-06-06).
+                return {
+                    "content": [{"type": "text", "text": result.stderr or "Erro ao carregar dados"}],
+                    "isError": True
+                }
             if var_name in repl.variable_metadata:
                 repl.variable_metadata[var_name].source = "load_data"
 
@@ -1136,6 +1144,12 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                         data=data,
                         data_type="text"
                     )
+                    if not result.success:
+                        # PDF extraiu mas a var não coube/carregou — não mascarar
+                        return {
+                            "content": [{"type": "text", "text": result.stderr or "Erro ao carregar dados do PDF"}],
+                            "isError": True
+                        }
                     if var_name in repl.variable_metadata:
                         repl.variable_metadata[var_name].source = "file"
 
