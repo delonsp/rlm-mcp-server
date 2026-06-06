@@ -145,40 +145,73 @@ class EmbeddingService:
         # Truncate individual texts up front (~8000 chars ≈ 2000 tokens)
         truncated = [sanitize_text(t)[:8000] for t in texts]
 
-        # Pack into sub-batches that respect both limits
-        MAX_BATCH = 2048
-        MAX_TOKENS = 250_000
-        sub_batches: list[list[str]] = []
-        cur: list[str] = []
-        cur_tokens = 0
-        for t in truncated:
-            n = max(1, len(t) // 4)  # rough char→token estimate
-            if cur and (len(cur) >= MAX_BATCH or cur_tokens + n > MAX_TOKENS):
-                sub_batches.append(cur)
-                cur, cur_tokens = [], 0
-            cur.append(t)
-            cur_tokens += n
-        if cur:
-            sub_batches.append(cur)
-
         all_embeddings: list[list[float]] = []
-        for batch in sub_batches:
-            try:
-                response = self._client.embeddings.create(
-                    input=batch,
-                    model=self._model,
-                )
-                # Ordena por .index: a API não garante que data venha na ordem
-                # do input, e o resultado é casado posicionalmente com os chunks.
-                for item in sorted(response.data, key=lambda d: d.index):
-                    all_embeddings.append(item.embedding)
-            except Exception as e:
-                # Falha de UM sub-batch não descarta os demais: preenche vazios
-                # só para este batch (mantém alinhamento) e segue. Antes, qualquer
-                # falha jogava fora todos os embeddings já computados.
-                logger.error(f"OpenAI embedding error (batch de {len(batch)}): {e}")
-                all_embeddings.extend([[] for _ in batch])
+        for batch in _pack_batches(truncated):
+            all_embeddings.extend(self._embed_call(batch))
         return all_embeddings
+
+    def _embed_call(self, batch: list[str]) -> list[list[float]]:
+        """Uma chamada à API; se estourar o cap de tokens, divide e re-tenta.
+
+        A estimativa char→token de _pack_batches é heurística — se ainda assim
+        um lote real passar de 300k tokens (conteúdo que tokeniza pior que o
+        previsto), a API devolve 400 max_tokens_per_request. Dividir ao meio e
+        recursar converge para lotes válidos em O(log n) chamadas extras, para
+        QUALQUER razão chars/token (bug 2026-06-06: lotes de 1953 chunks do
+        ReCODE chegavam com 380-409k tokens reais e falhavam TODOS — vars
+        ficavam sem embedding ou com cobertura parcial silenciosa).
+        """
+        try:
+            response = self._client.embeddings.create(
+                input=batch,
+                model=self._model,
+            )
+            # Ordena por .index: a API não garante que data venha na ordem
+            # do input, e o resultado é casado posicionalmente com os chunks.
+            return [item.embedding
+                    for item in sorted(response.data, key=lambda d: d.index)]
+        except Exception as e:
+            msg = str(e)
+            token_cap = ("max_tokens_per_request" in msg
+                         or "maximum request size" in msg)
+            if token_cap and len(batch) > 1:
+                mid = len(batch) // 2
+                logger.warning(
+                    f"Batch de {len(batch)} estourou o cap de tokens da API; "
+                    f"dividindo em {mid}+{len(batch) - mid} e re-tentando"
+                )
+                return self._embed_call(batch[:mid]) + self._embed_call(batch[mid:])
+            # Falha de UM sub-batch não descarta os demais: preenche vazios
+            # só para este batch (mantém alinhamento) e segue. Antes, qualquer
+            # falha jogava fora todos os embeddings já computados.
+            logger.error(f"OpenAI embedding error (batch de {len(batch)}): {e}")
+            return [[] for _ in batch]
+
+
+def _pack_batches(texts: list[str], max_batch: int = 2048,
+                  max_tokens: int = 250_000) -> list[list[str]]:
+    """Agrupa textos em lotes sob os limites da API (contagem E tokens).
+
+    Estimativa char→token: len//2 (2 chars/token). Conservadora de propósito:
+    PT com acentos + termos médicos + resíduo de extração de PDF tokenizam a
+    ~2,4-2,6 chars/token (medido live 2026-06-06) — a estimativa antiga (//4)
+    subdimensionava e o lote real passava de 300k tokens. O custo do
+    conservadorismo é só mais chamadas HTTP; o _embed_call ainda cobre o caso
+    de conteúdo patológico via split-retry.
+    """
+    batches: list[list[str]] = []
+    cur: list[str] = []
+    cur_tokens = 0
+    for t in texts:
+        n = max(1, len(t) // 2)
+        if cur and (len(cur) >= max_batch or cur_tokens + n > max_tokens):
+            batches.append(cur)
+            cur, cur_tokens = [], 0
+        cur.append(t)
+        cur_tokens += n
+    if cur:
+        batches.append(cur)
+    return batches
 
 
 # Singleton

@@ -72,3 +72,4 @@ tests/*
 !tests/test_tool_registry.py
 !tests/test_vector_index_boilerplate.py
 !tests/__init__.py
+!tests/test_embedding_batching.py
