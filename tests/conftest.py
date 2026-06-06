@@ -18,8 +18,9 @@ os.environ.setdefault("RLM_PERSIST_DIR", tempfile.mkdtemp(prefix="rlm-test-persi
 # inprocess evita spawn do forkserver no lifespan (testes de transporte não
 # usam rlm_execute; test_sandbox.py força subprocess no próprio módulo).
 os.environ.setdefault("RLM_SANDBOX_MODE", "inprocess")
-# Auth aberta (open-by-default com API_KEY vazia) e sem chamadas externas.
+# Auth: fail-closed desde 2026-06-06 — testes usam o break-glass explícito.
 os.environ.pop("RLM_API_KEY", None)
+os.environ.setdefault("RLM_ALLOW_ANON", "true")
 os.environ.pop("OPENAI_API_KEY", None)
 os.environ.pop("DEEPSEEK_API_KEY", None)
 for _var in [v for v in os.environ if v.startswith("MINIO_")]:

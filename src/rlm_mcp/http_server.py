@@ -261,8 +261,11 @@ LOG_LEVEL = os.getenv("RLM_LOG_LEVEL", "INFO")
 setup_logging(LOG_FORMAT, LOG_LEVEL)
 logger = logging.getLogger("rlm-http")
 
-# API Key para autenticação
+# API Key para autenticação. FAIL-CLOSED: sem chave o servidor REJEITA tudo
+# (401) — o comportamento antigo (key vazia = aberto pro mundo) era o footgun
+# P0 da avaliação Codex 2026-06-02. Dev/testes sem auth: RLM_ALLOW_ANON=true.
 API_KEY = os.getenv("RLM_API_KEY", "")
+ALLOW_ANON = os.getenv("RLM_ALLOW_ANON", "false").strip().lower() in ("true", "1", "yes")
 MAX_MEMORY_MB = int(os.getenv("RLM_MAX_MEMORY_MB", "1024"))
 CLEANUP_THRESHOLD = float(os.getenv("RLM_CLEANUP_THRESHOLD", "80.0"))  # Quando iniciar limpeza (%)
 CLEANUP_TARGET = float(os.getenv("RLM_CLEANUP_TARGET", "60.0"))  # Até quanto limpar (%)
@@ -401,9 +404,16 @@ def register_sse_session(session_id: str, client_key: str) -> asyncio.Queue:
 # =============================================================================
 
 async def verify_api_key(request: Request):
-    """Verifica API key se configurada"""
+    """Verifica API key. Sem RLM_API_KEY configurada: fail-closed (401),
+    a menos que RLM_ALLOW_ANON=true (break-glass explícito p/ dev)."""
     if not API_KEY:
-        return True
+        if ALLOW_ANON:
+            return True
+        raise HTTPException(
+            status_code=401,
+            detail="Servidor sem RLM_API_KEY (fail-closed). Configure a chave "
+                   "ou, para dev local, RLM_ALLOW_ANON=true.",
+        )
 
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
@@ -430,6 +440,15 @@ async def verify_api_key(request: Request):
 async def lifespan(app: FastAPI):
     """Lifecycle hooks"""
     logger.info(f"RLM MCP Server iniciando (max_memory={MAX_MEMORY_MB}MB)")
+    if not API_KEY:
+        if ALLOW_ANON:
+            logger.warning(
+                "RLM_API_KEY ausente + RLM_ALLOW_ANON=true → servidor SEM "
+                "autenticação (modo dev — NÃO usar em produção)")
+        else:
+            logger.critical(
+                "RLM_API_KEY ausente → FAIL-CLOSED: endpoints autenticados "
+                "responderão 401 até configurar a chave (dev: RLM_ALLOW_ANON=true)")
 
     # Inicializa o forkserver do sandbox ANTES de abrir conexões (SQLite/minio/
     # openai) — assim o template do forkserver não herda FDs sensíveis e os
@@ -1900,6 +1919,7 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                 mapping_var = f"_coll_{coll_name}_mapping"
 
                 all_results = {}
+                bm25_ranked_hits = []  # ordem GLOBAL de relevância (p/ paginação)
                 terms_via_index = []
                 terms_via_fallback = []
                 indexed_terms_count = 0
@@ -1930,6 +1950,13 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                                 continue
                             orig_var, orig_linha = mapped
                             all_results.setdefault(orig_var, {}).setdefault(label, []).append({
+                                'linha': orig_linha,
+                                'contexto': h.get("text", "")[:snippet_len],
+                            })
+                            # Lista plana na ordem do ranking BM25 — a exibição
+                            # pagina por ela (não por bucket var→termo)
+                            bm25_ranked_hits.append({
+                                'var': orig_var,
                                 'linha': orig_linha,
                                 'contexto': h.get("text", "")[:snippet_len],
                             })
@@ -2026,6 +2053,9 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                         and combined_var_name in repl.variables
                         and mapping_var in repl.variables):
                     tok_source = [t for t, q in zip(terms, quoted_flags) if not q]
+                    # Guard (c) mixed: termo QUOTED não é tokenizado E vira
+                    # filtro obrigatório no scan (intenção explícita de exato)
+                    required_literals = [t for t, q in zip(terms, quoted_flags) if q]
                     tokens = tokenize_for_fallback(tok_source)
                     if tokens:
                         scan_results, scan_mode = tokenized_collection_scan(
@@ -2033,13 +2063,15 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                             repl.variables[mapping_var],
                             tokens,
                             snippet_len=snippet_len,
+                            required_literals=required_literals,
                         )
                         if scan_results:
                             all_results = scan_results
                             used_bm25 = False
                             terms_via_index = []
                             terms_via_fallback = tokens
-                            fallback_note = (scan_mode, tokens, " ".join(terms))
+                            fallback_note = (scan_mode, tokens, " ".join(terms),
+                                             required_literals)
 
                 if not all_results:
                     # Nenhum resultado nem no índice nem no fallback nem na tokenização
@@ -2047,6 +2079,10 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                     if all_quoted:
                         text += ("\n(busca exata por aspas — não tokenizei. Remova as aspas "
                                  "para tentar por tokens.)")
+                    elif any(quoted_flags):
+                        text += ("\n(termo entre aspas é filtro EXATO obrigatório — nenhuma "
+                                 "linha satisfez o literal quoted junto com os tokens. "
+                                 "Remova as aspas para busca só por tokens.)")
                     text += ("\n💡 A busca de coleção é LEXICAL (casa palavras/tokens). "
                              "Passe termos como array — [\"a\",\"b\"] — em vez de frase. "
                              "Para recall por significado/sinônimo/cross-idioma, use "
@@ -2055,8 +2091,13 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                     lines = [f"🔍 Busca em '{coll_name}': {', '.join(terms)}", ""]
                     # Guard (b): transparência — deixa explícito que NÃO foi a busca exata.
                     if fallback_note:
-                        _mode, _toks, _orig = fallback_note
-                        lines = format_fallback_banner(_mode, _toks, _orig) + lines
+                        _mode, _toks, _orig, _req = fallback_note
+                        banner = format_fallback_banner(_mode, _toks, _orig)
+                        if _req:
+                            banner.append(
+                                f"   🔒 Filtro exato obrigatório (aspas): {', '.join(_req)}")
+                            banner.append("")
+                        lines = banner + lines
 
                     # Stats de busca híbrida
                     if used_bm25:
@@ -2078,23 +2119,45 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                         lines.append(f"✅ Usando índice combinado ({len(var_names)} vars, {indexed_terms_count} termos)")
                         lines.append("")
 
-                    for var_name, results in all_results.items():
-                        lines.append(f"📄 {var_name}:")
-                        for term, matches in results.items():
-                            total_term = len(matches)
-                            paginated = matches[offset:offset + limit]
-                            start_idx = offset + 1 if paginated else 0
-                            end_idx = offset + len(paginated)
-                            lines.append(f"  📌 '{term}' ({total_term} ocorrências, mostrando {start_idx}-{end_idx})")
-                            for m in paginated:
-                                lines.append(f"      L{m['linha']}: {m['contexto'][:snippet_len]}...")
+                    if used_bm25 and bm25_ranked_hits:
+                        # Paginação GLOBAL na ordem de relevância (P1 Codex
+                        # 2026-06-02): paginar por bucket var→termo descartava
+                        # o ranking — limit=10 mostrava 10 POR var e a página 1
+                        # podia não conter os melhores hits da coleção.
+                        page = bm25_ranked_hits[offset:offset + limit]
+                        total_global = len(bm25_ranked_hits)
+                        start_idx = offset + 1 if page else 0
+                        lines.append(
+                            f"  📌 '{', '.join(terms)}' (mostrando {start_idx}-"
+                            f"{offset + len(page)} de {total_global}, ordem de relevância global)"
+                        )
+                        cur_var = None
+                        for h in page:
+                            if h['var'] != cur_var:
+                                cur_var = h['var']
+                                lines.append(f"📄 {cur_var}:")
+                            lines.append(f"      L{h['linha']}: {h['contexto'][:snippet_len]}...")
                         lines.append("")
+                        n_docs = len({h['var'] for h in bm25_ranked_hits})
+                        lines.append(f"📊 Total: {total_global} ocorrências em {n_docs} documento(s)")
+                    else:
+                        for var_name, results in all_results.items():
+                            lines.append(f"📄 {var_name}:")
+                            for term, matches in results.items():
+                                total_term = len(matches)
+                                paginated = matches[offset:offset + limit]
+                                start_idx = offset + 1 if paginated else 0
+                                end_idx = offset + len(paginated)
+                                lines.append(f"  📌 '{term}' ({total_term} ocorrências, mostrando {start_idx}-{end_idx})")
+                                for m in paginated:
+                                    lines.append(f"      L{m['linha']}: {m['contexto'][:snippet_len]}...")
+                            lines.append("")
 
-                    total_matches = sum(
-                        sum(len(matches) for matches in results.values())
-                        for results in all_results.values()
-                    )
-                    lines.append(f"📊 Total: {total_matches} ocorrências em {len(all_results)} documento(s)")
+                        total_matches = sum(
+                            sum(len(matches) for matches in results.values())
+                            for results in all_results.values()
+                        )
+                        lines.append(f"📊 Total: {total_matches} ocorrências em {len(all_results)} documento(s)")
                     if not fallback_note:
                         lines.append(
                             "ℹ️ Busca lexical (tokens). Recall por significado/cross-idioma: "

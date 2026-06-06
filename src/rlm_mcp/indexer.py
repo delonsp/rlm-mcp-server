@@ -965,6 +965,7 @@ def tokenized_collection_scan(
     tokens: list[str],
     snippet_len: int = 150,
     per_label_cap: int = 200,
+    required_literals: list[str] | None = None,
 ) -> tuple[dict, Optional[str]]:
     """Varredura linha-a-linha do texto combinado da coleção por `tokens`
     (word-boundary + accent-fold). Honra guard (a): AND antes de OR.
@@ -975,6 +976,11 @@ def tokenized_collection_scan(
         tokens: tokens já normalizados (saída de tokenize_for_fallback).
         snippet_len: corte do trecho exibido.
         per_label_cap: teto de ocorrências por label (anti-payload-explosion).
+        required_literals: termos QUOTED do usuário (guard c, caso mixed):
+            filtro OBRIGATÓRIO — só linhas contendo TODOS os literais
+            (substring case-insensitive, sem accent-fold: aspas = exato)
+            entram no resultado. Antes, o termo quoted era silenciosamente
+            dropado do fallback (P1 Codex 2026-06-02).
 
     Returns:
         (all_results, mode) — all_results no shape {var: {label: [{linha, contexto}]}}
@@ -982,6 +988,8 @@ def tokenized_collection_scan(
     """
     if not tokens or not combined_text:
         return {}, None
+
+    req_lower = [r.lower() for r in (required_literals or []) if r]
 
     # Perf: compila os N patterns UMA vez (fora do loop de linhas). O fallback é
     # o caminho lento e o corpus pode ser grande — recompilar por linha×token
@@ -997,6 +1005,10 @@ def tokenized_collection_scan(
     # não casa e cai sempre no OR (mais ruído). O banner avisa; precisão por-idioma
     # ou por-janela fica como evolução futura.
     for idx, raw in enumerate(lines, start=1):
+        if req_lower:
+            raw_lower = raw.lower()
+            if not all(r in raw_lower for r in req_lower):
+                continue
         folded = _fold_accents(raw.lower())
         present = [tok for tok, crx in compiled if crx.search(folded)]
         if not present:

@@ -429,6 +429,22 @@ def sec_collection(c: RlmClient, r: Reporter):
     r.check("collection", "phrase-trap: fallback tokenizado com banner",
             ok and ("fallback" in t.lower() or "tokeniz" in t.lower() or "L5" in t), t[:250])
 
+    # P1 2026-06-06: paginação GLOBAL por relevância — limit=1 mostra 1 hit
+    # NO TOTAL (antes: 1 por bucket var→termo = 2 com jaspion em 2 vars)
+    ok, t, _ = c.tool("rlm_collection", {"action": "search", "name": QA_COLLECTION,
+                                         "terms": ["jaspion"], "limit": 1})
+    n_citations = len(re.findall(r"L\d+:", t))
+    r.check("collection", "ranking global: limit=1 → exatamente 1 citação no total",
+            ok and n_citations == 1 and "relevância global" in t,
+            f"citações={n_citations}: {t[:250]}")
+
+    # P1 2026-06-06: termo quoted inexistente é filtro OBRIGATÓRIO no fallback
+    # (antes: era dropado e vinham linhas só com os tokens soltos)
+    ok, t, _ = c.tool("rlm_collection", {"action": "search", "name": QA_COLLECTION,
+                                         "terms": ['"frase inexistente xyzqa"', "jaspion melancolico"]})
+    r.check("collection", "mixed-quoted: literal inexistente zera o resultado",
+            ok and "Nenhum resultado" in t, t[:250])
+
     ok, t, _ = c.tool("rlm_collection", {"action": "search", "name": "colecao_inexistente_qa",
                                          "terms": ["x"]})
     r.check("collection", "coleção inexistente → erro limpo",
