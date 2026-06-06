@@ -156,3 +156,39 @@ def test_fallback_with_satisfiable_required_literal_keeps_only_matching_lines():
         combined, mapping, ["gama"], required_literals=["alfa beta"])
     linhas = [o["linha"] for label in res.get("v", {}) for o in res["v"][label]]
     assert linhas == [1], f"só a linha com o literal deveria entrar: {res}"
+
+
+def test_collection_delete_removes_association_and_artifacts():
+    """delete (gap fechado 2026-06-06): remove associação + índice combinado;
+    as VARIÁVEIS membras ficam."""
+    from rlm_mcp.indexer import get_index
+    coll = _make_collection()
+    combined_name = f"_coll_{coll}_combined"
+    assert combined_name in hs.repl.variables
+    assert get_index(combined_name) is not None
+
+    res = hs.call_tool("rlm_collection_delete", {"name": coll})
+    assert not res.get("isError"), res
+    assert "removida" in res["content"][0]["text"]
+
+    # artefatos limpos
+    assert combined_name not in hs.repl.variables
+    assert f"_coll_{coll}_mapping" not in hs.repl.variables
+    assert get_index(combined_name) is None
+    # associação sumiu do SQLite
+    assert hs.get_persistence().get_collection_info(coll) is None
+    # vars membras intactas
+    assert "lm_v1" in hs.repl.variables and "lm_v2" in hs.repl.variables
+
+
+def test_collection_delete_nonexistent_clean_error():
+    res = hs.call_tool("rlm_collection_delete", {"name": "coll_fantasma_qa"})
+    assert res.get("isError")
+    assert "não existe" in res["content"][0]["text"]
+
+
+def test_collection_delete_via_router_action():
+    coll = _make_collection()
+    res = hs.call_tool("rlm_collection", {"action": "delete", "name": coll})
+    assert not res.get("isError"), res
+    assert hs.get_persistence().get_collection_info(coll) is None

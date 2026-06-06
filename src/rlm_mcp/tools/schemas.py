@@ -410,6 +410,7 @@ Ações:
 - info: Info de uma coleção. Params: name
 - rebuild: Reconstrói índice. Params: name
 - search: Busca em TODA a coleção de uma vez. Params: name, terms[], limit, offset, snippet_len
+- delete: Remove a coleção (associação + índice combinado; as VARIÁVEIS membras ficam). Params: name
 
 BUSCA (search) — leia antes de usar:
 • É LEXICAL (casa palavras/tokens), NÃO semântica. Não acha sinônimo nem cruza idioma.
@@ -434,7 +435,7 @@ Exemplos:
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["create", "add", "list", "info", "rebuild", "search"],
+                    "enum": ["create", "add", "list", "info", "rebuild", "search", "delete"],
                     "description": "Ação a executar"
                 },
                 "name": {"type": "string", "description": "Nome da coleção (para create/add/info/rebuild/search)"},

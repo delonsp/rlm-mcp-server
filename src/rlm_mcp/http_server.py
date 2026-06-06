@@ -32,8 +32,8 @@ from .s3_client import get_s3_client
 from .pdf_parser import extract_pdf
 from .persistence import get_persistence
 from .indexer import (
-    get_index, set_index, TextIndex, auto_index_if_large, hybrid_search, create_index,
-    tokenize_for_fallback, tokenized_collection_scan,
+    get_index, set_index, clear_index, TextIndex, auto_index_if_large, hybrid_search,
+    create_index, tokenize_for_fallback, tokenized_collection_scan,
     parse_quoted_terms, format_fallback_banner,
 )
 from .rate_limiter import SlidingWindowRateLimiter, RateLimitResult
@@ -967,7 +967,10 @@ Listar e inspecionar:
   rlm_collection(action="info", name="docs")
 
 Se a busca parar de funcionar após atualização:
-  rlm_collection(action="rebuild", name="docs")""",
+  rlm_collection(action="rebuild", name="docs")
+
+Remover a coleção (as variáveis membras ficam):
+  rlm_collection(action="delete", name="docs")""",
 
     "execute": """## REPL Python
 
@@ -1683,6 +1686,9 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
             elif action == "rebuild":
                 name = "rlm_collection_rebuild"
                 arguments = {"name": arguments.get("name", "")}
+            elif action == "delete":
+                name = "rlm_collection_delete"
+                arguments = {"name": arguments.get("name", "")}
             elif action == "search":
                 name = "rlm_search_collection"
                 arguments = {"collection": arguments.get("name", ""), "terms": arguments.get("terms", []), "limit": arguments.get("limit", 10), "offset": arguments.get("offset", 0)}
@@ -1888,6 +1894,42 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                     "content": [
                         {"type": "text", "text": f"Erro ao reconstruir índice: {e}"}
                     ],
+                    "isError": True
+                }
+
+        elif name == "rlm_collection_delete":
+            try:
+                persistence = get_persistence()
+                coll_name = arguments["name"]
+                if not coll_name:
+                    return {"content": [{"type": "text", "text": "Erro: informe o nome da coleção."}],
+                            "isError": True}
+
+                if persistence.get_collection_info(coll_name) is None:
+                    return {"content": [{"type": "text",
+                                         "text": f"Coleção '{coll_name}' não existe."}],
+                            "isError": True}
+
+                if not persistence.delete_collection(coll_name):
+                    return {"content": [{"type": "text",
+                                         "text": f"Erro ao remover a coleção '{coll_name}' (ver logs)."}],
+                            "isError": True}
+
+                # Limpa os artefatos em memória (combinado, mapping e índice) —
+                # as VARIÁVEIS membras ficam intactas (delete remove só a
+                # associação, como o persistence documenta).
+                combined_var_name = f"_coll_{coll_name}_combined"
+                repl.variables.pop(combined_var_name, None)
+                repl.variables.pop(f"_coll_{coll_name}_mapping", None)
+                clear_index(combined_var_name)
+
+                text = (f"🗑️ Coleção '{coll_name}' removida (associação + índice combinado).\n"
+                        f"As variáveis membras NÃO foram apagadas — use rlm_clear para isso.")
+                return {"content": [{"type": "text", "text": text}]}
+
+            except Exception as e:
+                return {
+                    "content": [{"type": "text", "text": f"Erro ao remover coleção: {e}"}],
                     "isError": True
                 }
 

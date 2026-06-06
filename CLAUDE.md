@@ -67,7 +67,7 @@ src/rlm_mcp/
 | | `rlm_save_to_s3` | Salva variável(eis) no S3 |
 | **Busca** | `rlm_search_index` | Keyword/semantic/hybrid (max_results, paginação) |
 | | `rlm_search_code` | Busca estrutural em código (limit/offset/max_source_lines) |
-| **Coleções** | `rlm_collection` | create, add, list, info, rebuild, search |
+| **Coleções** | `rlm_collection` | create, add, list, info, rebuild, search, delete |
 | **PDF/Tasks** | `rlm_process_pdf` | Extrai texto de PDF |
 | | `rlm_task` | Gerencia tasks assíncronas |
 | **Ajuda** | `rlm_help` | Documentação integrada |

@@ -17,8 +17,8 @@ Uso:
     python3 scripts/qa_extensive.py --skip-s3 --quick
 
 Key: --key > env RLM_API_KEY > ~/.claude.json (entry mcpServers.rlm).
-Side effects: vars _qa_* (limpas no fim) + coleção fixa 'qa_harness' (fica —
-a API MCP não expõe delete de coleção; ver achado no relatório).
+Side effects: vars _qa_* e coleção 'qa_harness' — ambas removidas no cleanup
+(delete de coleção exposto na API desde 2026-06-06).
 Exit code = nº de FAILs.
 """
 import argparse
@@ -457,12 +457,9 @@ def sec_collection(c: RlmClient, r: Reporter):
                                          "vars": ["var_fantasma_qa"]})
     r.check("collection", "add de var inexistente → erro limpo", not ok or "não" in t, t[:150])
 
-    ok, t, _ = c.tool("rlm_collection", {"action": "delete", "name": QA_COLLECTION})
-    if ok:
-        r.add("collection", "delete de coleção via API", PASS, "")
-    else:
-        r.add("collection", "delete de coleção NÃO exposto na API MCP", KNOWN,
-              "persistence.delete_collection existe mas o router só expõe create/add/list/info/rebuild/search — coleção qa_harness acumula")
+    ok, t, _ = c.tool("rlm_collection", {"action": "delete", "name": "coll_fantasma_qa"})
+    r.check("collection", "delete de coleção inexistente → erro limpo",
+            (not ok) and ("não existe" in t or "nao existe" in t.lower()), t[:120])
 
 
 def sec_concurrency(c: RlmClient, r: Reporter):
@@ -539,7 +536,12 @@ def sec_s3_tasks_help(c: RlmClient, r: Reporter, skip_s3: bool):
 
 
 def sec_cleanup(c: RlmClient, r: Reporter):
-    print("\n[cleanup] Remoção das vars _qa_*")
+    print("\n[cleanup] Remoção das vars _qa_* e da coleção do harness")
+    # delete da coleção (gap fechado 2026-06-06): cada run nasce limpo
+    ok, t, _ = c.tool("rlm_collection", {"action": "delete", "name": QA_COLLECTION})
+    r.check("cleanup", f"coleção '{QA_COLLECTION}' removida via API",
+            ok and "removida" in t, t[:150])
+
     ok, t, _ = c.tool("rlm_list_vars", {"limit": 500})
     qa_vars = re.findall(rf"({re.escape(QA_PREFIX)}\w+)", t) if ok else []
     removed, failed = 0, []
