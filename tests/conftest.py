@@ -54,3 +54,9 @@ def _isolate_module_state():
     vector_index = sys.modules.get("rlm_mcp.vector_index")
     if vector_index is not None:
         vector_index.clear_all_vector_indices()
+    # Singleton de persistência: reset força reabrir o SQLite do tmpdir no
+    # próximo get_persistence() (o ARQUIVO persiste na sessão — testes que
+    # criam coleções devem usar nomes únicos).
+    persistence_mod = sys.modules.get("rlm_mcp.persistence")
+    if persistence_mod is not None:
+        persistence_mod._persistence = None

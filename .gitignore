@@ -64,3 +64,6 @@ tests/*
 !tests/test_mcp_notifications.py
 !tests/test_sse_transport_contract.py
 !tests/test_sse_session_registry.py
+!tests/test_bm25.py
+!tests/test_collection_builder.py
+!tests/test_collection_search_line_mapping.py

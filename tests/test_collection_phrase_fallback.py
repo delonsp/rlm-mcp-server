@@ -136,6 +136,18 @@ def test_fallback_banner_or_mode_wording():
     assert "(OR)" in blob and "qualquer um" in blob
 
 
+def test_tokenized_scan_mapping_is_one_indexed_adversarial_first_line():
+    """Adversarial do P0 line-mapping: termo na PRIMEIRA linha do combinado.
+    Se o scan fosse 0-indexed (ou o mapping), o lookup da linha 1 falharia e
+    o hit sumiria — ou citaria a linha errada."""
+    combined = "alvo na primeira linha\nsegunda linha"
+    var_mapping = {1: ("v", 1), 2: ("v", 2)}
+    results, mode = tokenized_collection_scan(combined, var_mapping, ["alvo"])
+    assert results, "hit da linha 1 dropado (convenção 0-vs-1 quebrada)"
+    ocorrencias = results["v"][list(results["v"].keys())[0]]
+    assert ocorrencias[0]["linha"] == 1
+
+
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))

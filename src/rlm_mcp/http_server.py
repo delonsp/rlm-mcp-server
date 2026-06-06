@@ -37,6 +37,7 @@ from .indexer import (
     parse_quoted_terms, format_fallback_banner,
 )
 from .rate_limiter import SlidingWindowRateLimiter, RateLimitResult
+from .collection_builder import build_collection_combined
 from .tools.schemas import TOOL_SCHEMAS
 from .services.s3_guard import require_s3_configured
 from .services.persistence_service import persist_and_index, ensure_embeddings
@@ -505,26 +506,11 @@ async def lifespan(app: FastAPI):
                     if not all_vars:
                         continue
 
-                    combined_parts = []
-                    var_mapping = {}
-                    current_line = 1
+                    combined_text, var_mapping, _ = build_collection_combined(
+                        all_vars, repl.variables
+                    )
 
-                    for vname in all_vars:
-                        if vname in repl.variables:
-                            val = repl.variables[vname]
-                            if isinstance(val, str):
-                                header = f"\n{'='*60}\n=== VARIÁVEL: {vname} ===\n{'='*60}\n"
-                                combined_parts.append(header)
-                                header_lines = header.count('\n')
-                                current_line += header_lines
-                                content_lines = val.split('\n')
-                                for i, _ in enumerate(content_lines):
-                                    var_mapping[current_line + i] = (vname, i + 1)
-                                combined_parts.append(val)
-                                current_line += len(content_lines)
-
-                    if combined_parts:
-                        combined_text = "\n".join(combined_parts)
+                    if combined_text:
                         combined_var_name = f"_coll_{coll_name}_combined"
                         repl.variables[combined_var_name] = combined_text
                         combined_index = create_index(combined_text, combined_var_name)
@@ -1735,33 +1721,12 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                 # Obter TODAS as variáveis da coleção (não só as novas)
                 all_vars = persistence.get_collection_vars(coll_name)
 
-                # Concatenar todas as variáveis com separadores claros
-                combined_parts = []
-                var_mapping = {}  # Mapeia linha -> (var_name, linha_original)
-                current_line = 1
+                # Texto combinado + mapping via builder único (line-mapping P0)
+                combined_text, var_mapping, _ = build_collection_combined(
+                    all_vars, repl.variables
+                )
 
-                for var_name in all_vars:
-                    if var_name in repl.variables:
-                        value = repl.variables[var_name]
-                        if isinstance(value, str):
-                            # Adicionar header identificador
-                            header = f"\n{'='*60}\n=== VARIÁVEL: {var_name} ===\n{'='*60}\n"
-                            combined_parts.append(header)
-
-                            # Registrar mapeamento de linhas
-                            header_lines = header.count('\n')
-                            current_line += header_lines
-
-                            # Adicionar conteúdo e mapear linhas
-                            content_lines = value.split('\n')
-                            for i, _ in enumerate(content_lines):
-                                var_mapping[current_line + i] = (var_name, i + 1)
-
-                            combined_parts.append(value)
-                            current_line += len(content_lines)
-
-                if combined_parts:
-                    combined_text = "\n".join(combined_parts)
+                if combined_text:
                     combined_var_name = f"_coll_{coll_name}_combined"
 
                     # Salvar variável combinada no REPL
@@ -1778,7 +1743,7 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                 text = f"✅ {added} variável(is) adicionada(s) à coleção '{coll_name}'"
                 text += f"\nVariáveis: {', '.join(var_names)}"
 
-                if combined_parts:
+                if combined_text:
                     text += f"\n\n🔍 Índice combinado atualizado: {len(combined_text):,} chars indexados"
                     text += f"\n   Variáveis no índice: {len(all_vars)}"
 
@@ -1848,34 +1813,12 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                         "isError": True
                     }
 
-                # Concatenar todas as variáveis com separadores claros
-                combined_parts = []
-                var_mapping = {}  # Mapeia linha -> (var_name, linha_original)
-                current_line = 1
-                vars_included = 0
+                # Texto combinado + mapping via builder único (line-mapping P0)
+                combined_text, var_mapping, vars_included = build_collection_combined(
+                    all_vars, repl.variables
+                )
 
-                for var_name in all_vars:
-                    if var_name in repl.variables:
-                        value = repl.variables[var_name]
-                        if isinstance(value, str):
-                            # Adicionar header identificador
-                            header = f"\n{'='*60}\n=== VARIÁVEL: {var_name} ===\n{'='*60}\n"
-                            combined_parts.append(header)
-
-                            # Registrar mapeamento de linhas
-                            header_lines = header.count('\n')
-                            current_line += header_lines
-
-                            # Adicionar conteúdo e mapear linhas
-                            content_lines = value.split('\n')
-                            for i, _ in enumerate(content_lines):
-                                var_mapping[current_line + i] = (var_name, i + 1)
-
-                            combined_parts.append(value)
-                            current_line += len(content_lines)
-                            vars_included += 1
-
-                if not combined_parts:
+                if not combined_text:
                     return {
                         "content": [
                             {"type": "text", "text": f"Nenhuma variável de texto encontrada na coleção '{coll_name}'."}
@@ -1883,7 +1826,6 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                         "isError": True
                     }
 
-                combined_text = "\n".join(combined_parts)
                 combined_var_name = f"_coll_{coll_name}_combined"
 
                 # Salvar variável combinada no REPL
@@ -1998,7 +1940,10 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
                         if results:
                             for term, matches in results.items():
                                 for m in matches:
-                                    linha_combined = m['linha']
+                                    # Matches do TextIndex são 0-indexed
+                                    # (create_index/_live_scan_term); var_mapping
+                                    # é 1-indexed → +1 (era o "bug 0-vs-1").
+                                    linha_combined = m['linha'] + 1
                                     if linha_combined in var_mapping:
                                         orig_var, orig_linha = var_mapping[linha_combined]
                                         if orig_var not in all_results:
