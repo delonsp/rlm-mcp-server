@@ -24,6 +24,7 @@ from fastapi import FastAPI, Request, Response, HTTPException, Depends
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 import uvicorn
 
 from .repl import SafeREPL, ExecutionResult, INTERNAL_FUNCTION_NAMES, VariableInfo
@@ -45,7 +46,7 @@ from . import code_parser
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from threading import Lock
+from threading import Lock, RLock
 
 
 @dataclass
@@ -302,8 +303,96 @@ repl = SafeREPL(
 # Task manager para operações assíncronas
 task_manager = TaskManager(max_concurrent=MAX_CONCURRENT_TASKS)
 
+# =============================================================================
+# Sessões SSE
+# =============================================================================
+# INVARIANTE: sse_sessions (e as queues dentro dele) só são tocados no event
+# loop — nunca de threads (asyncio.Queue/dict não são thread-safe p/ isto).
+# O dispatcher MCP roda em threadpool, mas roteamento/put ficam nos endpoints.
+
+SSE_SESSIONS_PER_CLIENT = int(os.getenv("RLM_SSE_SESSIONS_PER_CLIENT", "8"))
+SSE_SESSION_MAX = int(os.getenv("RLM_SSE_SESSION_MAX", "256"))
+SSE_SESSION_TTL_SECONDS = int(os.getenv("RLM_SSE_SESSION_TTL_SECONDS", str(24 * 3600)))
+
+# Sentinela de eviction: object() checado POR IDENTIDADE no generator, antes
+# do json.dumps. Nunca trocar por valor serializável (None/str/dict) — passaria
+# no dumps e o cliente receberia um frame SSE inválido (fail-open).
+_SSE_EVICTION_SENTINEL = object()
+
+
+@dataclass
+class SseSession:
+    """Sessão SSE viva: fila de respostas + metadados p/ caps/TTL."""
+    queue: asyncio.Queue
+    client_key: str
+    created_at: float = field(default_factory=time.time)
+    last_seen: float = field(default_factory=time.time)
+
+
 # Sessões SSE ativas
-sse_sessions: dict[str, asyncio.Queue] = {}
+sse_sessions: dict[str, SseSession] = {}
+
+
+def get_client_key(request: Request) -> str:
+    """Identifica o cliente p/ caps e rate limit.
+
+    Atrás do Traefik, request.client.host é o IP do PROXY — o IP real do
+    cliente vem no X-Forwarded-For. Usamos o ÚLTIMO hop (anexado pelo
+    Traefik = IP que conectou nele), não o primeiro: o primeiro é o valor
+    que o PRÓPRIO cliente pode ter enviado (forjável → dodge dos caps).
+    """
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        return xff.split(",")[-1].strip()
+    return request.client.host if request.client else "anonymous"
+
+
+def _evict_sse_session(session_id: str, reason: str) -> None:
+    """Remove a sessão do registry e sinaliza o generator p/ encerrar.
+
+    Eviction é cooperativa: o sentinel acorda o queue.get(); se o generator
+    estiver suspenso no yield (cliente com backpressure TCP), a conexão linga
+    até o cliente ler ou o proxy derrubar — mas a entrada já saiu do dict,
+    então caps/TTL continuam corretos. SÓ rodar no event loop.
+    """
+    entry = sse_sessions.pop(session_id, None)
+    if entry is None:
+        return
+    entry.queue.put_nowait(_SSE_EVICTION_SENTINEL)
+    sse_rate_limiter.reset(session_id)
+    logger.info(f"Sessão SSE evictada ({reason}): {session_id} client={entry.client_key}")
+
+
+def register_sse_session(session_id: str, client_key: str) -> asyncio.Queue:
+    """Registra sessão nova aplicando TTL + cap por cliente + cap global.
+
+    Política: cap POR CLIENTE com evict-oldest intra-cliente — um cliente em
+    reconnect-loop (burst real observado: 12 sessões/s) expulsa as PRÓPRIAS
+    sessões velhas, sem churn nas sessões legítimas de outros clientes.
+    O cap global é só backstop agregado.
+    """
+    now = time.time()
+
+    # TTL sweep oportunista (zumbi lento; a morte normal de sessão é o
+    # finally do generator no disconnect, não isto)
+    for sid in [s for s, e in sse_sessions.items()
+                if now - e.last_seen > SSE_SESSION_TTL_SECONDS]:
+        _evict_sse_session(sid, "ttl")
+
+    own = sorted(
+        (sid for sid, e in sse_sessions.items() if e.client_key == client_key),
+        key=lambda sid: sse_sessions[sid].created_at,
+    )
+    while len(own) >= SSE_SESSIONS_PER_CLIENT:
+        _evict_sse_session(own.pop(0), "per-client-cap")
+
+    if sse_sessions and len(sse_sessions) >= SSE_SESSION_MAX:
+        oldest = min(sse_sessions, key=lambda sid: sse_sessions[sid].created_at)
+        _evict_sse_session(oldest, "global-cap")
+
+    queue: asyncio.Queue = asyncio.Queue()
+    sse_sessions[session_id] = SseSession(queue=queue, client_key=client_key)
+    return queue
 
 
 # =============================================================================
@@ -477,6 +566,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Origins aceitas na validação anti DNS-rebinding (MUST da spec MCP
+# Streamable HTTP). CORS protege browsers bem-comportados; este check
+# protege contra rebinding (Origin presente mas hostname forjado).
+ALLOWED_ORIGINS = set(CORS_ORIGINS) | {"https://rlm.drsolution.online"}
+
+
+async def verify_origin(request: Request):
+    """Rejeita Origin desconhecida (anti DNS-rebinding, MUST da spec MCP).
+
+    Clientes não-browser (Claude Code CLI, curl) não enviam Origin → passam.
+    """
+    origin = request.headers.get("origin", "")
+    if origin and origin not in ALLOWED_ORIGINS:
+        raise HTTPException(status_code=403, detail="Origin not allowed")
+    return True
+
 
 # =============================================================================
 # Models
@@ -500,8 +605,34 @@ class MCPResponse(BaseModel):
 # MCP Protocol Implementation
 # =============================================================================
 
-def handle_mcp_request(request: MCPRequest, client_id: str | None = None) -> MCPResponse:
+# Versões de protocolo que este servidor sabe servir. A spec manda ecoar a
+# versão pedida QUANDO suportada; responder uma diferente faz clientes
+# Streamable HTTP tratarem como negociação p/ baixo (ok, mas evitável).
+SUPPORTED_PROTOCOL_VERSIONS = ("2024-11-05", "2025-03-26", "2025-06-18")
+
+# Lock global serializando o dispatcher MCP quando roda no threadpool.
+# NOTA HONESTA: preserva a serialização de fato que existia quando o handler
+# bloqueava o event loop — NÃO é serialização total: as worker threads do
+# task_manager mutam repl.variables/índices por FORA deste lock (pré-existente;
+# mitigado pontualmente com _execute_lock no load_data e lock no rate limiter).
+_mcp_dispatch_lock = RLock()
+
+
+def handle_mcp_request_locked(request: "MCPRequest", client_id: str | None = None) -> "MCPResponse | None":
+    """Wrapper p/ run_in_threadpool: serializa o dispatch fora do event loop.
+
+    Tools lentas (rlm_execute até RLM_EXECUTE_TIMEOUT=60s) ficam serializadas
+    entre si (como sempre foram), mas /health, pings SSE e respostas 429
+    continuam vivos no event loop.
+    """
+    with _mcp_dispatch_lock:
+        return handle_mcp_request(request, client_id=client_id)
+
+
+def handle_mcp_request(request: MCPRequest, client_id: str | None = None) -> MCPResponse | None:
     """Processa uma requisição MCP.
+
+    Retorna None para notificações JSON-RPC (que não recebem resposta).
 
     Args:
         request: Requisição MCP
@@ -512,10 +643,15 @@ def handle_mcp_request(request: MCPRequest, client_id: str | None = None) -> MCP
         params = request.params or {}
 
         if method == "initialize":
+            requested_version = params.get("protocolVersion", "2024-11-05")
             return MCPResponse(
                 id=request.id,
                 result={
-                    "protocolVersion": "2024-11-05",
+                    "protocolVersion": (
+                        requested_version
+                        if requested_version in SUPPORTED_PROTOCOL_VERSIONS
+                        else "2024-11-05"
+                    ),
                     "capabilities": {
                         "tools": {"listChanged": False},
                         "resources": {"listChanged": False},
@@ -529,6 +665,21 @@ def handle_mcp_request(request: MCPRequest, client_id: str | None = None) -> MCP
 
         elif method == "notifications/initialized":
             # Notificação, não precisa de resposta
+            return None
+
+        elif method.startswith("notifications/"):
+            # JSON-RPC: notificações NUNCA recebem resposta — nem de erro.
+            # (Responder "Method not found" a notifications/cancelled era
+            # violação de protocolo — incidente 2026-06-06.) Cancelamento
+            # efetivo de tool em andamento é opcional pela spec (MAY ignore);
+            # aqui é no-op aceito, só logado.
+            if method == "notifications/cancelled":
+                logger.info(
+                    f"MCP notification: {method} "
+                    f"requestId={params.get('requestId')} reason={params.get('reason')!r}"
+                )
+            else:
+                logger.info(f"MCP notification ignorada (no-op): {method}")
             return None
 
         elif method == "tools/list":
@@ -2530,16 +2681,40 @@ async def metrics_endpoint():
 
 
 @app.get("/sse")
-async def sse_endpoint(request: Request, _: bool = Depends(verify_api_key)):
+async def sse_endpoint(
+    request: Request,
+    _: bool = Depends(verify_api_key),
+    __: bool = Depends(verify_origin),
+):
     """
     SSE endpoint para MCP.
     O cliente se conecta aqui para receber eventos do servidor.
     """
-    session_id = str(uuid.uuid4())
-    queue: asyncio.Queue = asyncio.Queue()
-    sse_sessions[session_id] = queue
+    client_key = get_client_key(request)
 
-    logger.info(f"Nova sessão SSE: {session_id}")
+    # Rate limit no próprio connect: um cliente em reconnect-loop (burst real
+    # observado: 12 sessões/s) é barrado aqui, não só contido pelos caps.
+    rate_result = sse_rate_limiter.check_and_record(f"sse-connect:{client_key}")
+    if not rate_result.allowed:
+        metrics_collector.record_rate_limit_rejection()
+        logger.warning(
+            f"Rate limit no /sse connect: client={client_key} "
+            f"{rate_result.current_count}/{rate_result.limit}"
+        )
+        return JSONResponse(
+            {
+                "error": "Too Many Requests",
+                "message": f"Rate limit exceeded: {rate_result.limit} connections per {rate_result.window_seconds} seconds",
+                "retry_after": rate_result.retry_after,
+            },
+            status_code=429,
+            headers={"Retry-After": str(int(rate_result.retry_after or 1))},
+        )
+
+    session_id = str(uuid.uuid4())
+    queue = register_sse_session(session_id, client_key)
+
+    logger.info(f"Nova sessão SSE: {session_id} client={client_key}")
 
     async def event_generator():
         """
@@ -2562,6 +2737,12 @@ async def sse_endpoint(request: Request, _: bool = Depends(verify_api_key)):
                 try:
                     # Aguarda mensagens na fila (com timeout para manter conexão viva)
                     message = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    if message is _SSE_EVICTION_SENTINEL:
+                        # Evictado (TTL/cap): encerra o stream limpo. Checagem
+                        # por IDENTIDADE antes do json.dumps (fail-closed:
+                        # mesmo sem este if, dumps(object()) levantaria
+                        # TypeError → finally → sem frame inválido no fio).
+                        break
                     yield f"event: message\ndata: {json.dumps(message)}\n\n"
                 except asyncio.TimeoutError:
                     # Envia ping para manter conexão
@@ -2569,6 +2750,7 @@ async def sse_endpoint(request: Request, _: bool = Depends(verify_api_key)):
                 except asyncio.CancelledError:
                     break
         finally:
+            # Idempotente com eviction externa (pop com default + reset guardado)
             sse_sessions.pop(session_id, None)
             sse_rate_limiter.reset(session_id)  # Clean up rate limiter state
             logger.info(f"Sessão SSE encerrada: {session_id}")
@@ -2588,12 +2770,14 @@ async def sse_endpoint(request: Request, _: bool = Depends(verify_api_key)):
 async def message_endpoint(
     request: Request,
     session_id: str = None,
-    _: bool = Depends(verify_api_key)
+    _: bool = Depends(verify_api_key),
+    __: bool = Depends(verify_origin),
 ):
     """
     Endpoint para enviar mensagens MCP.
-    Se session_id for fornecido, resposta vai via SSE.
-    Caso contrário, resposta direta no POST.
+    - session_id conhecido → executa e responde via fila SSE (202).
+    - session_id fornecido mas DESCONHECIDO → 404 imediato, sem executar.
+    - session_id ausente → request/response direto no body (200).
 
     Rate limiting: 100 requests/minute per SSE session.
     """
@@ -2601,10 +2785,27 @@ async def message_endpoint(
     start_time = time.time()
     is_error = False
 
-    logger.info(f"Processing /message request", extra={"request_id": request_id, "session_id": session_id})
+    # P0 (incidente 2026-06-06): session_id stale (sobreviveu a restart do
+    # servidor ou eviction) → 404 ANTES de parse/execução. O fallback antigo
+    # (executar e responder no body) era invisível pro cliente SSE — que por
+    # spec só lê respostas do stream — e virava "hang" de 37min. O SDK
+    # cliente faz fail-fast no POST !ok (throw imediato) e reconecta.
+    if session_id is not None and session_id not in sse_sessions:
+        latency_ms = (time.time() - start_time) * 1000
+        metrics_collector.record_request("/message", latency_ms, is_error=True)
+        logger.warning(
+            f"/message com session_id desconhecido (stale): {session_id} — 404",
+            extra={"request_id": request_id, "session_id": session_id},
+        )
+        return JSONResponse(
+            {"error": "SSE session not found", "request_id": request_id},
+            status_code=404,
+            headers={"X-Request-Id": request_id},
+        )
 
     # Rate limiting for SSE sessions
     if session_id and session_id in sse_sessions:
+        sse_sessions[session_id].last_seen = time.time()
         rate_result = sse_rate_limiter.check_and_record(session_id)
         if not rate_result.allowed:
             logger.warning(f"Rate limit exceeded for session {session_id}: {rate_result.current_count}/{rate_result.limit}", extra={"request_id": request_id})
@@ -2626,17 +2827,35 @@ async def message_endpoint(
         body = await request.json()
         mcp_request = MCPRequest(**body)
 
-        logger.debug(f"MCP method: {mcp_request.method}", extra={"request_id": request_id})
+        # INFO com método/tool NA MENSAGEM: o formatter text (default) ignora
+        # extra= — só o modo json o exibe. Sem isto, incidente fica cego
+        # (não dava pra saber QUAL tool foi chamada nos logs de 2026-06-06).
+        tool_name = (
+            (mcp_request.params or {}).get("name")
+            if mcp_request.method == "tools/call" else None
+        )
+        req_desc = f"method={mcp_request.method}" + (f" tool={tool_name}" if tool_name else "")
+        logger.info(
+            f"MCP request: {req_desc} transport={'sse' if session_id else 'direct'}",
+            extra={"request_id": request_id, "session_id": session_id,
+                   "mcp_method": mcp_request.method, "tool_name": tool_name},
+        )
 
         # Use session_id as client_id for rate limiting, fallback to client IP
-        client_id = session_id if session_id else request.client.host if request.client else "anonymous"
-        response = handle_mcp_request(mcp_request, client_id=client_id)
+        client_id = session_id if session_id else get_client_key(request)
+        # Dispatcher roda FORA do event loop (threadpool): /health, pings SSE
+        # e 429 continuam respondendo durante tools lentas (execute até 60s).
+        response = await run_in_threadpool(handle_mcp_request_locked, mcp_request, client_id)
+
+        latency_ms = (time.time() - start_time) * 1000
 
         if response is None:
             # Notificação, não precisa responder
-            latency_ms = (time.time() - start_time) * 1000
             metrics_collector.record_request("/message", latency_ms, is_error=False)
-            logger.debug(f"Notification processed", extra={"request_id": request_id, "latency_ms": latency_ms})
+            logger.info(
+                f"MCP notification aceita: {req_desc} latency_ms={latency_ms:.1f}",
+                extra={"request_id": request_id, "latency_ms": latency_ms},
+            )
             return Response(status_code=202, headers={"X-Request-Id": request_id})
 
         response_dict = response.model_dump(exclude_none=True)
@@ -2646,18 +2865,33 @@ async def message_endpoint(
             is_error = True
             logger.warning(f"MCP error response: {response.error}", extra={"request_id": request_id})
 
-        # Se tem sessão SSE, envia por lá
-        if session_id and session_id in sse_sessions:
-            await sse_sessions[session_id].put(response_dict)
-            latency_ms = (time.time() - start_time) * 1000
-            metrics_collector.record_request("/message", latency_ms, is_error=is_error)
-            logger.debug(f"Response sent via SSE", extra={"request_id": request_id, "latency_ms": latency_ms})
-            return Response(status_code=202, headers={"X-Request-Id": request_id})
+        # Se tem sessão SSE viva, envia por lá. get() + put_nowait ADJACENTES
+        # (sem await entre eles → janela de race zero no event loop).
+        if session_id is not None:
+            entry = sse_sessions.get(session_id)
+            if entry is not None:
+                entry.queue.put_nowait(response_dict)
+                entry.last_seen = time.time()
+                metrics_collector.record_request("/message", latency_ms, is_error=is_error)
+                logger.info(
+                    f"MCP done: {req_desc} via=sse latency_ms={latency_ms:.1f} error={is_error}",
+                    extra={"request_id": request_id, "latency_ms": latency_ms},
+                )
+                return Response(status_code=202, headers={"X-Request-Id": request_id})
+            # Sessão evictada DURANTE o tool call (janela do threadpool):
+            # fall-through pra resposta no body — não descartar resultado já
+            # computado (404 aqui jogaria fora um execute de até 60s).
+            logger.warning(
+                f"Sessão SSE {session_id} evictada durante o request; respondendo no body",
+                extra={"request_id": request_id, "session_id": session_id},
+            )
 
         # Senão, responde diretamente
-        latency_ms = (time.time() - start_time) * 1000
         metrics_collector.record_request("/message", latency_ms, is_error=is_error)
-        logger.debug(f"Response sent directly", extra={"request_id": request_id, "latency_ms": latency_ms})
+        logger.info(
+            f"MCP done: {req_desc} via=direct latency_ms={latency_ms:.1f} error={is_error}",
+            extra={"request_id": request_id, "latency_ms": latency_ms},
+        )
         return JSONResponse(response_dict, headers={"X-Request-Id": request_id})
 
     except RateLimitExceeded as e:
@@ -2690,20 +2924,26 @@ async def message_endpoint(
 @app.post("/mcp")
 async def mcp_direct_endpoint(
     request: Request,
-    _: bool = Depends(verify_api_key)
+    _: bool = Depends(verify_api_key),
+    __: bool = Depends(verify_origin),
 ):
     """
-    Endpoint direto para MCP (sem SSE).
-    Útil para clientes que preferem request/response simples.
+    Endpoint direto para MCP (sem SSE) — compatível com o fluxo básico do
+    transporte Streamable HTTP (POST JSON-RPC → JSON; notificação → 202;
+    GET/DELETE → 405 automático do framework, permitido pela spec; servidor
+    stateless sem Mcp-Session-Id, permitido).
+
+    ATENÇÃO: NUNCA retornar 404 neste endpoint — no Streamable HTTP, 404 tem
+    semântica reservada de "sessão expirou, re-inicialize" e colocaria
+    clientes compliant em loop de re-initialize.
     """
     request_id = generate_request_id()
     start_time = time.time()
     is_error = False
 
-    logger.info(f"Processing /mcp request", extra={"request_id": request_id})
-
-    # Rate limiting by client IP
-    client_id = request.client.host if request.client else "anonymous"
+    # Rate limiting por cliente (X-Forwarded-For: atrás do Traefik o
+    # request.client.host é o IP do proxy — todos os clientes colidiam)
+    client_id = get_client_key(request)
     rate_result = sse_rate_limiter.check_and_record(client_id)
     if not rate_result.allowed:
         logger.warning(f"Rate limit exceeded for {client_id}: {rate_result.current_count}/{rate_result.limit}", extra={"request_id": request_id})
@@ -2725,14 +2965,28 @@ async def mcp_direct_endpoint(
         body = await request.json()
         mcp_request = MCPRequest(**body)
 
-        logger.debug(f"MCP method: {mcp_request.method}", extra={"request_id": request_id})
+        tool_name = (
+            (mcp_request.params or {}).get("name")
+            if mcp_request.method == "tools/call" else None
+        )
+        req_desc = f"method={mcp_request.method}" + (f" tool={tool_name}" if tool_name else "")
+        logger.info(
+            f"MCP request: {req_desc} transport=http",
+            extra={"request_id": request_id, "mcp_method": mcp_request.method,
+                   "tool_name": tool_name},
+        )
 
-        response = handle_mcp_request(mcp_request, client_id=client_id)
+        # Dispatcher fora do event loop (mesma razão do /message)
+        response = await run_in_threadpool(handle_mcp_request_locked, mcp_request, client_id)
+
+        latency_ms = (time.time() - start_time) * 1000
 
         if response is None:
-            latency_ms = (time.time() - start_time) * 1000
             metrics_collector.record_request("/mcp", latency_ms, is_error=False)
-            logger.debug(f"Notification processed", extra={"request_id": request_id, "latency_ms": latency_ms})
+            logger.info(
+                f"MCP notification aceita: {req_desc} latency_ms={latency_ms:.1f}",
+                extra={"request_id": request_id, "latency_ms": latency_ms},
+            )
             return Response(status_code=202, headers={"X-Request-Id": request_id})
 
         # Check if response has error
@@ -2740,9 +2994,11 @@ async def mcp_direct_endpoint(
             is_error = True
             logger.warning(f"MCP error response: {response.error}", extra={"request_id": request_id})
 
-        latency_ms = (time.time() - start_time) * 1000
         metrics_collector.record_request("/mcp", latency_ms, is_error=is_error)
-        logger.debug(f"Response sent", extra={"request_id": request_id, "latency_ms": latency_ms})
+        logger.info(
+            f"MCP done: {req_desc} via=http latency_ms={latency_ms:.1f} error={is_error}",
+            extra={"request_id": request_id, "latency_ms": latency_ms},
+        )
         return JSONResponse(response.model_dump(exclude_none=True), headers={"X-Request-Id": request_id})
 
     except RateLimitExceeded as e:

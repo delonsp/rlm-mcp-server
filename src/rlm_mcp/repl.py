@@ -677,7 +677,12 @@ class SafeREPL:
         success = True
 
         # Set up timeout using signal (Unix only, main thread only)
-        # signal.signal only works in the main thread, so we check before using it
+        # signal.signal only works in the main thread, so we check before using it.
+        # CAVEAT (modo inprocess, break-glass): o dispatcher MCP roda em
+        # threadpool desde o fix do incidente 2026-06-06 — NUNCA é main thread,
+        # então use_timeout=False e o exec roda SEM limite de tempo. O default
+        # (RLM_SANDBOX_MODE=subprocess) não é afetado: o timeout lá é deadline
+        # no pai + killpg (sandbox_worker), independente de thread/signal.
         import threading
         is_main_thread = threading.current_thread() is threading.main_thread()
         use_timeout = timeout_seconds > 0 and is_main_thread
@@ -812,25 +817,32 @@ class SafeREPL:
                     execution_time_ms=0,
                 )
 
-            self.variables[name] = value
-            now = datetime.now()
-            existing = self.variable_metadata.get(name)
+            # Mutação de variables/metadata sob _execute_lock: load_data é
+            # chamado tanto do request path quanto das worker threads do
+            # TaskManager (_batch_load_worker) — sem o lock, duas threads
+            # corrompem metadata/cleanup uma da outra. _auto_cleanup não
+            # readquire o lock (verificado); sandbox snapshot/merge usa o
+            # mesmo lock, então load × execute também ficam serializados.
+            with self._execute_lock:
+                self.variables[name] = value
+                now = datetime.now()
+                existing = self.variable_metadata.get(name)
 
-            self.variable_metadata[name] = VariableInfo(
-                name=name,
-                type_name=type(value).__name__,
-                size_bytes=size,
-                size_human=self._human_size(size),
-                preview=self._get_preview(value),
-                created_at=existing.created_at if existing else now,
-                last_accessed=now,
-                access_count=(existing.access_count if existing else 0) + 1,
-                pinned=existing.pinned if existing else False,
-                source=existing.source if existing else "load_data",
-            )
+                self.variable_metadata[name] = VariableInfo(
+                    name=name,
+                    type_name=type(value).__name__,
+                    size_bytes=size,
+                    size_human=self._human_size(size),
+                    preview=self._get_preview(value),
+                    created_at=existing.created_at if existing else now,
+                    last_accessed=now,
+                    access_count=(existing.access_count if existing else 0) + 1,
+                    pinned=existing.pinned if existing else False,
+                    source=existing.source if existing else "load_data",
+                )
 
-            # Auto-cleanup se necessário
-            cleanup_info = self._auto_cleanup()
+                # Auto-cleanup se necessário
+                cleanup_info = self._auto_cleanup()
             stdout_msg = f"Variavel '{name}' carregada: {self._human_size(size)} ({type(value).__name__})"
             if cleanup_info:
                 stdout_msg += f"\n[Auto-cleanup: removidas {cleanup_info['removed_count']} variáveis antigas, liberados {cleanup_info['removed_bytes_human']}]"

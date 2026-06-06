@@ -7,6 +7,7 @@ Usa algoritmo de sliding window para contagem precisa de requisições.
 
 import time
 import logging
+import threading
 from collections import defaultdict
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field
@@ -64,6 +65,10 @@ class SlidingWindowRateLimiter:
         self._buckets: Dict[str, List[tuple]] = defaultdict(list)
         # Tamanho de cada bucket em segundos (granularidade)
         self._bucket_size = max(1, window_seconds // 10)  # 10 buckets por janela
+        # _buckets é acessado de threads diferentes (endpoints via threadpool,
+        # task workers do TaskManager em http_server, event loop) — RLock
+        # porque check_and_record() chama check()+record() internamente.
+        self._lock = threading.RLock()
 
     def _get_current_bucket(self, now: float) -> int:
         """Retorna o ID do bucket atual baseado no timestamp."""
@@ -120,8 +125,9 @@ class SlidingWindowRateLimiter:
         if now is None:
             now = time.time()
 
-        self._cleanup_old_buckets(identifier, now)
-        current_count = self._count_requests_in_window(identifier, now)
+        with self._lock:
+            self._cleanup_old_buckets(identifier, now)
+            current_count = self._count_requests_in_window(identifier, now)
 
         allowed = current_count < self.config.max_requests
 
@@ -131,7 +137,9 @@ class SlidingWindowRateLimiter:
             # Encontrar o bucket mais antigo na janela
             window_start = now - self.config.window_seconds
             oldest_in_window = None
-            for bucket_time, _ in self._buckets[identifier]:
+            with self._lock:
+                buckets_snapshot = list(self._buckets[identifier])
+            for bucket_time, _ in buckets_snapshot:
                 if bucket_time >= window_start:
                     if oldest_in_window is None or bucket_time < oldest_in_window:
                         oldest_in_window = bucket_time
@@ -165,15 +173,16 @@ class SlidingWindowRateLimiter:
         bucket_time = current_bucket * self._bucket_size
 
         # Encontrar ou criar bucket atual
-        found = False
-        for i, (ts, count) in enumerate(self._buckets[identifier]):
-            if ts == bucket_time:
-                self._buckets[identifier][i] = (ts, count + 1)
-                found = True
-                break
+        with self._lock:
+            found = False
+            for i, (ts, count) in enumerate(self._buckets[identifier]):
+                if ts == bucket_time:
+                    self._buckets[identifier][i] = (ts, count + 1)
+                    found = True
+                    break
 
-        if not found:
-            self._buckets[identifier].append((bucket_time, 1))
+            if not found:
+                self._buckets[identifier].append((bucket_time, 1))
 
         logger.debug(f"Rate limit recorded for {identifier}: bucket={bucket_time}")
 
@@ -193,17 +202,20 @@ class SlidingWindowRateLimiter:
         if now is None:
             now = time.time()
 
-        result = self.check(identifier, now)
-        if result.allowed:
-            self.record(identifier, now)
-            # Atualizar contagem no resultado
-            result = RateLimitResult(
-                allowed=True,
-                current_count=result.current_count + 1,
-                limit=self.config.max_requests,
-                window_seconds=self.config.window_seconds,
-                retry_after=None
-            )
+        # RLock reentrante: check/record readquirem por baixo sem deadlock;
+        # segurar aqui torna o par check+record atômico entre threads.
+        with self._lock:
+            result = self.check(identifier, now)
+            if result.allowed:
+                self.record(identifier, now)
+                # Atualizar contagem no resultado
+                result = RateLimitResult(
+                    allowed=True,
+                    current_count=result.current_count + 1,
+                    limit=self.config.max_requests,
+                    window_seconds=self.config.window_seconds,
+                    retry_after=None
+                )
         return result
 
     def reset(self, identifier: str) -> None:
@@ -212,9 +224,10 @@ class SlidingWindowRateLimiter:
 
         Útil para testes ou quando uma sessão é encerrada.
         """
-        if identifier in self._buckets:
-            del self._buckets[identifier]
-            logger.debug(f"Rate limit reset for {identifier}")
+        with self._lock:
+            if identifier in self._buckets:
+                del self._buckets[identifier]
+                logger.debug(f"Rate limit reset for {identifier}")
 
     def get_stats(self, identifier: str, now: Optional[float] = None) -> Dict:
         """
@@ -230,8 +243,9 @@ class SlidingWindowRateLimiter:
         if now is None:
             now = time.time()
 
-        self._cleanup_old_buckets(identifier, now)
-        current_count = self._count_requests_in_window(identifier, now)
+        with self._lock:
+            self._cleanup_old_buckets(identifier, now)
+            current_count = self._count_requests_in_window(identifier, now)
 
         return {
             "current_count": current_count,
