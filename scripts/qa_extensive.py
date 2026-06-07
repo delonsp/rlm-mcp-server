@@ -535,6 +535,69 @@ def sec_s3_tasks_help(c: RlmClient, r: Reporter, skip_s3: bool):
             ok and "soma" in t and "function" in t, t[:200])
 
 
+def sec_embeddings(c: RlmClient, r: Reporter):
+    """Invariante: TODO índice vetorial deve ter cobertura total (emb:X/Y, X==Y).
+
+    Canário do bug do batching (2026-06-06, commit 705f249): lotes estouravam
+    o cap de 300k tokens da OpenAI → vars ficavam com cobertura PARCIAL e
+    SILENCIOSA (recode_protocolos_geral tinha 9/17586 — busca semântica
+    enxergava 0,05% do texto sem nenhum aviso). O var_info agora expõe emb:X/Y
+    e este harness exige X==Y.
+    """
+    print("\n[embeddings] Invariante de cobertura total do índice vetorial")
+
+    # (a) Genérico: var própria >=100k chars → auto-embed no load → emb:N/N.
+    # Frases variadas (não repetição pura) p/ chunks não-vazios e embeds reais.
+    palavras = ["memoria", "protocolo", "paciente", "cognicao", "dieta",
+                "toxina", "exame", "suplemento", "sono", "exercicio"]
+    frases = [f"Registro {i}: o tema {palavras[i % 10]} aparece no contexto "
+              f"clinico numero {i} com variacao {i * 7 % 101}."
+              for i in range(2200)]
+    big = "\n".join(frases)  # ~190k chars
+    ok, t, _ = c.tool("rlm_load_data", {"name": f"{QA_PREFIX}embed", "data": big},
+                      timeout=240)
+    if not ok:
+        r.add("embeddings", "load da var de embed", FAIL, t[:200])
+        return
+    m = re.search(r"Embedded \(?(\d+)", t)
+    if not m:
+        r.add("embeddings", "auto-embed no load (var >=100k)", SKIP,
+              "sem 'Embedded' na resposta — serviço de embeddings desligado?")
+    else:
+        n_load = int(m.group(1))
+        ok, t, _ = c.tool("rlm_var_info", {"name": f"{QA_PREFIX}embed"})
+        mi = re.search(r"(?:emb:|Embeddings: )(\d+)/(\d+)", t) if ok else None
+        r.check("embeddings", "var_info expõe emb:X/Y",
+                mi is not None, t[:150])
+        if mi:
+            x, y = int(mi.group(1)), int(mi.group(2))
+            r.check("embeddings", f"cobertura total na var do harness ({x}/{y})",
+                    x == y and x == n_load and y > 0,
+                    f"emb:{x}/{y}, load reportou {n_load} — parcial = regressão do batching")
+
+    # (b) Corpus conhecido (production-aware): as 6 recode_* re-embedadas em
+    # 2026-06-06. Ausentes num server novo → SKIP, não FAIL.
+    knowns = ["recode_suplementos", "recode_casos", "recode_toxico",
+              "recode_nutricao", "recode_protocolos_geral", "recode_diagnostico"]
+    found, partial = 0, []
+    for v in knowns:
+        ok, t, _ = c.tool("rlm_var_info", {"name": v})
+        if not ok or "não encontrada" in t:
+            continue
+        mi = re.search(r"(?:emb:|Embeddings: )(\d+)/(\d+)", t)
+        if not mi:
+            partial.append(f"{v}: sem emb:X/Y (índice vetorial sumiu?)")
+            continue
+        found += 1
+        if mi.group(1) != mi.group(2):
+            partial.append(f"{v}: emb:{mi.group(1)}/{mi.group(2)}")
+    if found == 0 and not partial:
+        r.add("embeddings", "corpus recode_* (ausente neste server)", SKIP, "")
+    else:
+        r.check("embeddings", f"cobertura total no corpus recode_* ({found} vars)",
+                found > 0 and not partial, "; ".join(partial))
+
+
 def sec_cleanup(c: RlmClient, r: Reporter):
     print("\n[cleanup] Remoção das vars _qa_* e da coleção do harness")
     # delete da coleção (gap fechado 2026-06-06): cada run nasce limpo
@@ -582,6 +645,7 @@ def main():
     if not args.quick:
         sec_concurrency(c, r)
     sec_s3_tasks_help(c, r, args.skip_s3)
+    sec_embeddings(c, r)
     sec_cleanup(c, r)
 
     fails = r.summary()

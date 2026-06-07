@@ -299,12 +299,25 @@ def format_list_vars(vars_list, total: int, offset: int, limit: int,
 # Variable info formatting
 # =============================================================================
 
-def format_var_info(info, verbosity: Optional[Verbosity] = None) -> str:
-    """Format rlm_var_info response."""
+def format_var_info(info, verbosity: Optional[Verbosity] = None,
+                    vector_stats: Optional[dict] = None) -> str:
+    """Format rlm_var_info response.
+
+    vector_stats: get_stats() do VectorIndex da var, se existir. Expõe a
+    cobertura de embeddings (emb:X/Y) — invariante observável de fora: X<Y
+    significa cobertura PARCIAL (classe de bug do batching 2026-06-06, que
+    era silenciosa justamente porque nada reportava isso ao cliente).
+    """
     v = verbosity or get_verbosity()
 
     if not info:
         return "Variável não encontrada."
+
+    emb_part = ""
+    if vector_stats and vector_stats.get("total_chunks"):
+        x = vector_stats.get("embedded_chunks", 0)
+        y = vector_stats["total_chunks"]
+        emb_part = f"emb:{x}/{y}" + ("" if x == y else "⚠️parcial")
 
     if v == Verbosity.COMPACT:
         parts = [f"var:{info.name}", info.type_name, info.size_human]
@@ -312,6 +325,8 @@ def format_var_info(info, verbosity: Optional[Verbosity] = None) -> str:
             parts.append("📌pinned")
         if getattr(info, 'access_count', 0) > 0:
             parts.append(f"access:{info.access_count}")
+        if emb_part:
+            parts.append(emb_part)
         return "[" + " | ".join(parts) + "]"
 
     # Normal/verbose
@@ -327,6 +342,13 @@ Criada em: {info.created_at.isoformat()}
         text += f"\nAcessos: {info.access_count}"
     if getattr(info, 'source', None) and info.source != "unknown":
         text += f"\nOrigem: {info.source}"
+    if emb_part:
+        x = vector_stats.get("embedded_chunks", 0)
+        y = vector_stats["total_chunks"]
+        pct = (100 * x // y) if y else 0
+        text += f"\nEmbeddings: {x}/{y} chunks ({pct}%)"
+        if x < y:
+            text += " ⚠️ cobertura parcial — busca semântica enxerga só parte do texto"
 
     text += f"\n\nPreview:\n{info.preview}"
     return text

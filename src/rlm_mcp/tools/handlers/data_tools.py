@@ -13,6 +13,7 @@ from ... import code_parser
 from ...pdf_parser import extract_pdf
 from ...persistence import get_persistence
 from ...services.persistence_service import persist_and_index
+from ...vector_index import get_vector_index
 from ..context import ToolContext
 
 logger = logging.getLogger("rlm-http")
@@ -181,7 +182,10 @@ def rlm_var_info(arguments: dict, ctx: ToolContext) -> dict:
     if not info:
         text = f"Variável '{arguments['name']}' não encontrada."
     else:
-        text = fmt.format_var_info(info)
+        # Cobertura de embeddings (emb:X/Y) — invariante observável de fora;
+        # X<Y = cobertura parcial (classe de bug do batching 2026-06-06).
+        vi = get_vector_index(arguments["name"])
+        text = fmt.format_var_info(info, vector_stats=vi.get_stats() if vi else None)
     return {"content": [{"type": "text", "text": text}]}
 
 
