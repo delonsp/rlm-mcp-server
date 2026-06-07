@@ -74,3 +74,4 @@ tests/*
 !tests/__init__.py
 !tests/test_embedding_batching.py
 !tests/test_var_info_embeddings.py
+!tests/test_repertory.py

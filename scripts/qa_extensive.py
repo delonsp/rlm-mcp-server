@@ -38,7 +38,7 @@ EXPECTED_TOOLS = {
     "rlm_list_vars", "rlm_var_info", "rlm_clear", "rlm_memory", "rlm_pin_var",
     "rlm_list_buckets", "rlm_list_s3", "rlm_upload_url", "rlm_save_to_s3",
     "rlm_process_pdf", "rlm_search_index", "rlm_search_code", "rlm_collection",
-    "rlm_task", "rlm_help",
+    "rlm_repertorio", "rlm_task", "rlm_help",
 }
 QA_PREFIX = "_qa_"
 QA_COLLECTION = "qa_harness"
@@ -598,6 +598,57 @@ def sec_embeddings(c: RlmClient, r: Reporter):
                 found > 0 and not partial, "; ".join(partial))
 
 
+def sec_repertorio(c: RlmClient, r: Reporter):
+    """Modo-repertório (rlm_repertorio) contra o corpus real.
+
+    Production-aware: kent_repertorio ausente neste server → SKIP, não FAIL.
+    Canários: rubrica conhecida ABANDONO/'sentimiento de' (AUR. grau 3,
+    validada live 2026-06-06), rastreabilidade var:linha, ranking estável.
+    """
+    print("\n[repertorio] Repertorização homeopática (kent_repertorio)")
+    ok, t, _ = c.tool("rlm_repertorio", {"action": "info"})
+    if not ok and "não encontrada" in t:
+        r.add("repertorio", "kent_repertorio ausente neste server", SKIP, "")
+        return
+    r.check("repertorio", "info responde com stats do índice",
+            ok and "entries:" in t, t[:150])
+
+    ok, t, _ = c.tool("rlm_repertorio",
+                      {"action": "buscar_rubrica", "query": "abandono sentimiento"})
+    found = ok and re.search(r"kent_repertorio:L\d+", t or "") and "sentimiento" in t.lower()
+    r.check("repertorio", "buscar_rubrica acha ABANDONO/sentimiento de",
+            bool(found), (t or "")[:200])
+    r.check("repertorio", "AUR aparece em CAPS (grau 3) no resultado",
+            ok and "AUR" in t, (t or "")[:200])
+
+    m = re.search(r"kent_repertorio:L(\d+)", t or "")
+    if not m:
+        r.add("repertorio", "repertorizar (sem ID da busca)", SKIP, "")
+        return
+    ln = int(m.group(1))
+    # rastreabilidade: a linha citada existe na var REAL e contém a rubrica
+    ok2, t2, _ = c.execute(
+        f"print(kent_repertorio.split(chr(10))[{ln} - 1][:120])")
+    r.check("repertorio", f"citação L{ln} bate com o texto real da var",
+            ok2 and "sentimiento" in t2.lower(), (t2 or "")[:150])
+
+    ok3, t3, _ = c.tool("rlm_repertorio",
+                        {"action": "buscar_rubrica", "query": "temor"})
+    m3 = re.search(r"kent_repertorio:L(\d+)", t3 or "")
+    if not m3:
+        r.add("repertorio", "repertorizar (rubrica 'temor' não achada)", SKIP, "")
+        return
+    ids = [f"kent_repertorio:L{ln}", f"kent_repertorio:L{m3.group(1)}"]
+    ok4, t4, _ = c.tool("rlm_repertorio", {"action": "repertorizar", "rubrics": ids})
+    r.check("repertorio", "repertorizar devolve tabela score/cov",
+            ok4 and "score" in t4 and "cov" in t4, (t4 or "")[:200])
+    ok5, t5, _ = c.tool("rlm_repertorio", {"action": "repertorizar", "rubrics": ids})
+    head4 = [l for l in (t4 or "").split("\n") if l.strip()][:5]
+    head5 = [l for l in (t5 or "").split("\n") if l.strip()][:5]
+    r.check("repertorio", "ranking estável entre runs",
+            ok5 and head4 == head5, f"{head4} != {head5}")
+
+
 def sec_cleanup(c: RlmClient, r: Reporter):
     print("\n[cleanup] Remoção das vars _qa_* e da coleção do harness")
     # delete da coleção (gap fechado 2026-06-06): cada run nasce limpo
@@ -646,6 +697,7 @@ def main():
         sec_concurrency(c, r)
     sec_s3_tasks_help(c, r, args.skip_s3)
     sec_embeddings(c, r)
+    sec_repertorio(c, r)
     sec_cleanup(c, r)
 
     fails = r.summary()

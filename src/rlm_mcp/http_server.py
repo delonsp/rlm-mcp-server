@@ -514,6 +514,21 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"Erro ao reconstruir coleções: {e}")
 
+        # Pre-warm do índice de repertorização (parse ~7s do kent_repertorio):
+        # no lifespan o dispatch lock não é segurado — evita o stall na 1ª
+        # chamada de rlm_repertorio pós-deploy.
+        try:
+            from .repertory import get_repertory_index
+            from .tools.handlers.repertory_tools import DEFAULT_SOURCE
+            _rep_text = repl.variables.get(DEFAULT_SOURCE)
+            if isinstance(_rep_text, str) and _rep_text:
+                idx, _ = get_repertory_index(DEFAULT_SOURCE, _rep_text)
+                logger.info(
+                    f"Índice de repertório pré-aquecido: {len(idx.entries):,} rubricas"
+                )
+        except Exception as e:
+            logger.warning(f"Erro no pre-warm do índice de repertório: {e}")
+
     except Exception as e:
         logger.warning(f"Erro ao restaurar variáveis (pode ser primeira execução): {e}")
 

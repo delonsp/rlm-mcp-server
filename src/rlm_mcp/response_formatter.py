@@ -1113,3 +1113,156 @@ def format_task_cancel(task_id: str, success: bool,
     if success:
         return f"🚫 Task '{task_id}' cancelada com sucesso."
     return f"Não foi possível cancelar task '{task_id}' (não encontrada ou já finalizada)."
+
+
+# =============================================================================
+# Repertory formatting (rlm_repertorio)
+# =============================================================================
+
+def _fmt_remedies(remedies, cap: int = 12) -> str:
+    """`AUR.(3), alum., arg-n. +42` — grau só quando ≠1; CAPS quando grau 3."""
+    parts = []
+    for canonical, grade in remedies[:cap]:
+        name = canonical.upper() if grade == 3 else canonical
+        parts.append(f"{name}.({grade})" if grade > 1 else f"{name}.")
+    extra = len(remedies) - cap
+    return ", ".join(parts) + (f" +{extra}" if extra > 0 else "")
+
+
+def _rubric_path(entry) -> str:
+    parts = [p for p in (entry.chapter, entry.rubric) if p]
+    label = entry.text if entry.text not in parts else ""
+    if label:
+        parts.append(label)
+    return " > ".join(parts) if parts else entry.text
+
+
+def format_repertory_search(matches, total: int, query: str, source_var: str,
+                            offset: int = 0, fuzzy_note: Optional[str] = None,
+                            verbosity: Optional[Verbosity] = None,
+                            remedies_cap: int = 12) -> str:
+    """Format rlm_repertorio action=buscar_rubrica response."""
+    v = verbosity or get_verbosity()
+
+    if not matches:
+        if total > 0:
+            # página vazia por offset além do total — NÃO é busca sem resultado
+            msg = (f"offset {offset} além do total ({total}). "
+                   f"Reduza o offset para ver os {total} resultado(s).")
+            if v == Verbosity.COMPACT:
+                return (f"[repertorio:{source_var} | {total} hits | "
+                        f"offset {offset} vazio | '{query}']\n{msg}")
+            return (f"Busca de rubrica: '{query}' em {source_var} — {total} "
+                    f"resultado(s); offset {offset} ultrapassa o total.\n{msg}")
+        hint = ("Nenhuma rubrica casa. Dica: termos em espanhol (fonte Eizayaga) "
+                "ou rlm_search_index(var_name=..., mode=\"hybrid\") para busca semântica.")
+        if v == Verbosity.COMPACT:
+            return f"[repertorio:{source_var} | 0 hits | '{query}']\n{hint}"
+        return f"Busca de rubrica: '{query}' em {source_var} — 0 resultados.\n{hint}"
+
+    lines = []
+    if v == Verbosity.COMPACT:
+        head = f"[repertorio:{source_var} | {total} hits"
+        if offset or total > len(matches):
+            head += f" | mostrando {offset + 1}-{offset + len(matches)}"
+        if fuzzy_note:
+            head += f" | fuzzy: {fuzzy_note}"
+        lines.append(head + "]")
+        for m in matches:
+            e = m.entry
+            lines.append(
+                f"{source_var}:L{e.line_no} {_rubric_path(e)} | "
+                f"{_fmt_remedies(e.remedies, remedies_cap)}"
+            )
+        return "\n".join(lines)
+
+    lines.append(f"🔍 Rubrica: '{query}' em {source_var} — {total} resultado(s)"
+                 + (f" (offset {offset})" if offset else ""))
+    if fuzzy_note:
+        lines.append(f"⚠️ Correção fuzzy aplicada: {fuzzy_note}")
+    for m in matches:
+        e = m.entry
+        lines.append(f"\n• {_rubric_path(e)}  [{source_var}:L{e.line_no}]")
+        lines.append(f"  {len(e.remedies)} remédio(s): {_fmt_remedies(e.remedies, remedies_cap)}")
+    lines.append("\nUse os IDs (var:L###) em action=repertorizar.")
+    return "\n".join(lines)
+
+
+def format_repertorization(result, index, limit: int = 20,
+                           verbosity: Optional[Verbosity] = None) -> str:
+    """Format rlm_repertorio action=repertorizar response (tabela remédio×rubrica)."""
+    v = verbosity or get_verbosity()
+    src = index.source_var
+    n_rub = len(result.rubric_lines)
+    rows = result.rows[:limit]
+    col_heads = [f"L{ln}" for ln in result.rubric_lines]
+    name_w = max([len(r[0]) + 1 for r in rows], default=8)
+    name_w = max(name_w, 8)
+    # largura dinâmica: line_no com 6+ dígitos (L100000+, ~28% do kent real)
+    # estouraria o :>6 fixo e desalinharia header×células
+    col_w = max(6, max((len(h) for h in col_heads), default=6))
+
+    header = f"{'remédio':<{name_w}} score cov  " + " ".join(f"{h:>{col_w}}" for h in col_heads)
+    body = []
+    for canonical, score, cov, per_line in rows:
+        name = (canonical.upper() if 3 in per_line.values() else canonical) + "."
+        cells = " ".join(
+            f"{per_line.get(ln, '-') if per_line.get(ln) else '-':>{col_w}}"
+            for ln in result.rubric_lines
+        )
+        body.append(f"{name:<{name_w}} {score:>5} {cov:>3}  {cells}")
+
+    if v == Verbosity.COMPACT:
+        head = (f"[repertorizacao:{src} | {n_rub} rubricas | "
+                f"{len(result.rows)} remedios | sort:{result.sort}"
+                + (f" | top {limit}" if len(result.rows) > limit else "") + "]")
+        return "\n".join([head, header] + body)
+
+    lines = [f"⚖️ Repertorização — {n_rub} rubrica(s), {len(result.rows)} remédio(s), "
+             f"ordenação: {result.sort}" ]
+    for ln in result.rubric_lines:
+        e = index.by_line.get(ln)
+        if e is not None:
+            lines.append(f"  • {src}:L{ln} — {_rubric_path(e)}")
+    lines.append("")
+    lines.append(header)
+    lines.extend(body)
+    if len(result.rows) > limit:
+        lines.append(f"... +{len(result.rows) - limit} remédios (use limit/offset)")
+    lines.append("\nGraus: 3 = CAPS no original (alto valor); 1 = demais. "
+                 "Grau 2 (itálico) indisponível na fonte atual.")
+    return "\n".join(lines)
+
+
+def format_repertory_info(index, cached: bool,
+                          verbosity: Optional[Verbosity] = None) -> str:
+    """Format rlm_repertorio action=info response."""
+    v = verbosity or get_verbosity()
+    s = index.stats
+    if v == Verbosity.COMPACT:
+        return (f"[repertorio:{index.source_var} | entries:{s.entries - s.entries_all_discarded} | "
+                f"cont:{s.continuations_merged} | vocab:{s.vocab_stable} | "
+                f"tokens:{s.tokens_total - s.tokens_discarded}/{s.tokens_total} | "
+                f"glossario:{s.glossary_size} | fp:{index.fingerprint[:8]} | "
+                f"{'cache' if cached else f'build {s.build_ms}ms'}]")
+
+    kept = s.tokens_total - s.tokens_discarded
+    pct = (100.0 * kept / s.tokens_total) if s.tokens_total else 0.0
+    return "\n".join([
+        f"📖 Repertório: {index.source_var} (fingerprint {index.fingerprint[:8]}, "
+        f"{'cache' if cached else f'parse em {s.build_ms}ms'})",
+        f"Linhas: {s.total_lines:,} (corpo a partir da L{s.parse_start_line})",
+        f"Rubricas indexadas: {s.entries - s.entries_all_discarded:,} "
+        f"(+{s.continuations_merged:,} continuações de lista anexadas)",
+        f"Headers de rubrica: {s.headers:,} | cross-refs puladas: {s.crossrefs:,}",
+        f"Tokens de remédio: {kept:,}/{s.tokens_total:,} aproveitados ({pct:.1f}%) — "
+        f"{s.tokens_discarded:,} descartados (ruído OCR irreparável/ambíguo)",
+        f"Vocabulário estável: {s.vocab_stable:,} abreviações "
+        f"(+{s.vocab_corrected:,} variantes raras corrigidas)",
+        f"Glossário do livro: {s.glossary_size:,} abreviações com nome completo",
+        f"Perdas conhecidas: {s.prose_skipped:,} linhas de prosa, "
+        f"{s.colon_prose_skipped:,} com ':' não-parseáveis, "
+        f"{s.orphan_continuations:,} continuações órfãs, "
+        f"{s.entries_all_discarded:,} entries 100% descartadas",
+        "Graus: 3 = CAPS; grau 2 (itálico) perdido na extração — ranking binário.",
+    ])

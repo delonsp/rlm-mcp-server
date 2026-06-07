@@ -15,6 +15,7 @@ from . import (
     data_tools,
     misc_tools,
     pdf_tools,
+    repertory_tools,
     s3_tools,
     search_tools,
     task_tools,
@@ -45,6 +46,8 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     # Busca
     "rlm_search_index": search_tools.rlm_search_index,
     "rlm_search_code": search_tools.rlm_search_code,
+    # Repertorização homeopática (router com actions)
+    "rlm_repertorio": repertory_tools.rlm_repertorio,
     # Coleções (router consolidado + handlers internos)
     "rlm_collection": collection_tools.rlm_collection,
     "rlm_collection_create": collection_tools.rlm_collection_create,

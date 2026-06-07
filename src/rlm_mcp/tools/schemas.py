@@ -2,7 +2,7 @@
 
 Defines the TOOL_SCHEMAS constant with all tool definitions extracted from get_tools_list().
 
-Consolidated from 29 to 19 tools:
+Consolidated from 29 to 19 tools (now 20 with rlm_repertorio):
 - Collections (6→1): rlm_collection with action parameter
 - Tasks (3→1): rlm_task with action parameter
 - Batch S3 load: absorbed into rlm_load_s3 via keys[] parameter
@@ -453,6 +453,61 @@ Exemplos:
                 "limit": {"type": "integer", "default": 20, "description": "Max resultados (para search)"},
                 "offset": {"type": "integer", "default": 0, "description": "Paginação (para search)"},
                 "snippet_len": {"type": "integer", "default": 150, "description": "Tamanho do trecho exibido por ocorrência na search (clamp 40–400)"}
+            },
+            "required": ["action"]
+        }
+    },
+    {
+        "name": "rlm_repertorio",
+        "description": """Repertorização homeopática sobre o repertório carregado (default: kent_repertorio, Eizayaga ES).
+
+Ações:
+- buscar_rubrica: Acha rubricas por texto. Params: query, limit, offset
+- repertorizar: Cruza rubricas escolhidas → ranking de remédios. Params: rubrics[], sort, limit
+- info: Stats do índice parseado (cobertura, perdas OCR, vocabulário)
+
+Workflow típico:
+  1. rlm_repertorio(action="buscar_rubrica", query="temor muerte")  → IDs var:L###
+  2. rlm_repertorio(action="repertorizar", rubrics=["kent_repertorio:L8841", "kent_repertorio:L9120"])
+
+BUSCA: a fonte é em ESPANHOL — termos PT comuns são traduzidos automaticamente
+(medo→temor etc.), mas prefira espanhol para precisão. Match é lexical
+(acentos ignorados); fuzzy só como fallback. 0 hits → tente rlm_search_index
+(mode="hybrid") para busca semântica e use a linha encontrada como ID.
+
+REPERTORIZAR: aceita IDs (var:L###, recomendado) ou texto com match ÚNICO
+(ambíguo → erro com candidatos). Ranking: sort="coverage" (default; nº de
+rubricas cobertas, depois score) ou sort="score" (soma de graus). GRAUS:
+3 = CAPS no original; grau 2 (itálico) foi perdido na extração da fonte —
+ranking é binário 3-vs-1.
+
+Exemplos:
+  rlm_repertorio(action="buscar_rubrica", query="abandono sentimiento")
+  rlm_repertorio(action="repertorizar", rubrics=["kent_repertorio:L2328"], sort="score")
+  rlm_repertorio(action="info")""",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["buscar_rubrica", "repertorizar", "info"],
+                    "description": "Ação a executar"
+                },
+                "query": {"type": "string", "description": "Texto da rubrica a buscar (para buscar_rubrica)"},
+                "rubrics": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Rubricas a cruzar: IDs var:L### ou textos com match único (para repertorizar; max 30)"
+                },
+                "sort": {
+                    "type": "string",
+                    "enum": ["coverage", "score"],
+                    "default": "coverage",
+                    "description": "Ordenação do ranking (para repertorizar)"
+                },
+                "source_var": {"type": "string", "default": "kent_repertorio", "description": "Variável fonte do repertório"},
+                "limit": {"type": "integer", "default": 10, "description": "Max resultados (buscar_rubrica: default 10; repertorizar: linhas da tabela, default 20; max 50)"},
+                "offset": {"type": "integer", "default": 0, "description": "Paginação (para buscar_rubrica)"}
             },
             "required": ["action"]
         }

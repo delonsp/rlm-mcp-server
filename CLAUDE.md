@@ -45,10 +45,10 @@ src/rlm_mcp/
 │   └── s3_guard.py             # Validação config S3
 └── tools/
     ├── base.py            # text_response/error_response helpers
-    └── schemas.py         # Definições de tools MCP (19 tools)
+    └── schemas.py         # Definições de tools MCP (20 tools)
 ```
 
-## Tools Disponíveis (19 tools)
+## Tools Disponíveis (20 tools)
 
 | Categoria | Tool | Descrição |
 |-----------|------|-----------|
@@ -68,6 +68,7 @@ src/rlm_mcp/
 | **Busca** | `rlm_search_index` | Keyword/semantic/hybrid (max_results, paginação) |
 | | `rlm_search_code` | Busca estrutural em código (limit/offset/max_source_lines) |
 | **Coleções** | `rlm_collection` | create, add, list, info, rebuild, search, delete |
+| **Repertório** | `rlm_repertorio` | buscar_rubrica, repertorizar, info (homeopatia, fonte kent_repertorio) |
 | **PDF/Tasks** | `rlm_process_pdf` | Extrai texto de PDF |
 | | `rlm_task` | Gerencia tasks assíncronas |
 | **Ajuda** | `rlm_help` | Documentação integrada |
