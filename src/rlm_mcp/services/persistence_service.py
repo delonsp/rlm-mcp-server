@@ -6,17 +6,79 @@ variables after loading data.
 """
 
 import logging
+import threading
 from typing import TYPE_CHECKING
 
 from ..persistence import get_persistence
-from ..indexer import auto_index_if_large, set_index
+from ..indexer import (
+    auto_index_if_large, set_index, get_index, clear_index, fingerprint_source,
+)
 from ..embeddings import get_embedding_service
-from ..vector_index import VectorIndex, set_vector_index, get_vector_index
+from ..vector_index import (
+    VectorIndex, set_vector_index, get_vector_index, clear_vector_index,
+)
 
 if TYPE_CHECKING:
     from ..repl import PythonREPL
 
 logger = logging.getLogger(__name__)
+
+# Lock por-var serializando a construção de embeddings: sem isto, um search
+# (ensure_embeddings, sob dispatch lock) e um batch worker (persist_and_index,
+# no threadpool do task_manager) podiam embeddar o MESMO var em paralelo —
+# custo OpenAI dobrado e índice sobrescrito. Mesmo padrão do repertory._get_lock.
+_embed_locks: dict[str, threading.Lock] = {}
+_embed_locks_guard = threading.Lock()
+# Vars cujo rebuild lazy de cobertura parcial já foi tentado neste processo —
+# evita re-embeddar a cada busca quando o build fica parcial de forma estável
+# (ex.: chunk que sempre falha). O restart zera (nova chance de convergir).
+_partial_rebuild_attempted: set[str] = set()
+
+
+def _get_embed_lock(var_name: str) -> threading.Lock:
+    lock = _embed_locks.get(var_name)
+    if lock is None:
+        with _embed_locks_guard:
+            lock = _embed_locks.get(var_name)
+            if lock is None:
+                lock = threading.Lock()
+                _embed_locks[var_name] = lock
+    return lock
+
+def invalidate_stale_indices(var_name: str, text) -> bool:
+    """Descarta índices em memória cuja fonte não bate mais com `text`.
+
+    Índices são keyed pelo NOME do var. Se o var foi rebindado (ex.: via
+    rlm_execute, que NÃO passa por persist_and_index), os índices keyword/vetorial
+    seguem com linhas e snippets do texto ANTIGO — busca devolve citação errada.
+    Comparar a fingerprint pega isso e força rebuild na próxima busca.
+
+    Só invalida quando a fingerprint armazenada é conhecida (não-vazia) E difere —
+    índice restaurado sem fingerprint (legado) não é descartado à toa. Retorna
+    True se algo foi invalidado.
+    """
+    fp = fingerprint_source(text)
+    invalidated = False
+
+    ki = get_index(var_name)
+    if ki is not None:
+        stored = getattr(ki, "source_fingerprint", "")
+        if stored and stored != fp:
+            clear_index(var_name)
+            invalidated = True
+
+    vi = get_vector_index(var_name)
+    if vi is not None:
+        stored = getattr(vi, "source_fingerprint", "")
+        if stored and stored != fp:
+            clear_vector_index(var_name)
+            _partial_rebuild_attempted.discard(var_name)
+            invalidated = True
+
+    if invalidated:
+        logger.info(f"Índice stale de '{var_name}' invalidado (var mudou); rebuild na próxima busca")
+    return invalidated
+
 
 # Minimum text size for auto-embedding (100k chars, same as keyword indexing)
 AUTO_EMBED_MIN_CHARS = 100000
@@ -84,7 +146,25 @@ def ensure_embeddings(var_name: str, value) -> str:
     Returns:
         Status string (ex: "🔮 Embedded (...)"), ou "" se nada foi feito.
     """
-    if get_vector_index(var_name) is not None:
+    existing = get_vector_index(var_name)
+    if existing is not None:
+        # Índice existe mas cobertura parcial (embedded < total): um build que
+        # falhou no meio (batch de rede) deixava o índice parcial "existindo" e
+        # o early-return o congelava para sempre. Tenta rebuildar UMA vez por
+        # processo (guard _partial_rebuild_attempted evita re-embed a cada busca).
+        stats = existing.get_stats()
+        total = stats.get("total_chunks", 0)
+        embedded = stats.get("embedded_chunks", 0)
+        if total and embedded < total and var_name not in _partial_rebuild_attempted:
+            if isinstance(value, str) and AUTO_EMBED_MIN_CHARS <= len(value) <= LAZY_EMBED_MAX_CHARS:
+                service = get_embedding_service()
+                if service.is_available:
+                    logger.info(
+                        f"Cobertura parcial em '{var_name}' ({embedded}/{total}); "
+                        f"tentando rebuild lazy (1x/processo)"
+                    )
+                    _partial_rebuild_attempted.add(var_name)
+                    return _auto_embed(var_name, value, get_persistence())
         return ""
     if not isinstance(value, str) or len(value) < AUTO_EMBED_MIN_CHARS:
         return ""
@@ -119,17 +199,21 @@ def _auto_embed(var_name: str, text: str, persistence) -> str:
         if not service.is_available:
             return ""
 
-        vi = VectorIndex(var_name)
-        success = vi.build(text)
-        if not success:
-            return ""
+        # Lock por-var: se dois caminhos (search lazy + batch worker) chegarem
+        # juntos, o 2º espera e reusa em vez de re-embeddar (evita custo dobrado
+        # na OpenAI e sobrescrita do índice a meio-build).
+        with _get_embed_lock(var_name):
+            vi = VectorIndex(var_name)
+            success = vi.build(text)
+            if not success:
+                return ""
 
-        set_vector_index(var_name, vi)
+            set_vector_index(var_name, vi)
 
-        # Persist embeddings to SQLite (só chunks com vetor; payload vem da matriz)
-        persistence.save_embeddings(var_name, vi.persist_payload())
+            # Persist embeddings to SQLite (todos os chunks; sem-vetor com blob vazio)
+            persistence.save_embeddings(var_name, vi.persist_payload())
 
-        stats = vi.get_stats()
+            stats = vi.get_stats()
         logger.info(f"Auto-embedded '{var_name}': {stats['embedded_chunks']} chunks")
         return f"🔮 Embedded ({stats['embedded_chunks']} chunks)"
 

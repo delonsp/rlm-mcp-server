@@ -69,9 +69,22 @@ services:
       # Volume para persistência SQLite (variáveis + índices)
       - rlm-persist:/persist
 
-    # Expõe porta
-    ports:
-      - "8765:8765"
+    # NÃO publicar a porta no host: o Traefik alcança o container pela
+    # dokploy-network (label loadbalancer.server.port abaixo). Publicar
+    # "8765:8765" deixava a segurança dependendo só do firewall da VPS
+    # (camada única). Para debug local, reative pontualmente.
+    # ports:
+    #   - "8765:8765"
+
+    # Endurecimento do container (defesa em profundidade p/ o processo PRINCIPAL,
+    # que não roda no sandbox do rlm_execute e detém todos os segredos).
+    # no-new-privileges: barra escalonamento via setuid; também é pré-requisito
+    # do seccomp unprivileged que o sandbox aplica nos filhos.
+    # NOTA: cap_drop:[ALL] NÃO adicionado aqui de propósito — o entrypoint atual
+    # sobe como root e faz chown -R + su (precisa de CAP_CHOWN/SETUID/SETGID).
+    # Dropar caps exige antes migrar p/ USER rlm fixo no Dockerfile (follow-up).
+    security_opt:
+      - no-new-privileges:true
 
     # Limites de recursos
     deploy:

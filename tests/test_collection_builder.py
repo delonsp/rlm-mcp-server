@@ -4,7 +4,6 @@ Builder único do texto combinado de coleção (collection_builder.py).
 Regressão do P0 de line-mapping (medido live: +16 na 8ª var): o mapping
 linha-combinada → (var, linha_original) tem que bater com o texto REAL.
 """
-import pytest
 
 from rlm_mcp.collection_builder import (
     build_collection_combined,

@@ -106,7 +106,6 @@ def _buscar(texto: str, termo: str) -> list[dict]:
         >>> buscar(meu_texto, "erro")
         [{'posicao': 150, 'linha': 5, 'contexto': '...texto antes erro texto depois...'}]
     """
-    import re
 
     if not texto or not termo:
         return []

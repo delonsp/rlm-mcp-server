@@ -11,15 +11,19 @@ WORKDIR /build
 # Cache buster - mude para forçar rebuild
 ARG CACHE_BUST=2026060201
 
-# Instala dependências de build
-RUN pip install --no-cache-dir hatchling
+# Instala dependências de build (uv p/ exportar o lockfile)
+RUN pip install --no-cache-dir hatchling uv
 
-# Copia arquivos do projeto
-COPY pyproject.toml .
+# Copia arquivos do projeto (uv.lock incluído p/ build reprodutível)
+COPY pyproject.toml uv.lock ./
 COPY src/ src/
 
-# Build do wheel (cache bust garante rebuild)
-RUN echo "Build version: ${CACHE_BUST}" && pip wheel --no-deps --wheel-dir /wheels .
+# Build do wheel do app + exporta as deps TRAVADAS do uv.lock. Antes o runtime
+# resolvia todas as deps do PyPI no build (versões flutuantes → OCR podia pular
+# p/ mistralai 2.x sem aviso). Agora as versões vêm exatas do lockfile.
+RUN echo "Build version: ${CACHE_BUST}" \
+    && pip wheel --no-deps --wheel-dir /wheels . \
+    && uv export --frozen --no-dev --no-emit-project --no-hashes -o /wheels/requirements.txt
 
 # =============================================================================
 # Stage 2: Runtime
@@ -46,9 +50,12 @@ RUN mkdir -p /data /persist && chown rlm:rlm /data /persist
 # Cache buster para runtime (deve ser igual ao do builder)
 ARG CACHE_BUST=2026060201
 
-# Instala dependências do wheel
+# Instala deps travadas (requirements.txt do uv.lock) e DEPOIS o app sem re-resolver
 COPY --from=builder /wheels /wheels
-RUN echo "Runtime version: ${CACHE_BUST}" && pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels
+RUN echo "Runtime version: ${CACHE_BUST}" \
+    && pip install --no-cache-dir -r /wheels/requirements.txt \
+    && pip install --no-cache-dir --no-deps /wheels/*.whl \
+    && rm -rf /wheels
 
 # Variáveis de ambiente padrão
 ENV RLM_MAX_MEMORY_MB=1024

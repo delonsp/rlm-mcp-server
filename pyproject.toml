@@ -14,7 +14,7 @@ dependencies = [
     "numpy>=1.26",    # Matriz float32 compacta p/ embeddings (RAM ~8x menor + busca vetorizada)
     "minio>=7.2.0",   # Cliente S3/Minio para rlm_load_s3
     "pdfplumber>=0.11.0",  # Extração de texto de PDFs machine readable
-    "mistralai>=1.0.0",    # Mistral OCR para PDFs escaneados
+    "mistralai>=1.10,<2",  # Mistral OCR (pin <2: a API 2.x tem breaking changes no client OCR)
     "tree-sitter>=0.23.0",  # AST parsing para busca estrutural em código
     "tree-sitter-python>=0.23.0",  # Gramática Python para tree-sitter
     "tree-sitter-javascript>=0.23.0",  # Gramática JavaScript
@@ -32,6 +32,7 @@ grammars = [
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
+    "ruff>=0.8.0",
 ]
 
 [project.scripts]
@@ -48,3 +49,13 @@ packages = ["src/rlm_mcp"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+# Conservador de propósito: pega ERRO REAL (syntax, nome indefinido, import
+# quebrado, var não usada), NÃO estilo — assim o CI é um gate útil sem exigir
+# um cleanup grande do código existente. Aperte os selects aos poucos.
+select = ["E9", "F63", "F7", "F82", "F401", "F811", "F821"]

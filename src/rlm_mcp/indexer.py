@@ -8,6 +8,7 @@ permitindo buscas rápidas sem varrer o texto todo.
 import os
 import re
 import math
+import hashlib
 import logging
 import threading
 import unicodedata
@@ -18,6 +19,31 @@ from dataclasses import dataclass, field
 from .stopwords import STOPWORDS
 
 logger = logging.getLogger("rlm-mcp.indexer")
+
+
+def fingerprint_source(text) -> str:
+    """Impressão barata do texto-fonte de um índice, p/ detectar rebind.
+
+    Um índice fica keyed pelo NOME do var; se o var é rebindado (ex.: via
+    rlm_execute) o texto muda mas o cache continua com linhas/snippets do texto
+    ANTIGO — o pior modo de falha p/ rastreabilidade de citação. Comparar esta
+    fingerprint invalida o cache automaticamente (mesma ideia do repertory).
+
+    Não é hash criptográfico do texto inteiro (custaria O(n) por busca em vars de
+    dezenas de MB): combina tamanho + sha256 de amostras (início/meio/fim). Pega
+    qualquer rebind real; só um par de textos com mesmo tamanho E mesmas amostras
+    escaparia — irrelevante na prática.
+    """
+    if not isinstance(text, str):
+        text = "" if text is None else str(text)
+    n = len(text)
+    if n <= 192_000:
+        sample = text
+    else:
+        mid = n // 2
+        sample = text[:64_000] + text[mid - 32_000:mid + 32_000] + text[-64_000:]
+    h = hashlib.sha256(sample.encode("utf-8", "replace")).hexdigest()[:16]
+    return f"{n}:{h}"
 
 # Termos padrão para indexação (pode ser expandido)
 DEFAULT_INDEX_TERMS = {
@@ -60,6 +86,9 @@ class TextIndex:
     terms: dict = field(default_factory=dict)  # termo -> [{"linha": int, "contexto": str}]
     structure: dict = field(default_factory=dict)  # capítulos, seções, etc.
     custom_terms: list = field(default_factory=list)  # termos adicionais indexados
+    # Fingerprint do texto que gerou o índice (runtime-only; não serializado).
+    # Vazio = desconhecido (não invalida, p/ não thrashar índice restaurado).
+    source_fingerprint: str = field(default="", repr=False)
 
     # --- BM25 (runtime-only; NÃO serializado em to_dict/from_dict; lazy-build) ---
     bm25_postings: dict = field(default_factory=dict, repr=False)   # term -> [(seg_id, tf)]
@@ -107,10 +136,17 @@ class TextIndex:
         Returns:
             {termo: [matches]} ou {linha: [termos]} se require_all
         """
+        # limit alto nas buscas internas: o default 10 do self.search() fazia o
+        # AND (require_all) intersectar só as 10 PRIMEIRAS ocorrências de cada
+        # termo — co-ocorrência mais adiante no texto virava falso-negativo
+        # silencioso. O caminho OR também truncava em 10/termo antes do cap
+        # global (max_results) do handler. Ver corretude #5.
+        _INTERNAL_LIMIT = 10_000
+
         if not require_all:
             result = {}
             for t in terms:
-                hits = self.search(t, source_text=source_text)
+                hits = self.search(t, limit=_INTERNAL_LIMIT, source_text=source_text)
                 if hits:
                     result[t] = hits
             return result
@@ -118,7 +154,7 @@ class TextIndex:
         # Buscar linhas que têm todos os termos
         line_terms = defaultdict(set)
         for term in terms:
-            for match in self.search(term, source_text=source_text):
+            for match in self.search(term, limit=_INTERNAL_LIMIT, source_text=source_text):
                 line_terms[match['linha']].add(term.lower())
 
         # Filtrar linhas com todos os termos
@@ -369,7 +405,8 @@ def create_index(
         var_name=var_name,
         total_chars=len(text),
         total_lines=len(text.splitlines()),
-        custom_terms=additional_terms or []
+        custom_terms=additional_terms or [],
+        source_fingerprint=fingerprint_source(text),
     )
 
     # Indexar cada linha

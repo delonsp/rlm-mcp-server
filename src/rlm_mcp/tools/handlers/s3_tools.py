@@ -7,8 +7,11 @@ RateLimitExceeded sobe até o call_tool, que re-levanta para o endpoint
 HTTP transformar em 429 — mesmo contrato do monolito.
 """
 
+import ipaddress
 import json
 import logging
+import socket
+from urllib.parse import urlparse
 
 from ... import response_formatter as fmt
 from ... import code_parser
@@ -19,6 +22,42 @@ from ...services.persistence_service import persist_and_index
 from ..context import ToolContext
 
 logger = logging.getLogger("rlm-http")
+
+
+def _validate_fetch_url(url: str) -> str | None:
+    """Retorna mensagem de erro se a URL não for segura p/ fetch, senão None.
+
+    rlm_upload_url baixa a URL no PROCESSO PRINCIPAL (que tem todos os segredos
+    que o sandbox esconde). Sem validação era um primitivo SSRF/LFI alcançável
+    pelo mesmo modelo de ameaça (prompt injection) que o sandbox inteiro combate:
+    `file:///etc/passwd`, `http://169.254.169.254/...` (metadata cloud), serviços
+    internos. Restringe a http/https + resolve o host e bloqueia IP privado/loopback/
+    link-local. TOCTOU residual (DNS rebinding entre check e fetch) é aceito: é
+    single-user Bearer e o ganho é fechar os vetores triviais.
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return "URL inválida"
+    if parsed.scheme not in ("http", "https"):
+        return f"Esquema '{parsed.scheme}' não permitido (só http/https)"
+    host = parsed.hostname
+    if not host:
+        return "URL sem host"
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except Exception as e:
+        return f"Não foi possível resolver o host: {e}"
+    for info in infos:
+        ip_str = info[4][0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            continue
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+            return f"Host resolve p/ endereço interno ({ip_str}); bloqueado"
+    return None
 
 
 def rlm_load_s3(arguments: dict, ctx: ToolContext) -> dict:
@@ -198,6 +237,14 @@ def rlm_upload_url(arguments: dict, ctx: ToolContext) -> dict:
     url = arguments["url"]
     bucket = arguments.get("bucket", "claude-code")
     key = arguments["key"]
+
+    # SSRF/LFI guard: só http/https p/ host externo (ver _validate_fetch_url).
+    url_error = _validate_fetch_url(url)
+    if url_error:
+        return {
+            "content": [{"type": "text", "text": f"Erro: {url_error}"}],
+            "isError": True,
+        }
 
     try:
         result = s3.upload_from_url(url, bucket, key)

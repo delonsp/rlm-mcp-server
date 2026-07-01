@@ -5,6 +5,7 @@ Chunks text into overlapping segments, embeds them,
 and provides similarity-based search.
 """
 
+import bisect
 import logging
 import os
 import re
@@ -179,6 +180,9 @@ class VectorIndex:
         self._vectors: Optional[list[list[float]]] = None
         self._has_vec: list[bool] = []
         self._dim: int = 0
+        # Fingerprint do texto-fonte (detecta rebind → invalida cache stale).
+        # Vazio = desconhecido. Ver indexer.fingerprint_source.
+        self.source_fingerprint: str = ""
 
     def build(
         self,
@@ -198,6 +202,11 @@ class VectorIndex:
         """
         if not text:
             return False
+
+        # Fingerprint do texto CRU (antes de sanitizar) — a checagem de staleness
+        # no search compara contra repl.variables[var], que também é cru.
+        from .indexer import fingerprint_source
+        self.source_fingerprint = fingerprint_source(text)
 
         # Saneia NUL/controle (lixo de extração de PDF) ANTES de chunkar: chunks
         # ficam limpos no índice (display da busca semântica) e o input ao embed
@@ -373,17 +382,25 @@ class VectorIndex:
         }
 
     def persist_payload(self) -> list[dict]:
-        """Linhas para persistence.save_embeddings() (só chunks com vetor)."""
+        """Linhas para persistence.save_embeddings().
+
+        Persiste TODOS os chunks — os sem vetor entram com embedding vazio. Antes
+        só os chunks com vetor eram salvos: no restart, from_persisted reconstruía
+        `total_chunks` apenas a partir das linhas salvas, então `embedded == total`
+        e o warning `emb:X/Y ⚠️parcial` (feito justamente p/ pegar essa classe de
+        bug) sumia — um build parcial (falha de rede num batch) virava "100%"
+        permanente e invisível. Chunk sem vetor custa ~um texto no DB (sem blob de
+        floats) e restaura a observabilidade + o auto-rebuild de ensure_embeddings.
+        """
         payload = []
         for i, c in enumerate(self.chunks):
-            if i >= len(self._has_vec) or not self._has_vec[i]:
-                continue
+            has_vec = i < len(self._has_vec) and self._has_vec[i]
             payload.append({
                 "chunk_index": c.chunk_index,
                 "chunk_text": c.text,
                 "line_start": c.line_start,
                 "line_end": c.line_end,
-                "embedding": self._vector_at(i),
+                "embedding": self._vector_at(i) if has_vec else [],
             })
         return payload
 
@@ -440,6 +457,10 @@ class VectorIndex:
         vi = cls(var_name=var_name)
         vi.total_chars = len(text_value) if isinstance(text_value, str) else 0
         vi.total_lines = text_value.count('\n') + 1 if isinstance(text_value, str) else 0
+        # Seed do fingerprint com o texto restaurado — assim uma busca logo após
+        # o restart NÃO invalida um índice válido (só invalida se o var mudar).
+        from .indexer import fingerprint_source
+        vi.source_fingerprint = fingerprint_source(text_value)
         vi.chunks = [
             ChunkInfo(
                 chunk_index=c["chunk_index"],
@@ -475,19 +496,24 @@ def _chunk_text(
     chunks = []
     lines = text.split('\n')
 
-    # Build a char-offset to line-number map
-    line_offsets = []  # (start_char, line_num)
+    # Char-offset de início de cada linha (line i começa em line_starts[i]).
+    # Ascendente por construção → busca binária no lookup abaixo.
+    line_starts = []  # start_char de cada linha
     char_pos = 0
-    for i, line in enumerate(lines):
-        line_offsets.append((char_pos, i))
+    for line in lines:
+        line_starts.append(char_pos)
         char_pos += len(line) + 1  # +1 for \n
 
     def _char_to_line(pos: int) -> int:
-        """Find line number for a character position."""
-        for j in range(len(line_offsets) - 1, -1, -1):
-            if pos >= line_offsets[j][0]:
-                return line_offsets[j][1]
-        return 0
+        """Linha (0-idx) que contém a posição de caractere `pos`.
+
+        bisect_right - 1 = maior índice cujo start_char <= pos. Antes isto era
+        um scan linear de trás-p/-frente por chunk → O(chunks × linhas): num var
+        de 11 MB (~24k chunks × ~150k linhas) eram bilhões de iterações Python a
+        cada build de embeddings, tudo dentro do dispatch lock.
+        """
+        j = bisect.bisect_right(line_starts, pos) - 1
+        return j if j >= 0 else 0
 
     # Create chunks with overlap
     step = max(1, chunk_size - overlap)

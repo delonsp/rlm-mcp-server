@@ -66,6 +66,10 @@ class EmbeddingService:
         self._client = None
         self._model = os.getenv("RLM_EMBEDDING_MODEL", DEFAULT_OPENAI_MODEL)
         self._dimension = DEFAULT_DIMENSION
+        # Última falha de API (não token-cap). Setada em _embed_call, limpa no
+        # início de embed_query — permite ao search distinguir "0 resultados" de
+        # "API caiu" em vez de mostrar "No results" durante um outage.
+        self.last_error: Optional[str] = None
 
         if self.mode == "openai":
             api_key = os.getenv("OPENAI_API_KEY", "")
@@ -126,6 +130,8 @@ class EmbeddingService:
         if not query or self.mode == "disabled":
             return []
 
+        # Zera o marcador antes: se ficar setado depois, foi ESTA query que falhou.
+        self.last_error = None
         results = self.embed_texts([query])
         return results[0] if results else []
 
@@ -185,6 +191,8 @@ class EmbeddingService:
             # só para este batch (mantém alinhamento) e segue. Antes, qualquer
             # falha jogava fora todos os embeddings já computados.
             logger.error(f"OpenAI embedding error (batch de {len(batch)}): {e}")
+            # Marca a falha p/ o search distinguir outage de "0 resultados".
+            self.last_error = msg
             return [[] for _ in batch]
 
 

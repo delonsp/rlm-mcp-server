@@ -10,7 +10,7 @@ import logging
 from ... import response_formatter as fmt
 from ... import code_parser
 from ...indexer import get_index, set_index, create_index, hybrid_search
-from ...services.persistence_service import ensure_embeddings
+from ...services.persistence_service import ensure_embeddings, invalidate_stale_indices
 from ..context import ToolContext
 
 logger = logging.getLogger("rlm-http")
@@ -39,6 +39,12 @@ def rlm_search_index(arguments: dict, ctx: ToolContext) -> dict:
         source_var = repl.variables.get(var_name)
         source_str = source_var if isinstance(source_var, str) else None
 
+        # Invalida índices stale: se o var foi rebindado (rlm_execute não passa
+        # por persist_and_index), o cache keyword/vetorial ainda aponta p/ o texto
+        # antigo → citação errada. Rebuild acontece logo abaixo sob demanda.
+        if source_str is not None:
+            invalidate_stale_indices(var_name, source_str)
+
         if mode in ("semantic", "hybrid"):
             # Lazy-build embeddings se faltarem (var criado via rlm_execute
             # ou cujo embed falhou no load). Persiste server-side: o custo
@@ -58,6 +64,16 @@ def rlm_search_index(arguments: dict, ctx: ToolContext) -> dict:
                 offset=offset, limit=limit,
                 max_results=max_results,
             )
+            # Distinguir outage de "0 resultados": se a API de embeddings acabou
+            # de falhar, a perna semântica veio vazia por ERRO, não por ausência
+            # de match. Avisa em vez de deixar parecer "nada encontrado".
+            from ...embeddings import get_embedding_service
+            emb_err = get_embedding_service().last_error
+            if emb_err:
+                text += (
+                    f"\n\n⚠️ Busca semântica indisponível (erro na API de embeddings: "
+                    f"{emb_err[:150]}). Resultados acima são só da perna keyword."
+                )
             return {"content": [{"type": "text", "text": text}]}
         else:
             # Keyword: BM25-ranked por default. Substring legacy fica só

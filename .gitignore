@@ -1,3 +1,9 @@
+# Ruído do repo (não versionar)
+progress.txt
+*.log
+*.tmp
+.DS_Store
+
 # Python
 __pycache__/
 *.py[cod]
@@ -75,3 +81,4 @@ tests/*
 !tests/test_embedding_batching.py
 !tests/test_var_info_embeddings.py
 !tests/test_repertory.py
+!tests/test_review_fixes.py

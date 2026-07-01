@@ -10,7 +10,7 @@ import logging
 import threading
 from collections import defaultdict
 from typing import Dict, List, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 logger = logging.getLogger("rlm-rate-limiter")
 

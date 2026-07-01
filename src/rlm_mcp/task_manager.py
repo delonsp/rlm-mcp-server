@@ -120,18 +120,23 @@ class TaskManager:
             try:
                 result = func(*args, progress_callback=progress_callback, **kwargs)
                 with self._lock:
-                    task.status = "completed"
-                    task.completed_at = datetime.now()
-                    task.progress = 1.0
-                    task.result = result
-                    task.progress_message = "done"
+                    # Não sobrescrever um cancel que o usuário já viu: future.cancel()
+                    # não interrompe uma thread em execução, então sem esta guarda o
+                    # status "cancelled" era revertido p/ "completed" ao terminar.
+                    if task.status != "cancelled":
+                        task.status = "completed"
+                        task.completed_at = datetime.now()
+                        task.progress = 1.0
+                        task.result = result
+                        task.progress_message = "done"
                 logger.info(f"Task {task_id} completed ({tool_name})")
             except Exception as e:
                 with self._lock:
-                    task.status = "failed"
-                    task.completed_at = datetime.now()
-                    task.error = str(e)
-                    task.progress_message = f"error: {str(e)[:100]}"
+                    if task.status != "cancelled":
+                        task.status = "failed"
+                        task.completed_at = datetime.now()
+                        task.error = str(e)
+                        task.progress_message = f"error: {str(e)[:100]}"
                 logger.exception(f"Task {task_id} failed ({tool_name}): {e}")
 
         future = self._executor.submit(wrapper)

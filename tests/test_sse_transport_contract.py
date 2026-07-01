@@ -7,7 +7,6 @@ cliente SSE ignora por spec). Agora: 404 imediato, sem executar.
 import asyncio
 
 import httpx
-import pytest
 from fastapi.testclient import TestClient
 
 from rlm_mcp import http_server as hs

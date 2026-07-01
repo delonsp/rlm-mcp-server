@@ -1,7 +1,6 @@
 """Tests for search output limiting: max_results cap, pagination, summary headers."""
 
 import os
-import pytest
 
 # Force normal verbosity for readable output in tests
 os.environ["RLM_RESPONSE_VERBOSITY"] = "normal"

@@ -473,7 +473,12 @@ async def lifespan(app: FastAPI):
                     # Restaurar índice keyword se existir
                     index_data = persistence.load_index(name)
                     if index_data:
-                        set_index(name, TextIndex.from_dict(index_data))
+                        restored_idx = TextIndex.from_dict(index_data)
+                        # Seed do fingerprint com o texto restaurado — evita que a
+                        # 1ª busca pós-restart invalide um índice ainda válido.
+                        from .indexer import fingerprint_source
+                        restored_idx.source_fingerprint = fingerprint_source(value)
+                        set_index(name, restored_idx)
                     # Restaurar embeddings vetoriais se existirem. from_persisted
                     # funde tudo na matriz float32 compacta e descarta as listas
                     # cruas; o flag is_boilerplate é recomputado do texto lá dentro
@@ -713,6 +718,18 @@ def handle_mcp_request(request: MCPRequest, client_id: str | None = None) -> MCP
         elif method == "tools/call":
             tool_name = params.get("name", "")
             tool_args = params.get("arguments", {})
+            # Só tools ANUNCIADOS em tools/list são chamáveis pelo wire. Handlers
+            # internos (rlm_collection_create, rlm_batch_*, ...) existem em
+            # TOOL_HANDLERS mas não em TOOL_SCHEMAS: são alcançados só via
+            # ctx.call_tool (routers/batch), nunca diretamente por um cliente.
+            if tool_name not in _ANNOUNCED_TOOL_NAMES:
+                return MCPResponse(
+                    id=request.id,
+                    error={
+                        "code": -32602,
+                        "message": f"Unknown tool: {tool_name}"
+                    }
+                )
             result = call_tool(tool_name, tool_args, client_id=client_id)
             return MCPResponse(
                 id=request.id,
@@ -845,6 +862,11 @@ def get_tools_list() -> list[dict]:
     return TOOL_SCHEMAS
 
 
+# Nomes dos tools ANUNCIADOS (tools/list). Usado no wire (tools/call) p/ rejeitar
+# handlers internos que só devem ser alcançados via ctx.call_tool.
+_ANNOUNCED_TOOL_NAMES = frozenset(t["name"] for t in TOOL_SCHEMAS)
+
+
 def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
     """Executa uma tool e retorna resultado.
 
@@ -931,8 +953,12 @@ async def health_check():
 
 
 @app.get("/metrics")
-async def metrics_endpoint():
+async def metrics_endpoint(_: bool = Depends(verify_api_key)):
     """Returns server metrics including request counts, errors, and latency statistics.
+
+    Gated pelo Bearer token: sem isto, `tool_calls_by_name` + contadores por
+    endpoint + percentis de latência vazavam publicamente (recon num host de
+    produção). /health segue aberto (só memória+versão, sem segredo).
 
     Metrics include:
     - total_requests: Total number of requests processed

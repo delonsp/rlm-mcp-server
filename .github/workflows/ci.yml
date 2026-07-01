@@ -1,0 +1,35 @@
+name: CI
+
+# Roda a suíte + lint em push/PR na main. Antes NÃO havia gate: o Dokploy
+# auto-deploya main sem rodar teste nenhum (o único gate era pós-deploy, o
+# qa_extensive.py). Isto fecha o buraco: um push que quebra os ~230 testes
+# falha o check ANTES de virar deploy.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies (locked)
+        run: uv sync --frozen --extra dev
+
+      - name: Lint (ruff)
+        run: uv run ruff check src/ tests/
+
+      - name: Run tests
+        run: uv run pytest tests/ -q

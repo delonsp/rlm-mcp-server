@@ -360,8 +360,10 @@ class PersistenceManager:
 
                 for chunk in chunks:
                     embedding = chunk.get("embedding", [])
-                    if not embedding:
-                        continue
+                    # Persist chunks SEM vetor também (blob de lista vazia): sem
+                    # isto, o restart perdia a contagem real e cobertura parcial
+                    # virava "100%" silencioso (emb:X/Y sumia). load_embeddings
+                    # devolve [] p/ esses → has_vec=False → coverage correta.
                     # Store embedding as pickle+zlib compressed blob
                     emb_blob = zlib.compress(pickle.dumps(embedding))
                     cursor.execute("""

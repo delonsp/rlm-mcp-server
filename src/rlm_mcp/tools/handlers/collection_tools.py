@@ -23,6 +23,15 @@ logger = logging.getLogger("rlm-http")
 
 def rlm_collection(arguments: dict, ctx: ToolContext) -> dict:
     action = arguments.get("action", "list")
+    # Nome obrigatório e não-vazio nas ações que operam sobre uma coleção. Antes
+    # só 'delete' validava; create/add/info/rebuild/search propagavam "" e
+    # inseriam/consultavam coleção sem nome no SQLite silenciosamente.
+    if action in ("create", "add", "info", "rebuild", "delete", "search"):
+        if not str(arguments.get("name", "")).strip():
+            return {
+                "content": [{"type": "text", "text": f"Erro: 'name' da coleção é obrigatório para action='{action}'"}],
+                "isError": True,
+            }
     if action == "create":
         name = "rlm_collection_create"
         arguments = {"name": arguments.get("name", ""), "description": arguments.get("description")}

@@ -5,7 +5,6 @@ da OpenAI → 400 em cascata → vars sem embedding ou com cobertura parcial
 silenciosa. Fix: estimativa conservadora (2 chars/token) + split-retry no 400.
 """
 
-import pytest
 
 from rlm_mcp.embeddings import EmbeddingService, _pack_batches
 

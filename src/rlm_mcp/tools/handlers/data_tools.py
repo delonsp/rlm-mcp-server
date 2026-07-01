@@ -92,7 +92,10 @@ def rlm_load_file(arguments: dict, ctx: ToolContext) -> dict:
 
     import os.path
     real_path = os.path.realpath(path)
-    if not real_path.startswith("/data"):
+    # `startswith("/data")` casava irmãos como /database, /data-backup: um symlink
+    # dentro de /data resolvendo p/ lá escapava a sandbox de leitura. Exigir a
+    # barra (ou o dir exato) fecha isso.
+    if real_path != "/data" and not real_path.startswith("/data/"):
         return {
             "content": [
                 {"type": "text", "text": "Erro: Path traversal detectado"}
@@ -130,6 +133,10 @@ def rlm_load_file(arguments: dict, ctx: ToolContext) -> dict:
             if var_name in repl.variable_metadata:
                 repl.variable_metadata[var_name].source = "file"
 
+            # Persistir + indexar (igual load_data/load_s3): sem isto o var some no
+            # restart e nunca ganha índice/embeddings. Achado corretude #6.
+            persist_and_index(var_name, repl.variables.get(var_name), repl)
+
             text = fmt.format_file_load_pdf(path, pdf_result, result, var_name)
             return {"content": [{"type": "text", "text": text}]}
 
@@ -144,6 +151,14 @@ def rlm_load_file(arguments: dict, ctx: ToolContext) -> dict:
             data=data,
             data_type=actual_type
         )
+        # Falha de load não deve seguir como sucesso (achado corretude #6).
+        if not result.success:
+            return {
+                "content": [
+                    {"type": "text", "text": fmt.format_execution_result(result)}
+                ],
+                "isError": True
+            }
         if var_name in repl.variable_metadata:
             repl.variable_metadata[var_name].source = f"file:{path}"
 
@@ -154,6 +169,10 @@ def rlm_load_file(arguments: dict, ctx: ToolContext) -> dict:
                 structure = code_parser.parse(data, lang)
                 if structure:
                     repl.variables[f"_code_structure_{var_name}"] = structure
+
+        # Persistir + indexar (igual load_data/load_s3): sem isto o var some no
+        # restart e nunca ganha índice/embeddings. Achado corretude #6.
+        persist_and_index(var_name, repl.variables.get(var_name), repl)
 
         return {
             "content": [
