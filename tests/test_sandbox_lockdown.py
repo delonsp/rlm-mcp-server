@@ -9,8 +9,8 @@ já são deny-listed na 1ª camada (AST), o que daria FALSO-POSITIVO. Em vez dis
 spawnam um processo FORKADO que chama ``apply_child_lockdown`` direto e então
 tenta a operação real (``open``/``socket``), provando o isolamento no kernel.
 
-Como ``tests/*`` é gitignored (exceto ``test_sandbox.py``), este arquivo não é
-versionado — roda no container Linux durante a validação real.
+Este arquivo é versionado e roda no CI Linux; testes de caminhos específicos
+do container são ignorados quando esses caminhos não existem.
 """
 
 import os
@@ -170,11 +170,22 @@ def test_seccomp_prog_structure_aarch64():
     assert prog[kill_idx].k == L.SECCOMP_RET_KILL_PROCESS
 
 
-def test_invalid_mode_normalizes_to_warn():
+def test_invalid_mode_normalizes_to_warn(tmp_path):
     """Typo num modo de segurança NÃO pode virar fail-open: vira 'warn' c/ motivo, sem raise."""
-    st = L.apply_child_lockdown(mode="requred")  # typo proposital de "required"
-    assert st.mode == "warn"
-    assert any("inválido" in r for r in st.reasons)
+    def _child(w):
+        # 'warn' instala as proteções disponíveis. Isso é irreversível e deve
+        # ocorrer só no filho; no runner bloqueava os testes seguintes no Linux.
+        st = L.apply_child_lockdown(mode="requred")  # typo proposital
+        assert st.mode == "warn"
+        assert any("inválido" in r for r in st.reasons)
+        os.write(w, b"NORMALIZED")
+        return 0
+
+    ec, msg = _run_child(_child)
+    assert ec == 0 and msg == "NORMALIZED", (ec, msg)
+    probe = tmp_path / "parent-remains-unrestricted.txt"
+    probe.write_text("parent")
+    assert probe.read_text() == "parent"
 
 
 @pytest.mark.skipif(_IS_LINUX, reason="comportamento específico de não-Linux")

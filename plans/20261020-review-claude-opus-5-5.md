@@ -140,3 +140,12 @@ o parecer original acima e seu arquivo integral permanecem preservados.
 
 A publicação atual é manual via `ssh magalu`; push para main executa somente CI.
 Os P3 e os limites de validação clínica listados acima permanecem registrados.
+
+### Ajuste descoberto no CI Linux
+
+O primeiro push revelou um defeito preexistente em
+`test_invalid_mode_normalizes_to_warn`: o teste instalava Landlock no próprio
+processo do pytest. Isso tornava `/tmp` inacessível e contaminava os testes
+seguintes e o encerramento da suíte. A chamada agora ocorre em um processo filho,
+como os demais testes de isolamento; o pai verifica que ainda consegue ler e
+escrever seu arquivo temporário. As proteções de produção permanecem inalteradas.
