@@ -47,11 +47,12 @@ def test_tokenize_drops_stopwords():
     assert "gato" in toks and "casa" in toks and "pedra" in toks
 
 
-def test_tokenize_min_len_drops_single_char():
-    # 'd' (de vitamina D) cai com min-len default 2 — limitação conhecida
+def test_tokenize_preserves_contextual_single_char():
+    # Qualificadores não podem confundir vitaminas A, D e E.
     toks = _bm25_tokenize("vitamina D")
     assert "vitamina" in toks
-    assert "d" not in toks
+    assert "d" in toks
+    assert _bm25_tokenize("a e o") == []
 
 
 def test_tokenize_empty():

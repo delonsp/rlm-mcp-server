@@ -8,7 +8,7 @@ permitindo buscas rápidas sem varrer o texto todo.
 import os
 import re
 import math
-import hashlib
+import heapq
 import logging
 import threading
 import unicodedata
@@ -17,33 +17,16 @@ from typing import Optional
 from dataclasses import dataclass, field
 
 from .stopwords import STOPWORDS
+from .text_version import content_version
 
 logger = logging.getLogger("rlm-mcp.indexer")
 
 
 def fingerprint_source(text) -> str:
-    """Impressão barata do texto-fonte de um índice, p/ detectar rebind.
-
-    Um índice fica keyed pelo NOME do var; se o var é rebindado (ex.: via
-    rlm_execute) o texto muda mas o cache continua com linhas/snippets do texto
-    ANTIGO — o pior modo de falha p/ rastreabilidade de citação. Comparar esta
-    fingerprint invalida o cache automaticamente (mesma ideia do repertory).
-
-    Não é hash criptográfico do texto inteiro (custaria O(n) por busca em vars de
-    dezenas de MB): combina tamanho + sha256 de amostras (início/meio/fim). Pega
-    qualquer rebind real; só um par de textos com mesmo tamanho E mesmas amostras
-    escaparia — irrelevante na prática.
-    """
+    """Exact source version; unchanged strings reuse a bounded identity cache."""
     if not isinstance(text, str):
         text = "" if text is None else str(text)
-    n = len(text)
-    if n <= 192_000:
-        sample = text
-    else:
-        mid = n // 2
-        sample = text[:64_000] + text[mid - 32_000:mid + 32_000] + text[-64_000:]
-    h = hashlib.sha256(sample.encode("utf-8", "replace")).hexdigest()[:16]
-    return f"{n}:{h}"
+    return f"{len(text)}:{content_version(text)}"
 
 # Termos padrão para indexação (pode ser expandido)
 DEFAULT_INDEX_TERMS = {
@@ -247,7 +230,7 @@ class TextIndex:
     def search_bm25(self, query_terms: list[str], source_text: str = None,
                     limit: int = 20, offset: int = 0,
                     k1: float = None, b: float = None,
-                    require_all: bool = False) -> list[dict]:
+                    require_all: bool = False, query_language: str = "pt") -> list[dict]:
         """Busca BM25: retorna segmentos ranqueados por relevância.
 
         Args:
@@ -269,9 +252,23 @@ class TextIndex:
         k1 = _BM25_K1 if k1 is None else k1
         b = _BM25_B if b is None else b
 
-        q_tokens: list[str] = []
-        for t in query_terms:
-            q_tokens.extend(_bm25_tokenize(t))
+        if query_language not in ("pt", "en"):
+            raise ValueError("query_language deve ser 'pt' ou 'en'.")
+        q_tokens = _bm25_tokenize(" ".join(query_terms))
+        # Em português, 'no' é contração (em + o); em inglês é negação.
+        if query_language == "pt":
+            q_tokens = [token for token in q_tokens if token != "no"]
+        # Termos separados pelo chamador podem vir em qualquer ordem.
+        normalized_terms = [_fold_accents(term.lower().strip()) for term in query_terms]
+        if any(term in _QUALIFIERS for term in normalized_terms):
+            for i, term in enumerate(normalized_terms):
+                # 'A e D' contém uma conjunção; 'E, vitamina' contém um qualificador.
+                conjunction = (term == 'e' and 0 < i < len(normalized_terms) - 1
+                               and len(normalized_terms[i - 1]) == 1
+                               and len(normalized_terms[i + 1]) == 1
+                               and query_terms[i].strip() != 'E')
+                if len(term) == 1 and term.isalpha() and not conjunction:
+                    q_tokens.append(term)
         q_set = set(q_tokens)
         if not q_set:
             return []
@@ -279,7 +276,7 @@ class TextIndex:
         N = self.bm25_n
         avgdl = self.bm25_avgdl or 1.0
         scores: dict[int, float] = defaultdict(float)
-        for term in q_set:
+        for term in sorted(q_set):
             postings = self.bm25_postings.get(term)
             if not postings:
                 continue
@@ -292,8 +289,6 @@ class TextIndex:
         if not scores:
             return []
 
-        ranked = sorted(scores.items(), key=lambda x: -x[1])
-
         # require_all: pós-filtro por interseção de segmentos (preserva ranking BM25)
         if require_all and len(q_set) > 1:
             seg_sets = []
@@ -301,8 +296,11 @@ class TextIndex:
                 postings = self.bm25_postings.get(term)
                 seg_sets.append({sid for sid, _ in postings} if postings else set())
             common = set.intersection(*seg_sets) if seg_sets else set()
-            ranked = [(sid, sc) for sid, sc in ranked if sid in common]
+            scores = {sid: sc for sid, sc in scores.items() if sid in common}
 
+        # Select only the requested prefix; deterministic ties preserve pagination.
+        ranked = heapq.nsmallest(max(0, offset + limit), scores.items(),
+                                key=lambda item: (-item[1], item[0]))
         page = ranked[offset:offset + limit]
         hits = []
         for seg_id, sc in page:
@@ -339,7 +337,8 @@ class TextIndex:
             "total_lines": self.total_lines,
             "terms": self.terms,
             "structure": self.structure,
-            "custom_terms": self.custom_terms
+            "custom_terms": self.custom_terms,
+            "source_fingerprint": self.source_fingerprint,
         }
 
     @classmethod
@@ -351,7 +350,8 @@ class TextIndex:
             total_lines=data["total_lines"],
             terms=data.get("terms", {}),
             structure=data.get("structure", {}),
-            custom_terms=data.get("custom_terms", [])
+            custom_terms=data.get("custom_terms", []),
+            source_fingerprint=data.get("source_fingerprint", ""),
         )
 
 
@@ -520,6 +520,15 @@ def clear_index(var_name: str):
     _indices_cache.pop(var_name, None)
 
 
+def invalidate_source_indices(var_name: str) -> list[str]:
+    """Drop a source index and collection snapshots that retain that source."""
+    dependents = [name for name, index in list(_indices_cache.items())
+                  if any(n == var_name for n, _ in getattr(index, '_collection_sources', ()))]
+    for name in [var_name, *dependents]:
+        clear_index(name)
+    return dependents
+
+
 def clear_all_indices():
     """Limpa todo o cache de índices."""
     _indices_cache.clear()
@@ -548,8 +557,12 @@ _BM25_TARGET_TOKENS = _env_int("RLM_BM25_TARGET_TOKENS", 120)
 _BM25_K1 = _env_float("RLM_BM25_K1", 1.2)
 _BM25_B = _env_float("RLM_BM25_B", 0.75)
 # Tokens com len < este são dropados. Default 2 (casa Matryoshka/_extract_key_terms).
-# Limitação conhecida: derruba "vitamina D", "K2" → baixar p/ 1 via env se preciso.
+# Qualificadores após vitamina/hepatite/tipo têm exceção explícita abaixo.
 _BM25_MIN_TOKEN_LEN = _env_int("RLM_BM25_MIN_TOKEN_LEN", 2)
+_QUALIFIERS = frozenset({'vitamina', 'vitamin', 'hepatite', 'hepatitis', 'tipo', 'type'})
+_NEGATIONS = frozenset({'nao', 'sem', 'nunca', 'not', 'no', 'without', 'never'})
+_QUALIFIER_START_RE = re.compile(r'\b(?:' + '|'.join(sorted(_QUALIFIERS)) + r')\s+([a-z])\b')
+_QUALIFIER_NEXT_RE = re.compile(r'(?:\s*[,/;]\s*|\s+(?:e|ou|and|or)\s+)([a-z])\b')
 # Teto de postings antes de degradar p/ legacy (backstop, não cap silencioso).
 _BM25_MAX_POSTINGS = _env_int("RLM_BM25_MAX_POSTINGS", 5_000_000)
 # Janela (em linhas) p/ fundir segmento BM25 e chunk semântico cujos ranges quase
@@ -593,9 +606,18 @@ def _bm25_tokenize(text: str) -> list[str]:
     if not text:
         return []
     folded = _fold_accents(text.lower())
-    words = _KEY_TERM_RE.split(folded)
-    return [w for w in words
-            if len(w) >= _BM25_MIN_TOKEN_LEN and w not in STOPWORDS]
+    # Retém letras qualificadoras e enumerações, sem promover artigos/conjunções.
+    letter_positions = set()
+    for match in _QUALIFIER_START_RE.finditer(folded):
+        letter_positions.add(match.start(1))
+        end = match.end()
+        while (following := _QUALIFIER_NEXT_RE.match(folded, end)) is not None:
+            letter_positions.add(following.start(1))
+            end = following.end()
+    return [match[0] for match in re.finditer(r'[0-9a-zà-ÿ]+', folded) if (
+        (len(match[0]) >= _BM25_MIN_TOKEN_LEN and (match[0] not in STOPWORDS or match[0] in _NEGATIONS))
+        or match.start() in letter_positions
+    )]
 
 
 def _segment_lines(text: str, target_tokens: int = None) -> list[tuple[int, int]]:
@@ -683,6 +705,7 @@ def hybrid_search(
     limit: int = 20,
     offset: int = 0,
     source_text: str = None,
+    query_language: str = "pt",
 ) -> dict:
     """Perform keyword, semantic, or hybrid search.
 
@@ -728,7 +751,8 @@ def hybrid_search(
         result["stats"]["keyword"] = keyword_index.get_stats()
         if _BM25_ENABLED and source_text:
             ranked = keyword_index.search_bm25(
-                terms, source_text, limit=lim, offset=off, require_all=req_all
+                terms, source_text, limit=lim, offset=off, require_all=req_all,
+                query_language=query_language,
             )
             if not keyword_index._bm25_degraded:
                 return ranked

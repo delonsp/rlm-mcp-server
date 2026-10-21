@@ -26,6 +26,7 @@ ToolHandler = Callable[[dict, ToolContext], dict]
 TOOL_HANDLERS: dict[str, ToolHandler] = {
     # Dados / REPL
     "rlm_execute": data_tools.rlm_execute,
+    "rlm_read": data_tools.rlm_read,
     "rlm_load_data": data_tools.rlm_load_data,
     "rlm_load_file": data_tools.rlm_load_file,
     "rlm_list_vars": data_tools.rlm_list_vars,

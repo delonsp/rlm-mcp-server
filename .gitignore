@@ -82,3 +82,11 @@ tests/*
 !tests/test_var_info_embeddings.py
 !tests/test_repertory.py
 !tests/test_review_fixes.py
+!tests/test_document_ingestion.py
+!tests/test_collection_freshness.py
+!tests/test_document_read.py
+!tests/test_retrieval_accuracy.py
+!tests/test_query_embedding_cache.py
+!tests/test_tool_timing.py
+
+!tests/test_review_regressions.py

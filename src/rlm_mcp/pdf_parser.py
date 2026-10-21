@@ -17,6 +17,7 @@ from typing import Optional, Callable
 from dataclasses import dataclass
 
 from .embeddings import sanitize_text
+from .text_quality import text_quality_error
 
 logger = logging.getLogger("rlm-mcp.pdf")
 
@@ -29,6 +30,18 @@ class PDFExtractionResult:
     method: str  # "pdfplumber" ou "mistral_ocr"
     success: bool
     error: Optional[str] = None
+
+
+def _validated(result: PDFExtractionResult) -> PDFExtractionResult:
+    """Never report corrupted or empty extraction as successful."""
+    if result.success:
+        error = text_quality_error(result.text)
+        if not result.text.strip():
+            error = "Nenhum texto extraído do PDF."
+        if error:
+            result.success = False
+            result.error = error
+    return result
 
 
 def extract_with_pdfplumber(
@@ -70,7 +83,9 @@ def extract_with_pdfplumber(
                         f"pdfplumber: page {i + 1}/{page_count}"
                     )
 
-        full_text = sanitize_text("\n\n".join(text_parts))
+        raw_text = "\n\n".join(text_parts)
+        quality_error = text_quality_error(raw_text, allow_sparse_nul=True)
+        full_text = sanitize_text(raw_text)
 
         if progress_callback:
             progress_callback(1.0, "pdfplumber: done")
@@ -79,7 +94,8 @@ def extract_with_pdfplumber(
             text=full_text,
             pages=page_count,
             method="pdfplumber",
-            success=True
+            success=not bool(quality_error),
+            error=quality_error,
         )
 
     except Exception as e:
@@ -158,7 +174,9 @@ def extract_with_mistral_ocr(
             if page_text.strip():
                 text_parts.append(f"--- Página {i + 1} ---\n{page_text}")
 
-        full_text = sanitize_text("\n\n".join(text_parts))
+        raw_text = "\n\n".join(text_parts)
+        quality_error = text_quality_error(raw_text, allow_sparse_nul=True)
+        full_text = sanitize_text(raw_text)
         page_count = len(ocr_response.pages)
 
         if progress_callback:
@@ -168,7 +186,8 @@ def extract_with_mistral_ocr(
             text=full_text,
             pages=page_count,
             method="mistral_ocr",
-            success=True
+            success=not bool(quality_error),
+            error=quality_error,
         )
 
     except Exception as e:
@@ -271,14 +290,14 @@ def extract_pdf(
         )
 
     if method == "pdfplumber":
-        return extract_with_pdfplumber(pdf_path, progress_callback=progress_callback)
+        return _validated(extract_with_pdfplumber(pdf_path, progress_callback=progress_callback))
 
     elif method == "ocr":
-        return extract_with_mistral_ocr(pdf_path, progress_callback=progress_callback)
+        return _validated(extract_with_mistral_ocr(pdf_path, progress_callback=progress_callback))
 
     elif method == "auto":
         # Tenta pdfplumber primeiro
-        result = extract_with_pdfplumber(pdf_path, progress_callback=progress_callback)
+        result = _validated(extract_with_pdfplumber(pdf_path, progress_callback=progress_callback))
 
         if result.success and len(result.text.strip()) >= min_chars_threshold:
             return result
@@ -289,17 +308,18 @@ def extract_pdf(
             f"tentando Mistral OCR..."
         )
 
-        ocr_result = extract_with_mistral_ocr(pdf_path, progress_callback=progress_callback)
+        ocr_result = _validated(extract_with_mistral_ocr(pdf_path, progress_callback=progress_callback))
 
         # Retorna OCR se funcionou, senão retorna o que tiver
         if ocr_result.success:
             return ocr_result
 
         # Se OCR falhou mas pdfplumber teve algo, retorna pdfplumber
-        if result.text.strip():
+        if result.success and result.text.strip():
             return result
 
-        # Se ambos falharam, retorna erro do OCR (mais informativo)
+        # Preserve os dois diagnósticos quando extração e OCR falharem.
+        ocr_result.error = f"Extração: {result.error or 'texto insuficiente'}. OCR: {ocr_result.error}"
         return ocr_result
 
     else:

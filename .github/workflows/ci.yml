@@ -1,9 +1,7 @@
 name: CI
 
-# Roda a suíte + lint em push/PR na main. Antes NÃO havia gate: o Dokploy
-# auto-deploya main sem rodar teste nenhum (o único gate era pós-deploy, o
-# qa_extensive.py). Isto fecha o buraco: um push que quebra os ~230 testes
-# falha o check ANTES de virar deploy.
+# Roda a suíte + lint em push/PR na main. A publicação no servidor Magalu é
+# manual via Docker Compose: push não faz deploy. Conferir este check antes de publicar.
 
 on:
   push:

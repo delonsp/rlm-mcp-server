@@ -57,7 +57,7 @@ def rlm_search_index(arguments: dict, ctx: ToolContext) -> dict:
                 var_name, terms, mode=mode,
                 require_all=require_all,
                 limit=limit, offset=offset,
-                source_text=source_str,
+                source_text=source_str, query_language=arguments.get("query_language", "pt"),
             )
             text = fmt.format_hybrid_search(
                 search_result, terms, var_name,
@@ -94,7 +94,7 @@ def rlm_search_index(arguments: dict, ctx: ToolContext) -> dict:
                     var_name, terms, mode="keyword",
                     require_all=require_all,
                     limit=limit, offset=offset,
-                    source_text=source_str,
+                    source_text=source_str, query_language=arguments.get("query_language", "pt"),
                 )
                 text = fmt.format_hybrid_search(
                     search_result, terms, var_name,

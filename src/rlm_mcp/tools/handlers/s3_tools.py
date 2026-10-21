@@ -121,9 +121,9 @@ def rlm_load_s3(arguments: dict, ctx: ToolContext) -> dict:
                     }
 
                 data = pdf_result.text
-                result = repl.load_data(name=var_name, data=data, data_type="text")
-                if var_name in repl.variable_metadata:
-                    repl.variable_metadata[var_name].source = "s3"
+                result = repl.load_data(name=var_name, data=data, data_type="text", source=f"s3:{bucket}/{key}")
+                if not result.success:
+                    return {"content": [{"type": "text", "text": result.stderr}], "isError": True}
 
                 # Auto-persistência e indexação
                 value = repl.variables.get(var_name)
@@ -144,9 +144,9 @@ def rlm_load_s3(arguments: dict, ctx: ToolContext) -> dict:
         # Regular file handling
         data = s3.get_object_text(bucket, key)
         actual_type = "text" if data_type == "code" else data_type
-        result = repl.load_data(name=var_name, data=data, data_type=actual_type)
-        if var_name in repl.variable_metadata:
-            repl.variable_metadata[var_name].source = f"s3:{bucket}/{key}"
+        result = repl.load_data(name=var_name, data=data, data_type=actual_type, source=f"s3:{bucket}/{key}")
+        if not result.success:
+            return {"content": [{"type": "text", "text": result.stderr}], "isError": True}
 
         # Auto-parse code structure if data_type="code"
         if data_type == "code" and result.success:
@@ -395,12 +395,10 @@ def rlm_batch_load_s3(arguments: dict, ctx: ToolContext) -> dict:
                 except UnicodeDecodeError:
                     text_data = raw.decode("latin-1")
 
-                result = repl.load_data(name=var_name, data=text_data, data_type=data_type)
-                if var_name in repl.variable_metadata:
-                    repl.variable_metadata[var_name].source = "s3"
-
-                value = repl.variables.get(var_name)
-                persist_and_index(var_name, value, repl)
+                result = repl.load_data(name=var_name, data=text_data, data_type=data_type, source=f"s3:{bucket}/{key}")
+                if result.success:
+                    value = repl.variables.get(var_name)
+                    persist_and_index(var_name, value, repl)
 
                 load_results.append({
                     "name": var_name, "key": key,

@@ -7,6 +7,7 @@ referências a globals viraram acessos via ctx (ToolContext).
 """
 
 import logging
+import json
 
 from ... import response_formatter as fmt
 from ... import code_parser
@@ -14,9 +15,19 @@ from ...pdf_parser import extract_pdf
 from ...persistence import get_persistence
 from ...services.persistence_service import persist_and_index
 from ...vector_index import get_vector_index
+from ...document_reader import read_passage
 from ..context import ToolContext
 
 logger = logging.getLogger("rlm-http")
+
+
+def rlm_read(arguments: dict, ctx: ToolContext) -> dict:
+    """Return exact text and provenance, independent of response verbosity."""
+    try:
+        passage = read_passage(ctx.repl, arguments)
+        return {"content": [{"type": "text", "text": json.dumps(passage, ensure_ascii=False)}]}
+    except (ValueError, KeyError) as error:
+        return {"content": [{"type": "text", "text": str(error)}], "isError": True}
 
 
 def rlm_execute(arguments: dict, ctx: ToolContext) -> dict:
@@ -37,7 +48,6 @@ def rlm_load_data(arguments: dict, ctx: ToolContext) -> dict:
     # "code" loads as text but also auto-parses the code structure
     actual_type = "text" if data_type == "code" else data_type
 
-    # Set source on metadata
     result = repl.load_data(name=var_name, data=data, data_type=actual_type)
     if not result.success:
         # Sem isto, JSON inválido etc. retornava resposta de SUCESSO
@@ -47,8 +57,6 @@ def rlm_load_data(arguments: dict, ctx: ToolContext) -> dict:
             "content": [{"type": "text", "text": result.stderr or "Erro ao carregar dados"}],
             "isError": True
         }
-    if var_name in repl.variable_metadata:
-        repl.variable_metadata[var_name].source = "load_data"
 
     # Auto-parse code structure if data_type="code"
     if data_type == "code" and result.success:
@@ -122,7 +130,7 @@ def rlm_load_file(arguments: dict, ctx: ToolContext) -> dict:
             result = repl.load_data(
                 name=var_name,
                 data=data,
-                data_type="text"
+                data_type="text", source=f"file:{path}"
             )
             if not result.success:
                 # PDF extraiu mas a var não coube/carregou — não mascarar
@@ -130,8 +138,6 @@ def rlm_load_file(arguments: dict, ctx: ToolContext) -> dict:
                     "content": [{"type": "text", "text": result.stderr or "Erro ao carregar dados do PDF"}],
                     "isError": True
                 }
-            if var_name in repl.variable_metadata:
-                repl.variable_metadata[var_name].source = "file"
 
             # Persistir + indexar (igual load_data/load_s3): sem isto o var some no
             # restart e nunca ganha índice/embeddings. Achado corretude #6.
@@ -149,7 +155,7 @@ def rlm_load_file(arguments: dict, ctx: ToolContext) -> dict:
         result = repl.load_data(
             name=var_name,
             data=data,
-            data_type=actual_type
+            data_type=actual_type, source=f"file:{path}"
         )
         # Falha de load não deve seguir como sucesso (achado corretude #6).
         if not result.success:
@@ -159,8 +165,6 @@ def rlm_load_file(arguments: dict, ctx: ToolContext) -> dict:
                 ],
                 "isError": True
             }
-        if var_name in repl.variable_metadata:
-            repl.variable_metadata[var_name].source = f"file:{path}"
 
         # Auto-parse code structure if data_type="code"
         if data_type == "code" and result.success:

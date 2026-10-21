@@ -1,14 +1,33 @@
 # RLM MCP Server
 
-Servidor MCP (Model Context Protocol) que implementa **Recursive Language Models** para análise de dados massivos sem poluir o contexto do Claude.
+Servidor MCP (Model Context Protocol) que implementa **Recursive Language Models** para análise de dados massivos fora do contexto do agente, compatível com **Claude Code e Codex**.
 
 Baseado no paper ["Recursive Language Models"](https://arxiv.org/abs/2512.24601) do MIT CSAIL.
 
+**Instalação atual:** servidor `ssh magalu`, stack Docker Compose em
+`/home/ubuntu/stack/rlm/compose.json` (projeto `rlm-magalu`, serviço `rlm-mcp`).
+O servidor novo não usa Dokploy: **push para `main` não faz deploy**. Preserve o
+compose, suas credenciais e os diretórios `persist/` e `data/` do servidor. Publique
+uma imagem do commit verificado e atualize somente esse serviço; mantenha a imagem
+anterior e backup consistente do SQLite para reversão. As instruções Dokploy e o
+script `deploy-dokploy.sh` abaixo pertencem à instalação antiga.
+
+## Consulta e referências
+
+`rlm_read` devolve passagens paginadas com origem, linhas, páginas conhecidas e
+versão SHA-256. Texto alterado por `rlm_execute` recebe origem `derived:...`.
+Ao continuar por `offset`, envie o `expected_version` da resposta anterior.
+
+A busca lexical usa `query_language="pt"` por padrão. Use `"en"` para manter
+“no” como negação inglesa. Qualificadores como vitamina A/D/E são preservados.
+Coleções avisam quando alguma fonte não está carregada; recarregue-a antes de
+considerar a consulta completa. A busca semântica/híbrida continua por fonte.
+
 ## Por Que Usar?
 
-O Claude Code tradicional:
+Ao carregar documentos inteiros na conversa, o agente:
 - Carrega todo output no contexto
-- Precisa de `/compact` frequente
+- Precisa de compactação frequente
 - Limita análise de arquivos grandes
 
 Com RLM MCP:
@@ -22,7 +41,7 @@ Com RLM MCP:
 ┌─────────────────────────────────────────────────────────────┐
 │  Sua máquina local                                          │
 │  ┌─────────────────────────────────────────────────────┐    │
-│  │  Claude Code                                        │    │
+│  │  Claude Code / Codex                                │    │
 │  │  Tools MCP: rlm_execute, rlm_load_data, etc.       │    │
 │  └──────────────────────┬──────────────────────────────┘    │
 └─────────────────────────┼───────────────────────────────────┘
@@ -69,7 +88,11 @@ docker-compose up -d --build
 3. Build: Docker Compose
 4. Deploy
 
-### 2. Na Máquina Local (Claude Code)
+### 2. Na Máquina Local
+
+O servidor oferece `/mcp` (Streamable HTTP, usado pelo Codex) e `/sse`
+(compatibilidade com clientes SSE). Na instalação do Dr. Alain, a conexão usa
+HTTPS diretamente; o túnel abaixo é uma alternativa para instalações privadas.
 
 #### Opção A: SSH Tunnel (Recomendado)
 
@@ -89,10 +112,39 @@ cd rlm-mcp-server
 pip install -e .
 
 # Teste manualmente
-python -c "from rlm_mcp.server import main; main()"
+python -c "from rlm_mcp.http_server import main; main()"
 ```
 
-### 3. Configure o Claude Code
+### 3A. Configure o Codex
+
+Nesta máquina, o RLM já está configurado em `~/.codex/config.toml`. Para outra
+instalação, adicione uma única entrada ao arquivo pessoal, usando o domínio do
+seu servidor:
+
+```toml
+[mcp_servers.rlm]
+url = "https://rlm.seudominio.com/mcp"
+bearer_token_env_var = "RLM_API_KEY"
+```
+
+Defina `RLM_API_KEY` no ambiente que inicia o Codex, com o mesmo segredo configurado
+no servidor. Não coloque chaves no repositório. Reinicie o Codex após configurar e
+use `codex mcp list` para conferir o cadastro; uma consulta a `rlm_help` verifica
+se o servidor responde.
+
+Para desenvolver, abra `rlm-mcp-server/` como projeto. `AGENTS.md` aponta para
+`CLAUDE.md`, compartilhando as instruções entre os agentes. A pasta principal
+`massive-context-window/` também tem um arquivo de orientação e links locais para
+trabalhar a partir dela. Esses arquivos externos não acompanham um clone do Git.
+
+O arquivo `.codex/config.toml` deste checkout apenas desativa integrações opcionais
+no projeto; ele herda a conexão RLM pessoal. Configurações locais exigem que o
+projeto seja confiável para o Codex. `.mcp.json` não substitui essa configuração.
+
+Referências oficiais: [MCP no Codex](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)
+e [instruções AGENTS.md](https://learn.chatgpt.com/docs/agent-configuration/agents-md).
+
+### 3B. Configure o Claude Code
 
 Adicione ao `~/.claude/claude.json`:
 
@@ -141,6 +193,7 @@ claude --mcp-restart
 | `rlm_load_data` | Carrega dados diretamente em variável |
 | `rlm_load_file` | Carrega arquivo do servidor (text, json, csv, lines, **pdf**, **pdf_ocr**) |
 | `rlm_execute` | Executa código Python |
+| `rlm_read` | Lê passagem exata com fonte, linhas, páginas conhecidas e versão |
 | `rlm_list_vars` | Lista variáveis disponíveis |
 | `rlm_var_info` | Info detalhada de uma variável |
 | `rlm_clear` | Limpa variáveis |
@@ -160,7 +213,26 @@ Dentro do código executado via `rlm_execute`, estas funções estão disponíve
 | `llm_stats()` | Retorna estatísticas de uso |
 | `llm_reset_counter()` | Reseta contador de chamadas |
 
-### Exemplos de Uso no Claude Code
+### Ler e citar uma passagem
+
+Depois de encontrar uma fonte e linha na busca:
+
+```python
+rlm_read(var_name="livro", start_line=120, line_count=40, max_chars=12000)
+```
+
+A resposta contém o texto exato e a origem conhecida. `pages` usa os marcadores da
+extração; uma lista vazia indica página desconhecida. `next` traz os argumentos para
+continuar a leitura, incluindo a versão: a continuação é recusada se o texto mudar.
+Isso evita o limite de 500 caracteres do modo compacto de `rlm_execute`.
+
+As coleções se atualizam na próxima busca após a alteração de uma fonte. PDF bruto
+carregado como texto e corrupção evidente são rejeitados antes de substituir dados.
+A validação automática não substitui a conferência da extração e das referências.
+
+Detalhes da revisão e medidas locais: [plano e resultados](plans/20261020-acuracia-eficiencia.md).
+
+### Exemplos de Uso no Claude Code ou Codex
 
 **Analisar logs massivos:**
 
@@ -322,24 +394,17 @@ O sandbox bloqueia imports perigosos. Use apenas imports permitidos.
 
 ## Desenvolvimento
 
+Execute na raiz de `rlm-mcp-server/`, usando o mesmo arquivo de versões do CI:
+
 ```bash
-# Clone
-git clone https://github.com/seu-usuario/rlm-mcp-server.git
-cd rlm-mcp-server
-
-# Ambiente virtual
-python -m venv venv
-source venv/bin/activate
-
-# Instale em modo desenvolvimento
-pip install -e ".[dev]"
-
-# Testes
-pytest
-
-# Rode localmente
-rlm-mcp
+uv sync --frozen --extra dev
+uv run pytest tests/ -q
+uv run ruff check src/ tests/
 ```
+
+Os testes usam persistência temporária e simulam serviços externos. Para executar
+um servidor local, configure autenticação e um `RLM_PERSIST_DIR` gravável antes de
+usar `uv run rlm-mcp`. A instância de uso diário roda na VPS.
 
 ## Licença
 

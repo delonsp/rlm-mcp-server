@@ -1,0 +1,86 @@
+# Revisão de código — RLM MCP Server (revisor principal: Claude Opus 5.5)
+
+**Escopo:** li `changes.patch` (alterações staged e unstaged contra `0cade55`) e todos os 14 arquivos novos do `manifest.json`. Também li os pontos relevantes dos arquivos completos em `current/`: `repl`, `sandbox_worker`, `persistence`, `search_tools`, `collection_tools`, `vector_index`, `indexer`, `pdf_parser`, `s3_tools`, `http_server` (restauração ao iniciar e `call_tool`) e os testes novos.
+**Modelo:** Claude Opus 5.5 (`claude-opus-5-5`). A confirmação por `modelUsage` cabe ao coordenador.
+**Checks:** reaproveitei os resultados informados: 283 testes passaram, 13 foram pulados, e `ruff` e `git diff --check` passaram. Não executei nada. gitleaks, pip-audit e semgrep não estão instalados. Uma busca manual por segredos fixos no código não encontrou nada novo. Os únicos tokens lidos de requisições estão em `http_server.py:424/432` e já existiam antes do patch.
+
+---
+
+## 1. Segurança (camada própria)
+
+**Nenhum achado P1 ou P2 de segurança foi introduzido pelo patch.**
+
+| # | Sev. | Categoria | Arquivo:linha | Achado | Cenário reproduzível | Correção sugerida |
+|---|---|---|---|---|---|---|
+| S1 | P3 | Memória/DoS | `text_version.py:24-26`, `document_reader.py:40-44`, `collection_builder.py:116` | Três caches novos guardam referências fortes a strings fora da contabilidade de `RLM_MAX_MEMORY_MB`: até 64 MB no cache de versão, até 64 MB nas visões do `rlm_read` e uma geração completa das fontes por coleção em `_collection_sources` | Carregar `livro` (cerca de 40 MB) numa coleção, ler com `rlm_read` e depois executar `rlm_clear(name="livro")` ou deixar o auto-cleanup removê-lo. A memória não é liberada até haver despejo do LRU ou nova busca nessa coleção. Se a coleção nunca mais for consultada, as fontes antigas ficam retidas até reiniciar. O auto-cleanup informa bytes "liberados" que continuam ocupados | Limpar `repl._document_views[name]` em `clear_variable`/`clear_all`/`_auto_cleanup`. Guardar em `_collection_sources` apenas `(nome, id, versão)` em vez da string; a referência ao texto combinado já basta para evitar reuso de `id` |
+
+Itens verificados sem problema:
+
+- **Autenticação:** `rlm_read` passa pelo mesmo `call_tool` e pela mesma autenticação, e foi incluído em `_ANNOUNCED_TOOL_NAMES`.
+- **Entrada do `rlm_read`:** `_integer` rejeita `bool` e valores fora dos limites. Para chave inexistente ou tipo não hasheável, o erro é tratado e devolvido com `isError`.
+- **Tamanho da saída:** limitado a 20 mil caracteres e 200 linhas.
+- **SQL:** toda consulta nova usa parâmetros.
+- **Desserialização:** não há novo uso de `pickle`.
+- **Métricas:** `record_tool_duration` só é chamado depois que o handler existe, então nomes de ferramenta arbitrários não fazem o dicionário crescer. A medição não registra argumentos nem conteúdo.
+- **Logs:** o novo aviso de restauração registra apenas o nome da variável.
+- **Caminho em `source`:** o campo passa a guardar o caminho do arquivo ou a chave S3 na coluna `metadata`. Esse dado vai para o mesmo cliente autenticado, num banco que já guarda o conteúdo inteiro, então não há novo limite de exposição.
+
+---
+
+## 2. Demais achados (lógica, citação, versionamento, desempenho)
+
+| # | Sev. | Dimensão | Arquivo:linha | Achado | Cenário reproduzível | Consequência | Correção sugerida |
+|---|---|---|---|---|---|---|---|
+| L1 | **P2** | Recuperação BM25 | `indexer.py:538`, `indexer.py:583-586`; `stopwords.py:22` | `_NEGATIONS` inclui `'no'`. Em português, "no" é a contração "em + o", listada como stopword. Agora ela é indexada e também exigida nas consultas | `rlm_search_index(var_name="livro", terms=["dor","no","peito"], require_all=True)` deixa de encontrar "Peito: dor ardente", porque exige o token `no`. Sem `require_all`, `no` soma pontuação com IDF baixo, o que gera ruído no ranking da coleção. Usuários são orientados a passar frases como lista de palavras (`["pior","no","calor"]`) | Perda de recall em consultas comuns. O índice ganha postings para uma das palavras mais frequentes do português, aproximando documentos grandes do teto `_BM25_MAX_POSTINGS`, que faz o BM25 degradar | Retirar `'no'` de `_NEGATIONS`. O inglês continua coberto por `not`, `without` e `never`. Acrescentar teste com `["dor","no","peito"]` e `require_all=True` |
+| L2 | **P2** | Extração de PDF | `text_quality.py:17-18` aplicada ao texto bruto em `pdf_parser.py:86-98`; mascaramento em `pdf_parser.py:311-322` | Um único NUL no texto bruto do pdfplumber agora reprova a extração inteira. Antes, `sanitize_text` removia o NUL, e o próprio repositório o descreve como "lixo de extração de PDF" (`vector_index.py:211-213`) | Um PDF digital com um NUL em alguma página, enviado com `data_type="pdf"` (modo automático), tem a extração reprovada. O modo automático então recorre ao OCR da Mistral (custo extra). Sem `MISTRAL_API_KEY`, devolve "MISTRAL_API_KEY não configurada" e oculta o motivo real. Com `method="pdfplumber"`, falha direto | Um PDF que carregava corretamente deixa de carregar, e a mensagem de erro aponta a causa errada. Não é questão de precisão do OCR: o texto era legível | Para extração de PDF, avaliar NUL e controles depois de `sanitize_text`, ou usar razão/limite como nos demais caracteres. Manter o bloqueio absoluto de NUL só em `load_data` direto. Quando ambas as tentativas falharem, incluir os dois erros na mensagem |
+| L3 | **P2** | Completude da coleção | `collection_builder.py:105-106`, `collection_tools.py:292`, `collection_tools.py:480` | `refresh_collection` descarta sem aviso os membros ausentes da memória. O cabeçalho continua dizendo "N vars na coleção" | O auto-cleanup dispara ao passar de 80% de 1024 MB e remove o membro `kent` da memória; ele continua no SQLite e na coleção. A próxima busca na coleção reconstrói o índice sem `kent` e responde "Ranking BM25 … (8 vars na coleção)", mas pesquisou só 7. Antes do patch, o índice antigo ainda continha `kent` | Num acervo clínico, o usuário conclui que uma fonte não contém o termo quando ela nem foi pesquisada. A remoção explícita com `rlm_clear` é coberta por teste e intencional; a remoção pelo auto-cleanup, não | Fazer `refresh_collection` devolver os nomes ausentes e mostrar "⚠️ fontes não carregadas: …" na resposta. Opcionalmente, recarregar membros persistidos com `load_variable` |
+| L4 | **P2** | Procedência da citação | `document_reader.py:65-66`; `sandbox_worker.py:802`, `repl.py:769` | `rlm_read` apresenta `source` como origem do arquivo, mas uma reatribuição pelo `rlm_execute` herda o `source` anterior | `rlm_load_s3(key="books/kent.pdf", name="kent")`, depois `rlm_execute("kent = kent.replace('\n\n','\n')")`, depois `rlm_read(var_name="kent", start_line=120)` retorna `source: "s3:claude-code/books/kent.pdf"` com linhas que não existem na extração persistida. Como a reatribuição não é persistida, após reiniciar as mesmas linhas apontam para outro trecho | A citação "arquivo X, linhas 120–160" fica errada. O campo `version` muda, mas nada registra a versão do momento da carga, então o cliente não percebe a divergência | Ao reatribuir uma variável pelo execute, marcar `source=f"derived:{existing.source}"`. Ou guardar `loaded_version` nos metadados da carga e retornar `source_matches_version` no `rlm_read` |
+| L5 | P3 | Desempenho na reinicialização | `http_server.py:510-511`; `indexer.py:706-709` | Índices de palavras gravados antes do patch, sem `source_fingerprint`, nunca são restaurados e também nunca são regravados, porque o índice criado sob demanda na busca não chama `save_index` | Depois do deploy, a cada reinício, a primeira busca em cada variável refaz `create_index` (64 termos × todas as linhas), sob o lock de dispatch, até a fonte ser recarregada | Latência repetida na primeira busca de cada reinício, para sempre nos índices antigos | Persistir o índice criado sob demanda quando a variável estiver persistida, ou migrar uma única vez na inicialização regravando o índice com o fingerprint |
+| L6 | P3 | Desempenho do versionamento | `text_version.py:9-10`, `persistence_service.py:60` | O cache de versão guarda no máximo 64 MB, medidos por `sys.getsizeof`. Um texto de cerca de 25 milhões de caracteres com qualquer caractere fora do Latin-1 (travessão, aspas curvas) ocupa cerca de 50 MB, e o cache comporta um só | Buscas alternadas em duas fontes grandes com `rlm_search_index` recalculam o SHA-256 completo a cada busca: cerca de 30 MB de UTF-8 temporário e dezenas de ms. O benchmark mede apenas o caso já em cache | Custo O(n) por busca quando o cache é despejado; o plano afirma que só a primeira consulta paga esse custo | Calcular a versão uma vez quando a variável é atribuída (em `load_data` e na fusão do sandbox) e guardá-la em `VariableInfo`. Deixar o cache por `id` só como alternativa |
+| L7 | P3 | Validação de entrada | `text_quality.py:8`, `text_quality.py:19-21` | ESC (`\x1b`) e C1 contam como caracteres corrompidos. Logs com cores ANSI passam de 2% e são rejeitados | Fazer `rlm_load_file("/data/app.log")` de um log colorido (por exemplo `\x1b[32mINFO\x1b[0m …`, 2 ESC em cerca de 60 caracteres, ou seja 3,3%) devolve "caracteres corrompidos em excesso". A análise de logs é um caso de uso documentado no README (linha 218) | Regressão funcional fora do acervo clínico | Excluir `\x1b` da contagem ou remover sequências ANSI antes de medir. Para o acervo, o comportamento não muda |
+| L8 | P3 | Desempenho na gravação | `persistence.py:149-151` | Para comparar, `save_variable` lê o blob anterior inteiro, que pode ter dezenas de MB, a cada gravação | Qualquer recarga de uma fonte grande | Pico de memória e I/O temporários | Comparar primeiro `size_bytes` ou guardar um hash do conteúdo numa coluna |
+
+Pontos verificados e corretos:
+
+- **`rlm_read`, recomposição e linhas:** a paginação por `offset`, `expected_version` e `next` recompõe o texto exatamente (coberto por teste). `line_end` é calculado por `bisect_right(starts, end-1)`. Não há laço infinito, porque com `max_chars ≥ 1` sempre vale `end > start`.
+- **`rlm_read`, páginas:** quando o trecho começa antes do primeiro marcador, a lista de páginas fica vazia.
+- **Convenção de linhas:** o mapeamento da coleção e o `rlm_read` usam ambos linhas a partir de 1, consistentes com `L{line+1}` dos formatadores.
+- **Reuso de coleção:** a comparação por tupla usa identidade antes da igualdade. Não há deadlock: o `_execute_lock` não é reentrante, mas nenhum chamador o mantém ao chamar `refresh_collection`.
+- **Restauração de vetores:** validar cada trecho e linha contra a fonte atual é correto, e a falha de uma variável não interrompe as demais.
+- **Invalidação no SQLite:** fica na mesma transação implícita da gravação.
+- **Paginação do BM25:** `heapq.nsmallest` com desempate `(-score, seg_id)` é estável.
+- **Cache de vetores de consulta:** limitado (128 entradas, consultas de até 8 KB), não guarda falhas e não compartilha o vetor mutável.
+- **Lock do cache de vetores:** ele é mantido durante a chamada de rede, mas `embed_query` só roda sob o lock de dispatch, então isso não muda a concorrência de hoje.
+
+---
+
+## 3. Divergências, limites aceitos e itens já existentes
+
+- **Limites acordados (não são achados):**
+  - Coleção lexical.
+  - Validação de extração conservadora, sem garantia de OCR completo.
+  - Sem atualização automática quando muda só o arquivo no S3.
+  - Sem deploy e sem validação clínica.
+  - `pages` é o índice da página no PDF, não a página impressa. O schema diz "página PDF", mas vale repetir isso ao citar livros.
+- **Já existentes antes do patch, fora do escopo:**
+  - `rlm_clear` não apaga a variável do SQLite.
+  - Qualquer exceção na restauração interrompe as variáveis restantes; o patch só estreitou o `ValueError` dos vetores.
+  - `persist_and_index` refaz os embeddings a cada recarga, mesmo sem mudança no conteúdo.
+  - Token aceito em query string no SSE.
+- **Rejeição de arquivos não UTF-8 (`rlm_load_file`):** arquivos Latin-1 lidos com `errors='replace'` agora são rejeitados por excesso de U+FFFD. Isso é coerente com a política de "corrupção evidente", mas `rlm_load_file` não tem parâmetro de codificação, então o usuário precisa converter o arquivo antes. Fica como decisão de produto.
+- **Skill copiada para o repositório:** o arquivo copiado contém `opencode run --dangerously-skip-permissions` e caminhos pessoais. Foi incluída a pedido do usuário. Como `main` faz deploy automático, convém confirmar que é aceitável publicar isso.
+- **Links do README (`learn.chatgpt.com`):** não verifiquei, porque não posso acessar serviços externos.
+
+---
+
+## 4. Veredito
+
+**Sem bloqueadores (P1) de segurança nem de outras dimensões.** O patch corrige de fato as falhas que motivaram o trabalho: coleção desatualizada, fingerprint por amostragem, vetores obsoletos restaurados após reiniciar, PDF bruto aceito como texto e corte de 500 caracteres na leitura.
+
+**Recomendação: corrigir antes do push para `main`, que faz deploy automático:**
+- **L1:** retirar `'no'` de `_NEGATIONS`. A correção é trivial e afeta consultas em português de uso diário.
+- **L3:** avisar quando uma fonte da coleção não estiver carregada.
+
+**L2** e **L4** também são P2 e merecem decisão explícita, seja corrigir ou documentar como limite. Os P3 podem ficar para depois.
+
+Nenhuma alteração foi feita nos arquivos.

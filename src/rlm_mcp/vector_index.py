@@ -453,24 +453,27 @@ class VectorIndex:
         um 'embedding' cru; os embeddings são fundidos na matriz float32 compacta
         e as listas por-linha são descartadas — o pico de RAM no boot deixa de
         ser O(N listas de floats) e passa a O(matriz).
+
+        Legacy rows have no source version. Recreate the runtime chunk boundaries
+        locally and compare every passage and line before accepting any vectors.
+        A mismatch raises ValueError; the caller can rebuild lazily. This avoids
+        assigning today's fingerprint to yesterday's citations, without an API call.
         """
+        if not isinstance(text_value, str):
+            raise ValueError('Índice vetorial sem fonte de texto válida.')
+        expected = _chunk_text(sanitize_text(text_value))
+        if len(expected) != len(loaded_chunks) or any(
+            (c.chunk_index, c.text, c.line_start, c.line_end)
+            != (saved['chunk_index'], saved['chunk_text'], saved['line_start'], saved['line_end'])
+            for c, saved in zip(expected, loaded_chunks)
+        ):
+            raise ValueError('Trechos vetoriais persistidos não correspondem à fonte atual.')
         vi = cls(var_name=var_name)
-        vi.total_chars = len(text_value) if isinstance(text_value, str) else 0
-        vi.total_lines = text_value.count('\n') + 1 if isinstance(text_value, str) else 0
-        # Seed do fingerprint com o texto restaurado — assim uma busca logo após
-        # o restart NÃO invalida um índice válido (só invalida se o var mudar).
+        vi.total_chars = len(text_value)
+        vi.total_lines = text_value.count('\n') + 1
         from .indexer import fingerprint_source
         vi.source_fingerprint = fingerprint_source(text_value)
-        vi.chunks = [
-            ChunkInfo(
-                chunk_index=c["chunk_index"],
-                text=c["chunk_text"],
-                line_start=c["line_start"],
-                line_end=c["line_end"],
-                is_boilerplate=_classify_boilerplate(c["chunk_text"]),
-            )
-            for c in loaded_chunks
-        ]
+        vi.chunks = expected
         vi._ingest_embeddings([c.get("embedding", []) for c in loaded_chunks])
         return vi
 

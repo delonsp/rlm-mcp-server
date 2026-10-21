@@ -786,6 +786,7 @@ def run_sandboxed(code: str, repl, timeout_s: float,
                            f"excede limite de {repl.max_var_size_mb}MB\n")
                 success = False
                 continue
+            repl._discard_variable_caches(name)
             repl.variables[name] = value
             variables_changed.append(name)
             existing = repl.variable_metadata.get(name)
@@ -799,7 +800,7 @@ def run_sandboxed(code: str, repl, timeout_s: float,
                 last_accessed=now,
                 access_count=(existing.access_count if existing else 0) + 1,
                 pinned=existing.pinned if existing else False,
-                source=existing.source if existing else "execute",
+                source=repl._execution_source(existing),
             )
         cleanup_info = repl._auto_cleanup()
     if cleanup_info:

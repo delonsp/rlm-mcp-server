@@ -9,9 +9,9 @@ Corpos movidos verbatim do call_tool monolítico (http_server).
 import logging
 
 from ... import response_formatter as fmt
-from ...collection_builder import build_collection_combined
+from ...collection_builder import collection_snapshot, refresh_collection
 from ...indexer import (
-    get_index, set_index, clear_index, create_index,
+    get_index, clear_index,
     tokenize_for_fallback, tokenized_collection_scan,
     parse_quoted_terms, format_fallback_banner,
 )
@@ -51,7 +51,7 @@ def rlm_collection(arguments: dict, ctx: ToolContext) -> dict:
         arguments = {"name": arguments.get("name", "")}
     elif action == "search":
         name = "rlm_search_collection"
-        arguments = {"collection": arguments.get("name", ""), "terms": arguments.get("terms", []), "limit": arguments.get("limit", 10), "offset": arguments.get("offset", 0)}
+        arguments = {"collection": arguments.get("name", ""), "terms": arguments.get("terms", []), "limit": arguments.get("limit", 10), "offset": arguments.get("offset", 0), "snippet_len": arguments.get("snippet_len", 150), "query_language": arguments.get("query_language", "pt")}
     else:
         return {"content": [{"type": "text", "text": f"Ação desconhecida: {action}"}], "isError": True}
     # Dispatch to the original handler
@@ -113,22 +113,7 @@ def rlm_collection_add(arguments: dict, ctx: ToolContext) -> dict:
         all_vars = persistence.get_collection_vars(coll_name)
 
         # Texto combinado + mapping via builder único (line-mapping P0)
-        combined_text, var_mapping, _ = build_collection_combined(
-            all_vars, repl.variables
-        )
-
-        if combined_text:
-            combined_var_name = f"_coll_{coll_name}_combined"
-
-            # Salvar variável combinada no REPL
-            repl.variables[combined_var_name] = combined_text
-
-            # Forçar criação de índice (min_chars=0)
-            combined_index = create_index(combined_text, combined_var_name)
-            set_index(combined_var_name, combined_index)
-
-            # Salvar mapeamento como metadado
-            repl.variables[f"_coll_{coll_name}_mapping"] = var_mapping
+        combined_text, _, _ = refresh_collection(repl, coll_name, all_vars)
 
         text = f"✅ {added} variável(is) adicionada(s) à coleção '{coll_name}'"
         text += f"\nVariáveis: {', '.join(var_names)}"
@@ -208,9 +193,7 @@ def rlm_collection_rebuild(arguments: dict, ctx: ToolContext) -> dict:
             }
 
         # Texto combinado + mapping via builder único (line-mapping P0)
-        combined_text, var_mapping, vars_included = build_collection_combined(
-            all_vars, repl.variables
-        )
+        combined_text, _, vars_included = refresh_collection(repl, coll_name, all_vars, force=True)
 
         if not combined_text:
             return {
@@ -222,15 +205,7 @@ def rlm_collection_rebuild(arguments: dict, ctx: ToolContext) -> dict:
 
         combined_var_name = f"_coll_{coll_name}_combined"
 
-        # Salvar variável combinada no REPL
-        repl.variables[combined_var_name] = combined_text
-
-        # Forçar criação de índice (min_chars=0)
-        combined_index = create_index(combined_text, combined_var_name)
-        set_index(combined_var_name, combined_index)
-
-        # Salvar mapeamento como metadado
-        repl.variables[f"_coll_{coll_name}_mapping"] = var_mapping
+        combined_index = get_index(combined_var_name)
 
         stats = combined_index.get_stats()
         text = f"✅ Índice combinado da coleção '{coll_name}' reconstruído!"
@@ -314,9 +289,11 @@ def rlm_search_collection(arguments: dict, ctx: ToolContext) -> dict:
             }
 
         # === OPÇÃO C: Tentar usar índice combinado primeiro ===
-        combined_var_name = f"_coll_{coll_name}_combined"
-        combined_index = get_index(combined_var_name)
-        mapping_var = f"_coll_{coll_name}_mapping"
+        combined_index = collection_snapshot(repl, coll_name, var_names)
+        combined_text = combined_index._collection_text
+        var_mapping = combined_index._collection_mapping
+        loaded_names = {n for n, _ in getattr(combined_index, "_collection_sources", ())}
+        missing_names = [n for n in var_names if n not in loaded_names]
 
         all_results = {}
         bm25_ranked_hits = []  # ordem GLOBAL de relevância (p/ paginação)
@@ -328,13 +305,10 @@ def rlm_search_collection(arguments: dict, ctx: ToolContext) -> dict:
 
         # === BM25 sobre o índice combinado (cobre TODO o vocabulário) ===
         # Substitui o split indexado-vs-fulltext. Frase literal cai no legacy.
-        if (combined_index and not is_phrase_coll
-                and mapping_var in repl.variables
-                and combined_var_name in repl.variables):
-            var_mapping = repl.variables[mapping_var]
-            combined_text = repl.variables[combined_var_name]
+        if not is_phrase_coll:
             bm25_hits = combined_index.search_bm25(
-                terms, combined_text, limit=(limit + offset + 50), offset=0
+                terms, combined_text, limit=(limit + offset + 50), offset=0,
+                query_language=arguments.get("query_language", "pt"),
             )
             if combined_index._bm25_built and not combined_index._bm25_degraded:
                 used_bm25 = True
@@ -361,9 +335,8 @@ def rlm_search_collection(arguments: dict, ctx: ToolContext) -> dict:
                         'contexto': h.get("text", "")[:snippet_len],
                     })
 
-        if not used_bm25 and combined_index and mapping_var in repl.variables:
+        if not used_bm25:
             # Usar índice combinado + fallback híbrido (legacy)
-            var_mapping = repl.variables[mapping_var]
             index_stats = combined_index.get_stats()
             indexed_terms_count = index_stats.get('indexed_terms', 0)
             available_terms = set(combined_index.terms.keys())
@@ -397,8 +370,7 @@ def rlm_search_collection(arguments: dict, ctx: ToolContext) -> dict:
                                 })
 
             # Buscar termos não-indexados via full-text
-            if terms_via_fallback and combined_var_name in repl.variables:
-                combined_text = repl.variables[combined_var_name]
+            if terms_via_fallback:
                 for term in terms_via_fallback:
                     term_lower = term.lower()
                     for line_num, line in enumerate(combined_text.split('\n'), start=1):
@@ -413,45 +385,13 @@ def rlm_search_collection(arguments: dict, ctx: ToolContext) -> dict:
                                     'linha': orig_linha,
                                     'contexto': line.strip()
                                 })
-        elif not used_bm25:
-            # Fallback total: buscar em índices individuais ou full-text
-            terms_via_fallback = terms[:]
-            for var_name in var_names:
-                index = get_index(var_name)
-                if index:
-                    results = index.search_multiple(terms, require_all=False)
-                    if results:
-                        all_results[var_name] = results
-                        terms_via_fallback = []  # Encontrou no índice
-
-            # Se não encontrou em índices individuais, tenta full-text
-            if not all_results and combined_var_name in repl.variables and mapping_var in repl.variables:
-                combined_text = repl.variables[combined_var_name]
-                var_mapping = repl.variables[mapping_var]
-                for term in terms:
-                    term_lower = term.lower()
-                    for line_num, line in enumerate(combined_text.split('\n'), start=1):
-                        if term_lower in line.lower():
-                            if line_num in var_mapping:
-                                orig_var, orig_linha = var_mapping[line_num]
-                                if orig_var not in all_results:
-                                    all_results[orig_var] = {}
-                                if term not in all_results[orig_var]:
-                                    all_results[orig_var][term] = []
-                                all_results[orig_var][term].append({
-                                    'linha': orig_linha,
-                                    'contexto': line.strip()
-                                })
-
         # === Auto-tokenize fallback (phrase-trap) — guardas a/b/c ===
         # A busca acima casa a FRASE literalmente (substring numa linha). Se a
         # frase não bateu mas havia frase, quebramos em tokens e re-buscamos
         # (AND antes de OR, word-boundary). Não dispara se o usuário pediu
         # busca exata via aspas (all_quoted).
         fallback_note = None
-        if (not all_results and is_phrase_coll and not all_quoted
-                and combined_var_name in repl.variables
-                and mapping_var in repl.variables):
+        if not all_results and is_phrase_coll and not all_quoted:
             tok_source = [t for t, q in zip(terms, quoted_flags) if not q]
             # Guard (c) mixed: termo QUOTED não é tokenizado E vira
             # filtro obrigatório no scan (intenção explícita de exato)
@@ -459,8 +399,8 @@ def rlm_search_collection(arguments: dict, ctx: ToolContext) -> dict:
             tokens = tokenize_for_fallback(tok_source)
             if tokens:
                 scan_results, scan_mode = tokenized_collection_scan(
-                    repl.variables[combined_var_name],
-                    repl.variables[mapping_var],
+                    combined_text,
+                    var_mapping,
                     tokens,
                     snippet_len=snippet_len,
                     required_literals=required_literals,
@@ -486,7 +426,7 @@ def rlm_search_collection(arguments: dict, ctx: ToolContext) -> dict:
             text += ("\n💡 A busca de coleção é LEXICAL (casa palavras/tokens). "
                      "Passe termos como array — [\"a\",\"b\"] — em vez de frase. "
                      "Para recall por significado/sinônimo/cross-idioma, use "
-                     "rlm_search_index(var=..., mode=\"hybrid\") por fonte.")
+                     "rlm_search_index(var_name=..., mode=\"hybrid\") por fonte.")
         else:
             lines = [f"🔍 Busca em '{coll_name}': {', '.join(terms)}", ""]
             # Guard (b): transparência — deixa explícito que NÃO foi a busca exata.
@@ -501,7 +441,7 @@ def rlm_search_collection(arguments: dict, ctx: ToolContext) -> dict:
 
             # Stats de busca híbrida
             if used_bm25:
-                lines.append(f"🔎 Ranking BM25 por relevância ({len(var_names)} vars na coleção)")
+                lines.append(f"🔎 Ranking BM25 por relevância ({len(loaded_names)}/{len(var_names)} fontes carregadas)")
                 lines.append("")
             elif terms_via_index and terms_via_fallback:
                 lines.append(f"📊 Busca híbrida: {len(terms_via_index)} via índice, {len(terms_via_fallback)} via full-text")
@@ -516,7 +456,7 @@ def rlm_search_collection(arguments: dict, ctx: ToolContext) -> dict:
                     lines.append(f"   ℹ️  {indexed_terms_count} termos disponíveis no índice")
                 lines.append("")
             elif combined_index:
-                lines.append(f"✅ Usando índice combinado ({len(var_names)} vars, {indexed_terms_count} termos)")
+                lines.append(f"✅ Usando índice combinado ({len(loaded_names)}/{len(var_names)} fontes carregadas, {indexed_terms_count} termos)")
                 lines.append("")
 
             if used_bm25 and bm25_ranked_hits:
@@ -561,9 +501,14 @@ def rlm_search_collection(arguments: dict, ctx: ToolContext) -> dict:
             if not fallback_note:
                 lines.append(
                     "ℹ️ Busca lexical (tokens). Recall por significado/cross-idioma: "
-                    "rlm_search_index(var=..., mode=\"hybrid\") por fonte."
+                    "rlm_search_index(var_name=..., mode=\"hybrid\") por fonte."
                 )
             text = "\n".join(lines)
+
+        if missing_names:
+            text = (f"⚠️ Busca incompleta: {len(loaded_names)}/{len(var_names)} fontes carregadas. "
+                    f"Ausentes ou sem texto: {', '.join(missing_names)}. "
+                    "Recarregue as fontes para consultar toda a coleção.\n\n" + text)
 
         return {"content": [{"type": "text", "text": text}]}
 

@@ -56,7 +56,16 @@ Exemplos:
   rlm_search_index(var_name="livro", terms=["preocupação excessiva"], mode="semantic")
   rlm_search_index(var_name="livro", terms=["medo do futuro"], mode="hybrid")
 
-**Textos < 100k chars**: Use rlm_execute com buscar(texto, termo) ou Python direto.
+**Textos < 100k chars**: rlm_search_index cria o índice de palavras na primeira busca.
+
+**Idioma da busca lexical**: query_language="pt" por padrão; use "en" para
+preservar "no" como negação inglesa. Coleções avisam quando há fontes ausentes.
+
+**Leitura e citação**: rlm_read(var_name="livro", start_line=120, line_count=40).
+Retorna JSON com text exato, source, linhas, pages e version; continue com os campos de next.
+pages=[] = página desconhecida. A continuação falha se o texto mudar. Não use o trecho
+resumido da busca como se fosse a passagem inteira; confira a fonte com rlm_read.
+Origem derived: indica conteúdo alterado por código após a carga.
 
 **Busca em coleção** (rlm_collection action="search"): varre TODOS os docs de uma vez,
 porém é LEXICAL (token), sem perna semântica. Passe termos como array de palavras, não
@@ -108,13 +117,14 @@ Buscar em todos de uma vez (LEXICAL — casa palavras/tokens, não significado):
   • Frase literal mesmo? Use aspas no termo: terms=['"erro fatal"'].
   • snippet_len ajusta o tamanho do trecho (default 150).
   • Recall por significado/sinônimo/cross-idioma NÃO existe aqui: use
-    rlm_search_index(var=..., mode="hybrid") por fonte.
+    rlm_search_index(var_name=..., mode="hybrid") por fonte.
 
 Listar e inspecionar:
   rlm_collection(action="list")
   rlm_collection(action="info", name="docs")
 
-Se a busca parar de funcionar após atualização:
+As fontes alteradas são sincronizadas na próxima busca, sem reconstruir a cada consulta.
+Para forçar uma reconstrução:
   rlm_collection(action="rebuild", name="docs")
 
 Remover a coleção (as variáveis membras ficam):
@@ -193,7 +203,7 @@ def get_help_text(topic: str = "all") -> str:
         "# RLM MCP Server — Guia Rápido",
         "",
         "Servidor MCP com REPL Python persistente para processar milhões de caracteres.",
-        "19 tools | Persistência SQLite | S3/Minio | Tree-sitter | Embeddings vetoriais",
+        "21 tools | Leitura com referência | Persistência SQLite | S3/Minio | Tree-sitter | Embeddings vetoriais",
         "",
         "Tópicos: rlm_help(topic=\"workflows|s3|search|code|pdf|collections|execute\")",
         "",

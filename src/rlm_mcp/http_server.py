@@ -29,9 +29,9 @@ import uvicorn
 
 from .repl import SafeREPL, INTERNAL_FUNCTION_NAMES, VariableInfo
 from .persistence import get_persistence
-from .indexer import set_index, TextIndex, create_index
+from .indexer import set_index, TextIndex
 from .rate_limiter import SlidingWindowRateLimiter, RateLimitExceeded
-from .collection_builder import build_collection_combined
+from .collection_builder import refresh_collection
 from .tools.schemas import TOOL_SCHEMAS
 from .tools.context import ToolContext
 from .tools.handlers import TOOL_HANDLERS
@@ -56,6 +56,8 @@ class MetricsSnapshot:
     latency_max_ms: float = 0.0
     uptime_seconds: float = 0.0
     tool_calls_by_name: dict = field(default_factory=dict)
+    tool_timing_by_name: dict = field(default_factory=dict)
+    dispatch_wait_ms: dict = field(default_factory=dict)
     rate_limit_rejections: int = 0
 
 
@@ -77,6 +79,8 @@ class MetricsCollector:
         self._errors_by_endpoint: dict[str, int] = defaultdict(int)
         self._latency_samples: list[float] = []
         self._tool_calls_by_name: dict[str, int] = defaultdict(int)
+        self._tool_timings: dict[str, list[float]] = {}
+        self._dispatch_wait = [0, 0.0, 0.0]
         self._rate_limit_rejections = 0
 
     def record_request(self, endpoint: str, latency_ms: float, is_error: bool = False):
@@ -110,6 +114,27 @@ class MetricsCollector:
         with self._lock:
             self._rate_limit_rejections += 1
 
+    @staticmethod
+    def _timing_summary(values):
+        count, total, maximum = values
+        return {"count": count, "total_ms": round(total, 3),
+                "avg_ms": round(total / count, 3) if count else 0.0,
+                "max_ms": round(maximum, 3)}
+
+    def record_tool_duration(self, name: str, elapsed_ms: float):
+        """Aggregate duration without logging arguments or document content."""
+        with self._lock:
+            values = self._tool_timings.setdefault(name, [0, 0.0, 0.0])
+            values[0] += 1
+            values[1] += elapsed_ms
+            values[2] = max(values[2], elapsed_ms)
+
+    def record_dispatch_wait(self, elapsed_ms: float):
+        with self._lock:
+            self._dispatch_wait[0] += 1
+            self._dispatch_wait[1] += elapsed_ms
+            self._dispatch_wait[2] = max(self._dispatch_wait[2], elapsed_ms)
+
     def get_snapshot(self) -> MetricsSnapshot:
         """Get a snapshot of current metrics."""
         with self._lock:
@@ -141,6 +166,9 @@ class MetricsCollector:
                 latency_max_ms=round(latency_max, 2),
                 uptime_seconds=round(time.time() - self._start_time, 2),
                 tool_calls_by_name=dict(self._tool_calls_by_name),
+                tool_timing_by_name={name: self._timing_summary(values)
+                                     for name, values in self._tool_timings.items()},
+                dispatch_wait_ms=self._timing_summary(self._dispatch_wait),
                 rate_limit_rejections=self._rate_limit_rejections
             )
 
@@ -154,6 +182,8 @@ class MetricsCollector:
             self._errors_by_endpoint.clear()
             self._latency_samples.clear()
             self._tool_calls_by_name.clear()
+            self._tool_timings.clear()
+            self._dispatch_wait = [0, 0.0, 0.0]
             self._rate_limit_rejections = 0
 
 
@@ -474,11 +504,11 @@ async def lifespan(app: FastAPI):
                     index_data = persistence.load_index(name)
                     if index_data:
                         restored_idx = TextIndex.from_dict(index_data)
-                        # Seed do fingerprint com o texto restaurado — evita que a
-                        # 1ª busca pós-restart invalide um índice ainda válido.
+                        # Restore only a version-bound index. Legacy caches without
+                        # a full content version are rebuilt lazily from the source.
                         from .indexer import fingerprint_source
-                        restored_idx.source_fingerprint = fingerprint_source(value)
-                        set_index(name, restored_idx)
+                        if restored_idx.source_fingerprint == fingerprint_source(value):
+                            set_index(name, restored_idx)
                     # Restaurar embeddings vetoriais se existirem. from_persisted
                     # funde tudo na matriz float32 compacta e descarta as listas
                     # cruas; o flag is_boilerplate é recomputado do texto lá dentro
@@ -487,9 +517,12 @@ async def lifespan(app: FastAPI):
                     emb_data = persistence.load_embeddings(name)
                     if emb_data:
                         from .vector_index import VectorIndex, set_vector_index
-                        set_vector_index(
-                            name, VectorIndex.from_persisted(name, value, emb_data)
-                        )
+                        try:
+                            restored_vector = VectorIndex.from_persisted(name, value, emb_data)
+                        except ValueError:
+                            logger.warning("Índice vetorial de '%s' diverge da fonte; rebuild sob demanda", name)
+                        else:
+                            set_vector_index(name, restored_vector)
                     logger.info(f"  Restaurado: {name} ({var_info['type']})")
             logger.info("Variáveis restauradas com sucesso")
 
@@ -504,16 +537,9 @@ async def lifespan(app: FastAPI):
                     if not all_vars:
                         continue
 
-                    combined_text, var_mapping, _ = build_collection_combined(
-                        all_vars, repl.variables
-                    )
+                    combined_text, _, _ = refresh_collection(repl, coll_name, all_vars)
 
                     if combined_text:
-                        combined_var_name = f"_coll_{coll_name}_combined"
-                        repl.variables[combined_var_name] = combined_text
-                        combined_index = create_index(combined_text, combined_var_name)
-                        set_index(combined_var_name, combined_index)
-                        repl.variables[f"_coll_{coll_name}_mapping"] = var_mapping
                         logger.info(f"  Coleção '{coll_name}' reconstruída: {len(combined_text):,} chars, {len(all_vars)} vars")
                 logger.info("Coleções reconstruídas com sucesso")
         except Exception as e:
@@ -624,7 +650,9 @@ def handle_mcp_request_locked(request: "MCPRequest", client_id: str | None = Non
     entre si (como sempre foram), mas /health, pings SSE e respostas 429
     continuam vivos no event loop.
     """
+    waiting_since = time.perf_counter()
     with _mcp_dispatch_lock:
+        metrics_collector.record_dispatch_wait((time.perf_counter() - waiting_since) * 1000)
         return handle_mcp_request(request, client_id=client_id)
 
 
@@ -907,6 +935,7 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
         batch_async_threshold_mb=BATCH_ASYNC_THRESHOLD_MB,
     )
 
+    started = time.perf_counter()
     try:
         return handler(arguments, ctx)
     except RateLimitExceeded:
@@ -920,6 +949,9 @@ def call_tool(name: str, arguments: dict, client_id: str | None = None) -> dict:
             ],
             "isError": True
         }
+
+    finally:
+        metrics_collector.record_tool_duration(name, (time.perf_counter() - started) * 1000)
 
 
 # =============================================================================
@@ -996,8 +1028,10 @@ async def metrics_endpoint(_: bool = Depends(verify_api_key)):
                 "max": snapshot.latency_max_ms
             },
             "tools": {
-                "calls_by_name": snapshot.tool_calls_by_name
+                "calls_by_name": snapshot.tool_calls_by_name,
+                "timing_by_name": snapshot.tool_timing_by_name,
             },
+            "dispatch_wait_ms": snapshot.dispatch_wait_ms,
             "rate_limiting": {
                 "rejections": snapshot.rate_limit_rejections
             },

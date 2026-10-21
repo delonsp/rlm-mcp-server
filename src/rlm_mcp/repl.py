@@ -753,6 +753,7 @@ class SafeREPL:
                     success = False
                     continue
 
+                self._discard_variable_caches(name)
                 self.variables[name] = value
                 variables_changed.append(name)
                 existing = self.variable_metadata.get(name)
@@ -766,7 +767,7 @@ class SafeREPL:
                     last_accessed=now,
                     access_count=(existing.access_count if existing else 0) + 1,
                     pinned=existing.pinned if existing else False,
-                    source=existing.source if existing else "execute",
+                    source=self._execution_source(existing),
                 )
 
         execution_time = (time.perf_counter() - start_time) * 1000
@@ -785,7 +786,8 @@ class SafeREPL:
             variables_changed=variables_changed,
         )
 
-    def load_data(self, name: str, data: str | bytes, data_type: str = "text") -> ExecutionResult:
+    def load_data(self, name: str, data: str | bytes, data_type: str = "text",
+                  *, source: str = "load_data") -> ExecutionResult:
         """
         Carrega dados diretamente em uma variável.
 
@@ -793,8 +795,14 @@ class SafeREPL:
             name: Nome da variável
             data: Dados para carregar
             data_type: "text", "json", "lines", "csv"
+            source: Origem publicada junto com o conteúdo, sob o mesmo lock.
         """
         try:
+            from .text_quality import text_quality_error
+            raw_text = data if isinstance(data, str) else data.decode()
+            quality_error = text_quality_error(raw_text)
+            if quality_error:
+                return ExecutionResult(False, "", quality_error, 0)
             if data_type == "json":
                 value = json.loads(data)
             elif data_type == "lines":
@@ -823,6 +831,7 @@ class SafeREPL:
             # readquire o lock (verificado); sandbox snapshot/merge usa o
             # mesmo lock, então load × execute também ficam serializados.
             with self._execute_lock:
+                self._discard_variable_caches(name)
                 self.variables[name] = value
                 now = datetime.now()
                 existing = self.variable_metadata.get(name)
@@ -837,7 +846,7 @@ class SafeREPL:
                     last_accessed=now,
                     access_count=(existing.access_count if existing else 0) + 1,
                     pinned=existing.pinned if existing else False,
-                    source=existing.source if existing else "load_data",
+                    source=source,
                 )
 
                 # Auto-cleanup se necessário
@@ -869,20 +878,57 @@ class SafeREPL:
         """Retorna informações de uma variável específica"""
         return self.variable_metadata.get(name)
 
+    @staticmethod
+    def _execution_source(existing) -> str:
+        if existing is None:
+            return "execute"
+        return existing.source if existing.source.startswith("derived:") else f"derived:{existing.source}"
+
+    def _discard_variable_caches(self, name: str) -> None:
+        """Called with the execution lock held, before replacing/removing a source."""
+        from .indexer import invalidate_source_indices
+        from .text_version import forget_content_version
+        from .vector_index import clear_vector_index
+
+        dependents = invalidate_source_indices(name)
+        views = getattr(self, '_document_views', {})
+        for key in [name, *dependents]:
+            clear_vector_index(key)
+            value = self.variables.get(key)
+            if isinstance(value, str):
+                forget_content_version(value)
+            view = views.pop(key, None)
+            if view is not None:
+                forget_content_version(view.text)
+            if key in dependents:
+                self.variables.pop(key, None)
+                self.variables.pop(key.removesuffix('_combined') + '_mapping', None)
+
     def clear_variable(self, name: str) -> bool:
         """Remove uma variável"""
-        if name in self.variables:
-            del self.variables[name]
-            del self.variable_metadata[name]
-            return True
-        return False
+        with self._execute_lock:
+            if name in self.variables:
+                self._discard_variable_caches(name)
+                self.variables.pop(name, None)
+                self.variable_metadata.pop(name, None)
+                return True
+            return False
 
     def clear_all(self) -> int:
         """Remove todas as variáveis"""
-        count = len(self.variables)
-        self.variables.clear()
-        self.variable_metadata.clear()
-        return count
+        from .indexer import clear_all_indices
+        from .text_version import clear_content_versions
+        from .vector_index import clear_all_vector_indices
+
+        with self._execute_lock:
+            count = len(self.variables)
+            self.variables.clear()
+            self.variable_metadata.clear()
+            getattr(self, '_document_views', {}).clear()
+            clear_all_indices()
+            clear_all_vector_indices()
+            clear_content_versions()
+            return count
 
     def pin_variable(self, name: str, pin: bool = True) -> bool:
         """Pin or unpin a variable to protect it from GC.
@@ -993,7 +1039,8 @@ class SafeREPL:
                 "last_accessed": meta.last_accessed.isoformat()
             })
 
-            del self.variables[name]
+            self._discard_variable_caches(name)
+            self.variables.pop(name, None)
             del self.variable_metadata[name]
 
         self.last_cleanup_count = len(removed)

@@ -109,7 +109,9 @@ def persist_and_index(var_name: str, value, repl: "PythonREPL") -> tuple[str, st
     try:
         persistence = get_persistence()
         if value is not None:
-            saved = persistence.save_variable(var_name, value)
+            info = repl.variable_metadata.get(var_name)
+            saved = persistence.save_variable(var_name, value,
+                                              metadata={"source": info.source} if info else None)
             if saved:
                 persist_msg = "💾 Persistido"
             else:

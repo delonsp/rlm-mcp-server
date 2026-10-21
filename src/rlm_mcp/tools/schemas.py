@@ -2,7 +2,7 @@
 
 Defines the TOOL_SCHEMAS constant with all tool definitions extracted from get_tools_list().
 
-Consolidated from 29 to 19 tools (now 20 with rlm_repertorio):
+Consolidated from 29 to 19 tools (now 21 with rlm_repertorio and rlm_read):
 - Collections (6→1): rlm_collection with action parameter
 - Tasks (3→1): rlm_task with action parameter
 - Batch S3 load: absorbed into rlm_load_s3 via keys[] parameter
@@ -11,6 +11,27 @@ Consolidated from 29 to 19 tools (now 20 with rlm_repertorio):
 """
 
 TOOL_SCHEMAS: list[dict] = [
+    {
+        "name": "rlm_read",
+        "description": """Lê passagem EXATA de uma variável de texto, com fonte, linhas, páginas conhecidas e versão SHA-256.
+Use após a busca: rlm_read(var_name="livro", start_line=120, line_count=40).
+Retorna JSON com text completo dentro do limite (max_chars, padrão 12000), sem o corte de 500 caracteres do rlm_execute.
+Para continuar, envie os campos de next (var_name, offset, expected_version); next=null indica fim.
+A continuação falha se a fonte mudou. pages=[] significa página PDF desconhecida: NÃO inventar página.
+Linhas são 1-indexed; offset mede caracteres Unicode, não bytes. Fonte identifica o arquivo quando conhecida; versão identifica o texto extraído.""",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "var_name": {"type": "string"},
+                "start_line": {"type": "integer", "minimum": 1},
+                "line_count": {"type": "integer", "minimum": 1, "maximum": 200, "default": 40},
+                "max_chars": {"type": "integer", "minimum": 1, "maximum": 20000, "default": 12000},
+                "offset": {"type": "integer", "minimum": 0},
+                "expected_version": {"type": "string"}
+            },
+            "required": ["var_name"]
+        }
+    },
     {
         "name": "rlm_execute",
         "description": """Executa código Python no REPL persistente.
@@ -53,7 +74,7 @@ NÃO use apenas regex simples. Use estas estratégias:
    secoes = re.findall(r'^#+ (.+)$', texto, re.MULTILINE)
    ```
 
-4. FUNÇÕES REUTILIZÁVEIS - definir helpers que persistem entre chamadas
+4. HELPERS LOCAIS - definir funções para uso na mesma chamada; só dados persistem
 
 === FUNÇÕES AUXILIARES PRÉ-DEFINIDAS ===
 
@@ -368,6 +389,7 @@ Exemplo: rlm_search_index(var_name="livro", terms=["medo","ansiedade"], mode="hy
                 "var_name": {"type": "string", "description": "Nome da variável indexada"},
                 "terms": {"type": "array", "items": {"type": "string"}, "description": "Termos para buscar"},
                 "mode": {"type": "string", "enum": ["keyword", "semantic", "hybrid"], "default": "keyword"},
+                "query_language": {"type": "string", "enum": ["pt", "en"], "default": "pt", "description": "Idioma da consulta lexical: pt ignora a contração no; en preserva no como negação."},
                 "require_all": {"type": "boolean", "default": False, "description": "Exigir TODOS os termos (só keyword)"},
                 "limit": {"type": "integer", "default": 20},
                 "offset": {"type": "integer", "default": 0},
@@ -421,7 +443,9 @@ BUSCA (search) — leia antes de usar:
 • Para forçar frase LITERAL, use aspas dentro do termo: terms=['"open air"'].
 • snippet_len controla o tamanho do trecho exibido (default 150; suba p/ mais contexto,
   baixe p/ economizar janela).
-• Quer recall por SIGNIFICADO/sinônimo/cross-idioma? Use rlm_search_index(var=..., mode=
+• Para ler a passagem completa com referência, use rlm_read na variável e linha encontradas.
+• Alterações nas fontes são sincronizadas automaticamente antes da busca.
+• Quer recall por SIGNIFICADO/sinônimo/cross-idioma? Use rlm_search_index(var_name=..., mode=
   "hybrid") fonte por fonte — a busca de coleção não tem perna semântica.
 
 Exemplos:
@@ -452,6 +476,7 @@ Exemplos:
                 },
                 "limit": {"type": "integer", "default": 20, "description": "Max resultados (para search)"},
                 "offset": {"type": "integer", "default": 0, "description": "Paginação (para search)"},
+                "query_language": {"type": "string", "enum": ["pt", "en"], "default": "pt", "description": "Idioma da consulta lexical: pt ignora a contração no; en preserva no como negação."},
                 "snippet_len": {"type": "integer", "default": 150, "description": "Tamanho do trecho exibido por ocorrência na search (clamp 40–400)"}
             },
             "required": ["action"]

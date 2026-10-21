@@ -88,3 +88,42 @@ def build_collection_combined(
                 )
 
     return combined_text, var_mapping, vars_included
+
+
+def collection_snapshot(repl, name: str, var_names: list[str], *, force: bool = False):
+    """Publish a coherent collection snapshot, reusing unchanged immutable text.
+
+    Tuple comparison short-circuits identical string objects: repeated queries
+    cost O(number of sources), without hashing or copying the entire corpus.
+    Keeping the source references also prevents Python object-id reuse bugs.
+    """
+    from .indexer import create_index, get_index, set_index
+
+    combined_name = f"_coll_{name}_combined"
+    mapping_name = f"_coll_{name}_mapping"
+    with repl._execute_lock:
+        sources = tuple((n, repl.variables[n]) for n in var_names
+                        if isinstance(repl.variables.get(n), str))
+        index = get_index(combined_name)
+        if (not force and index is not None
+                and getattr(index, '_collection_sources', None) == sources
+                and repl.variables.get(combined_name) is getattr(index, '_collection_text', None)
+                and repl.variables.get(mapping_name) is getattr(index, '_collection_mapping', None)):
+            return index
+
+        text, mapping, _ = build_collection_combined([n for n, _ in sources], dict(sources))
+        index = create_index(text, combined_name)
+        index._collection_sources = sources
+        index._collection_text = text
+        index._collection_mapping = mapping
+        # Build everything before replacing the published snapshot.
+        repl.variables[combined_name] = text
+        repl.variables[mapping_name] = mapping
+        set_index(combined_name, index)
+        return index
+
+
+def refresh_collection(repl, name: str, var_names: list[str], *, force: bool = False):
+    """Compatibility wrapper for callers that only need text, mapping and count."""
+    index = collection_snapshot(repl, name, var_names, force=force)
+    return index._collection_text, index._collection_mapping, len(index._collection_sources)

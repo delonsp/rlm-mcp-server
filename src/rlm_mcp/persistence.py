@@ -144,6 +144,13 @@ class PersistenceManager:
 
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
+                # A new source must not resurrect old passages/vectors on restart.
+                # Keep data replacement and invalidation in the same transaction.
+                cursor.execute("SELECT data FROM variables WHERE name = ?", (name,))
+                previous = cursor.fetchone()
+                if previous and previous[0] != compressed:
+                    cursor.execute("DELETE FROM indices WHERE var_name = ?", (name,))
+                    cursor.execute("DELETE FROM embeddings WHERE var_name = ?", (name,))
                 cursor.execute("""
                     INSERT OR REPLACE INTO variables
                     (name, data, type_name, size_bytes, created_at, updated_at, metadata)
@@ -212,7 +219,7 @@ class PersistenceManager:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    SELECT name, type_name, size_bytes, created_at, updated_at
+                    SELECT name, type_name, size_bytes, created_at, updated_at, metadata
                     FROM variables ORDER BY updated_at DESC
                 """)
                 rows = cursor.fetchall()
@@ -223,7 +230,8 @@ class PersistenceManager:
                         "type": row[1],
                         "size_bytes": row[2],
                         "created_at": row[3],
-                        "updated_at": row[4]
+                        "updated_at": row[4],
+                        "source": (json.loads(row[5] or '{}') or {}).get('source', 'persisted'),
                     }
                     for row in rows
                 ]

@@ -12,6 +12,8 @@ import os
 import re
 import logging
 import math
+from collections import OrderedDict
+from threading import Lock
 from typing import Optional
 
 logger = logging.getLogger("rlm-mcp.embeddings")
@@ -70,6 +72,8 @@ class EmbeddingService:
         # início de embed_query — permite ao search distinguir "0 resultados" de
         # "API caiu" em vez de mostrar "No results" durante um outage.
         self.last_error: Optional[str] = None
+        self._query_cache = OrderedDict()
+        self._query_lock = Lock()
 
         if self.mode == "openai":
             api_key = os.getenv("OPENAI_API_KEY", "")
@@ -130,10 +134,22 @@ class EmbeddingService:
         if not query or self.mode == "disabled":
             return []
 
-        # Zera o marcador antes: se ficar setado depois, foi ESTA query que falhou.
-        self.last_error = None
-        results = self.embed_texts([query])
-        return results[0] if results else []
+        # One query vector can serve many source indexes. Bound both entries and
+        # key length; never memoize outages or expose the cached mutable vector.
+        key = (self._model, self._dimension, query)
+        with self._query_lock:
+            self.last_error = None
+            cached = self._query_cache.get(key)
+            if cached is not None:
+                self._query_cache.move_to_end(key)
+                return list(cached)
+            results = self.embed_texts([query])
+            vector = results[0] if results else []
+            if vector and not self.last_error and len(query) <= 8192:
+                self._query_cache[key] = tuple(vector)
+                while len(self._query_cache) > 128:
+                    self._query_cache.popitem(last=False)
+            return list(vector)
 
     def similarity(self, v1: list[float], v2: list[float]) -> float:
         """Compute cosine similarity between two vectors."""

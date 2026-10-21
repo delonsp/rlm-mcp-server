@@ -1,5 +1,6 @@
 #!/bin/bash
 # Script para deploy no servidor via Dokploy ou Docker direto
+# LEGADO: servidor antigo. NÃO usar no Magalu; consultar CLAUDE.md.
 #
 # Uso: ./deploy-dokploy.sh [user@servidor]
 
